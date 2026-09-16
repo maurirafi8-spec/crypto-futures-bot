@@ -3,9 +3,11 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "start": "node src/index.js",
-    "check": "node --check src/index.js && node --check src/binance.js && node --check src/indicators.js && node --check src/scanner.js && node --check src/telegram.js"
+    "start": "node index.js",
+    "check": "node --check index.js && node --check binance.js && node --check indicators.js && node --check scanner.js && node --check telegram.js"
   }
 }
