@@ -243,16 +243,34 @@ function stageName(stage) {
 }
 
 function addHistory(state, outcome) {
+  const s = state.signal;
+  const ai = s.ai || null;
+
   resultHistory.unshift({
-    symbol: state.signal.symbol,
-    side: state.signal.side,
+    symbol: s.symbol,
+    side: s.side,
     outcome,
     openedAt: state.openedAt,
-    closedAt: Date.now()
+    closedAt: Date.now(),
+
+    // V1.3.6: guarda contexto do sinal para medir qualidade depois.
+    score: Number(s.score || 0),
+    aiDecision: ai?.decision || '—',
+    aiConfidence: Number(ai?.confidence ?? NaN),
+    aiModel: ai?.model || '—',
+    aiCached: Boolean(ai?.cached),
+    aiStyle: ai?.style || '—',
+    aiRisk: ai?.risk || '—',
+
+    entry: Number(s.entry || 0),
+    stop: Number(s.stop || 0),
+    tp1: Number(s.tp1 || 0),
+    tp2: Number(s.tp2 || 0),
+    tp3: Number(s.tp3 || 0)
   });
 
-  if (resultHistory.length > 30) {
-    resultHistory.length = 30;
+  if (resultHistory.length > 50) {
+    resultHistory.length = 50;
   }
 }
 
@@ -398,13 +416,89 @@ function activeSignalsText() {
 
   for (const state of activeSignals.values()) {
     const s = state.signal;
+    const ai = s.ai || null;
+    const aiSource = ai
+      ? (ai.cached ? '♻️ CACHE' : '🧠 NOVA ANÁLISE')
+      : '—';
+
     lines.push(
       `${s.side === 'LONG' ? '🟢' : '🔴'} <b>${s.symbol} ${s.side}</b> — ` +
       `${stageName(state.stage)}\n` +
+      `⭐ Score ${s.score}/100\n` +
+      (ai
+        ? `🤖 IA ${ai.decision} ${Math.round(ai.confidence)}% · ${aiSource}\n`
+        : '') +
       `Entrada ${fmt(s.entry)} | Stop ${fmt(s.stop, s.entry)} | ` +
       `TP3 ${fmt(s.tp3, s.entry)}`
     );
   }
+
+  return lines.join('\n');
+}
+
+function resultClass(outcome) {
+  if (outcome === 'TP3') return 'WIN';
+  if (outcome === 'STOP') return 'LOSS';
+  if (outcome.startsWith('STOP após')) return 'MIXED';
+  return 'OTHER';
+}
+
+function confidenceBucket(confidence) {
+  if (!Number.isFinite(confidence)) return null;
+  if (confidence >= 85) return '85–100%';
+  if (confidence >= 75) return '75–84%';
+  return '65–74%';
+}
+
+function confidenceStatsText() {
+  const stats = new Map();
+
+  for (const r of resultHistory) {
+    if (!Number.isFinite(r.aiConfidence)) continue;
+
+    const bucket = confidenceBucket(r.aiConfidence);
+    if (!bucket) continue;
+
+    if (!stats.has(bucket)) {
+      stats.set(bucket, {
+        total: 0,
+        win: 0,
+        loss: 0,
+        mixed: 0,
+        other: 0
+      });
+    }
+
+    const st = stats.get(bucket);
+    st.total += 1;
+
+    const cls = resultClass(r.outcome);
+    if (cls === 'WIN') st.win += 1;
+    else if (cls === 'LOSS') st.loss += 1;
+    else if (cls === 'MIXED') st.mixed += 1;
+    else st.other += 1;
+  }
+
+  if (!stats.size) {
+    return '📐 Ainda não há amostra suficiente para comparar confiança da IA × resultado.';
+  }
+
+  const order = ['65–74%', '75–84%', '85–100%'];
+  const lines = ['🧪 <b>Confiança IA × resultados</b>'];
+
+  for (const bucket of order) {
+    const st = stats.get(bucket);
+    if (!st) continue;
+
+    lines.push(
+      `• ${bucket}: ${st.total} encerrado(s) · ` +
+      `🏆 ${st.win} · 🛑 ${st.loss} · 🟡 ${st.mixed} · ⚪ ${st.other}`
+    );
+  }
+
+  lines.push(
+    '<i>TP3=🏆; STOP direto=🛑; STOP após alvo=🟡; ambíguo/reversão=⚪.</i>'
+  );
 
   return lines.join('\n');
 }
@@ -414,7 +508,12 @@ function resultsText() {
     return '📊 Ainda não há resultados encerrados nesta execução do bot.';
   }
 
-  const lines = ['📊 <b>Últimos resultados</b>', ''];
+  const lines = [
+    '📊 <b>Últimos resultados</b>',
+    '',
+    confidenceStatsText(),
+    ''
+  ];
 
   for (const r of resultHistory.slice(0, 10)) {
     const icon = r.outcome === 'TP3'
@@ -425,10 +524,26 @@ function resultsText() {
           ? '⚠️'
           : '🔄';
 
-    lines.push(`${icon} ${r.symbol} ${r.side} — ${r.outcome}`);
+    const aiText = Number.isFinite(r.aiConfidence)
+      ? ` · 🤖 ${Math.round(r.aiConfidence)}%`
+      : '';
+
+    const source = r.aiDecision !== '—'
+      ? (r.aiCached ? '♻️' : '🧠')
+      : '';
+
+    lines.push(
+      `${icon} <b>${r.symbol} ${r.side}</b> — ${r.outcome}\n` +
+      `⭐ Score ${r.score}/100${aiText} ${source}`
+    );
   }
 
-  lines.push('', '<i>Histórico reinicia quando o serviço reinicia ou recebe novo deploy.</i>');
+  lines.push(
+    '',
+    '<i>Histórico reinicia quando o serviço reinicia ou recebe novo deploy. ' +
+    'As estatísticas acima são descritivas e ficam mais úteis com uma amostra maior.</i>'
+  );
+
   return lines.join('\n');
 }
 
@@ -455,12 +570,35 @@ function rememberAI(signal, ai) {
     reason: ai.reason,
     model: ai.model,
     cached: Boolean(ai.cached),
+    source: ai.cached ? 'CACHE' : 'NEW',
     at: Date.now()
   };
 
+  // V1.3.6: não duplica no histórico uma decisão que veio do cache
+  // se a mesma análise original já estiver registrada.
+  if (item.cached) {
+    const duplicate = aiHistory.find(r =>
+      r.symbol === item.symbol &&
+      r.side === item.side &&
+      r.decision === item.decision &&
+      Math.round(r.confidence) === Math.round(item.confidence) &&
+      r.reason === item.reason &&
+      r.model === item.model
+    );
+
+    if (duplicate) {
+      lastAiEvent = {
+        type: 'CACHE_HIT',
+        ...item,
+        message: `${item.symbol} ${item.side}: decisão reaproveitada do cache`
+      };
+      return;
+    }
+  }
+
   aiHistory.unshift(item);
   lastAiEvent = {
-    type: 'DECISION',
+    type: item.cached ? 'CACHE_HIT' : 'NEW_ANALYSIS',
     ...item
   };
 
@@ -514,10 +652,15 @@ function aiHistoryText() {
   );
 
   for (const r of aiHistory.slice(0, 10)) {
+    const source = r.cached
+      ? '♻️ <b>CACHE</b>'
+      : '🧠 <b>NOVA ANÁLISE</b>';
+
     lines.push(
       `${aiDecisionIcon(r.decision)} <b>${r.symbol} ${r.side}</b> — ` +
       `${r.tier === 'PRE_CANDIDATE' ? 'PRÉ · ' : ''}` +
       `${r.decision} ${Math.round(r.confidence)}%\n` +
+      `${source}\n` +
       `${r.reason}`
     );
   }
@@ -1085,7 +1228,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.3.5 FREE</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.3.6 FREE</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o mercado agora\n' +
       '/status — ver configuração\n' +
@@ -1099,7 +1242,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.3.5 FREE\n` +
+      `✅ Online — V1.3.6 FREE\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🪙 Top mercados: ${cfg.topMarkets}\n` +
       `⭐ Score mínimo para sinal: ${cfg.minScore}\n` +
@@ -1119,7 +1262,8 @@ async function handleMessage(msg) {
       `🆓 IA grátis: ${aiBudgetStats().used}/${aiBudgetStats().limit} chamadas hoje\n` +
       `⏳ Economia IA: 1 candidato / mínimo ${cfg.aiMinGapMin} min / cache ${cfg.aiCacheMin} min\n` +
       `🟠 Pendente de IA: ${pendingAiCandidate ? `${pendingAiCandidate.symbol} ${pendingAiCandidate.side}` : 'nenhum'}\n` +
-      `🎯 Acompanhando: ${activeSignals.size} sinal(is)`
+      `🎯 Acompanhando: ${activeSignals.size} sinal(is)\n` +
+      `📚 Resultados registrados: ${resultHistory.length}`
     );
   } else if (text.startsWith('/ativos')) {
     await sendMessage(cfg.token, activeChatId, activeSignalsText());
@@ -1163,7 +1307,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.3.5-free',
+    version: '1.3.6-free',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -1179,7 +1323,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.3.5 FREE pronto ✅');
+console.log('Crypto Futures Scanner V1.3.6 FREE pronto ✅');
 
 setTimeout(() => doScan().catch(console.error), 5000);
 setInterval(() => doScan().catch(console.error), cfg.intervalMin * 60_000);

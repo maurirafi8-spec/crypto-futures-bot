@@ -1,4 +1,4 @@
-CRYPTO FUTURES SCANNER V1.3.5 FREE — PENDING AI
+CRYPTO FUTURES SCANNER V1.3.6 FREE — AI STATS
 
 SUBSTITUA/ADICIONE NO GITHUB:
 - ai.js
@@ -8,64 +8,81 @@ SUBSTITUA/ADICIONE NO GITHUB:
 - scanner.js
 - telegram.js
 
-NOVIDADE PRINCIPAL
-Quando um ativo PASSA 100% pelo filtro técnico, mas o OpenRouter está
-na janela de economia do plano grátis, o bot NÃO esconde a oportunidade.
+NOVIDADES DA V1.3.6
 
-Ele mostra:
+1) /ia SEM DUPLICATAS
+- Decisões reaproveitadas do cache não são adicionadas novamente
+  se a análise original idêntica já estiver no histórico.
+- Cada análise mostra a origem:
+  🧠 NOVA ANÁLISE
+  ♻️ CACHE
 
-🟠 SINAL TÉCNICO APROVADO
-🤖 AGUARDANDO VALIDAÇÃO DA IA
+2) SINAL MOSTRA A ORIGEM DA IA
+Exemplo:
+🤖 IA: APPROVE · Confiança 82%
+🧠 Origem: NOVA ANÁLISE
 
-BNBUSDT LONG
-⭐ Score: 80/100
-📊 Volume relativo: ...
-📈 OI: ...
-💵 Volume 24h: ...
-⏳ próxima chamada em ~XX min
-
-IMPORTANTE
-Esse candidato NÃO é entrada.
-Ele só vira sinal de verdade se a camada IA responder APPROVE com a
-confiança mínima configurada.
-
-COMANDO /ia
-Agora também mostra:
-
-⏳ PENDENTE DE IA
-BNBUSDT LONG
-Score 80/100
-Volume ...
-OI ...
-Motivo: economia do plano grátis
-Próxima chamada ~XX min
-
-COMANDO /status
-Mostra a linha:
-🟠 Pendente de IA: BNBUSDT LONG
 ou:
-🟠 Pendente de IA: nenhum
+♻️ Origem: CACHE
+
+3) /ativos MAIS COMPLETO
+Agora cada sinal acompanhado mostra:
+- Score técnico
+- Decisão da IA
+- Confiança da IA
+- Origem NOVA ANÁLISE ou CACHE
+- Entrada, Stop e TP3
+- Estágio atual (sem alvo / TP1 / TP2)
+
+4) RESULTADOS COM SCORE + CONFIANÇA IA
+Ao encerrar TP3, STOP, STOP após alvo, reversão ou caso ambíguo,
+o bot grava:
+- ativo e direção
+- resultado
+- score técnico original
+- confiança da IA
+- modelo
+- se veio de cache ou nova análise
+- estilo e risco definidos pela IA
+
+5) /resultados COMPARA CONFIANÇA × RESULTADO
+Faixas:
+65–74%
+75–84%
+85–100%
+
+A tela conta:
+🏆 TP3
+🛑 STOP direto
+🟡 STOP após TP1/TP2
+⚪ ambíguo/reversão
+
+Isso NÃO afirma que uma faixa é melhor até existir amostra suficiente.
+Serve para começarmos a medir se confiança maior realmente se traduz
+em melhores resultados.
 
 REGRAS MANTIDAS
 - 6 mercados
 - score 70+ para sinal real
 - pré-candidato 60–69
-- candles SOMENTE FECHADOS
-- volume mínimo 24h US$20M
-- volume de confirmação 0.60x
-- piso absoluto 0.40x
-- OI confirmação +0.50%
-- bloqueio OI abaixo de -1.00%
-- OpenRouter Free com 1 candidato por janela
+- candles somente fechados
+- Coinalyze
+- OpenRouter Free
+- 1 candidato por janela
 - intervalo mínimo 30 min
 - cache 30 min
 - limite interno 45 chamadas/dia
+- acompanhamento TP1 / TP2 / TP3 / STOP
+- candidato técnico pendente de IA
 
 TESTE APÓS DEPLOY
 /status
 /scan
 /ia
+/ativos
+/resultados
 /debug
 
-A V1.3.5 nunca envia candidato pendente para /ativos e nunca o acompanha
-como operação até a IA realmente aprovar.
+OBSERVAÇÃO
+Histórico, resultados e acompanhamento ficam em memória.
+Reiniciam quando o serviço recebe restart ou novo deploy.
