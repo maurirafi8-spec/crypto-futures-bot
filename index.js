@@ -56,7 +56,7 @@ async function handleMessage(msg) {
     await sendMessage(cfg.token, activeChatId,
       `✅ Online\n⏱ Scan: ${cfg.intervalMin} min\n🪙 Top mercados: ${cfg.topMarkets}\n⭐ Score mínimo: ${cfg.minScore}\n💵 Volume mínimo 24h: $${Math.round(cfg.minVolume/1e6)}M\n🧊 Cooldown: ${cfg.cooldownMin} min`);
   } else if (text.startsWith('/scan') || text.startsWith('/top')) {
-    await sendMessage(cfg.token, activeChatId, '🔎 Analisando Binance Futures...');
+    await sendMessage(cfg.token, activeChatId, '🔎 Analisando mercado de Futuros...');
     await doScan({ forceReply: true });
   }
 }
