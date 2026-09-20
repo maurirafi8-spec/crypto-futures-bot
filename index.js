@@ -8,8 +8,12 @@ const cfg = {
   chatId: process.env.TELEGRAM_CHAT_ID || '',
   port: Number(process.env.PORT || 3000),
   intervalMin: Number(process.env.SCAN_INTERVAL_MINUTES || 5),
-  topMarkets: Math.min(Number(process.env.TOP_MARKETS || 4), 4),
+  topMarkets: Math.min(
+    Math.max(Number(process.env.V133_TOP_MARKETS || 6), 1),
+    6
+  ),
   minScore: Number(process.env.MIN_SCORE || 70),
+  preCandidateMinScore: Number(process.env.PRE_CANDIDATE_MIN_SCORE || 60),
   minVolume: Number(process.env.MIN_QUOTE_VOLUME_USDT || 20_000_000),
   cooldownMin: Number(process.env.COOLDOWN_MINUTES || 90),
   minVolumeRatio: Number(process.env.V122_VOLUME_CONFIRM_RATIO || 0.60),
@@ -360,6 +364,7 @@ function aiEnabledNow() {
 
 function aiDecisionIcon(decision) {
   if (decision === 'APPROVE') return '✅';
+  if (decision === 'WATCH') return '👀';
   if (decision === 'WAIT') return '⏳';
   return '🚫';
 }
@@ -369,6 +374,7 @@ function rememberAI(signal, ai) {
     symbol: signal.symbol,
     side: signal.side,
     score: signal.score,
+    tier: signal.candidateTier || 'STANDARD',
     decision: ai.decision,
     confidence: ai.confidence,
     reason: ai.reason,
@@ -398,6 +404,7 @@ function aiHistoryText() {
   for (const r of aiHistory.slice(0, 10)) {
     lines.push(
       `${aiDecisionIcon(r.decision)} <b>${r.symbol} ${r.side}</b> — ` +
+      `${r.tier === 'PRE_CANDIDATE' ? 'PRÉ · ' : ''}` +
       `${r.decision} ${Math.round(r.confidence)}%\n` +
       `${r.reason}`
     );
@@ -421,13 +428,18 @@ function debugCandidateText(r) {
     ? `${r.oiPct >= 0 ? '+' : ''}${r.oiPct.toFixed(2)}%`
     : '—';
 
+  const reasons = Array.isArray(r.reasons) && r.reasons.length
+    ? r.reasons
+    : [r.reason || 'não informado'];
+
   return (
     `<b>${r.symbol} ${r.side || ''}</b>\n` +
     `⭐ Score: ${score}\n` +
     `📊 Volume relativo: ${vol}\n` +
     `📈 OI: ${oi}\n` +
     `💵 Volume 24h: ${formatMillions(r.quoteVolume)}\n` +
-    `❌ Motivo: ${r.reason || 'não informado'}`
+    `❌ Motivos:\n` +
+    reasons.map(x => `• ${x}`).join('\n')
   );
 }
 
@@ -447,21 +459,38 @@ function lastScanDebugText() {
     `📊 Mercados selecionados: ${m?.selectedMarkets ?? 0}`,
     `🔬 Mercados analisados: ${m?.analyzedMarkets ?? 0}`,
     `✅ Passaram filtro técnico: ${m?.mathApproved ?? 0}`,
+    `👀 Pré-candidatos ${m?.preCandidateMinScore ?? cfg.preCandidateMinScore}–${cfg.minScore - 1}: ${m?.preCandidates?.length ?? 0}`,
     `🤖 Candidatos selecionados para IA: ${a?.selected ?? 0}`,
     `📡 Chamadas novas à IA: ${a?.apiCalls ?? 0}`,
     `♻️ Respostas vindas do cache: ${a?.cacheHits ?? 0}`,
     `🎯 Sinais liberados: ${lastScanReport.finalSignals ?? 0}`
   ];
 
-  if ((a?.wait || 0) > 0 || (a?.rejected || 0) > 0 || (a?.lowConfidence || 0) > 0) {
+  if (
+    (a?.watch || 0) > 0 ||
+    (a?.wait || 0) > 0 ||
+    (a?.rejected || 0) > 0 ||
+    (a?.lowConfidence || 0) > 0
+  ) {
     lines.push(
-      `🤖 IA — APPROVE: ${a?.approved ?? 0} | WAIT: ${a?.wait ?? 0} | ` +
-      `REJECT: ${a?.rejected ?? 0} | confiança baixa: ${a?.lowConfidence ?? 0}`
+      `🤖 IA — APPROVE: ${a?.approved ?? 0} | WATCH: ${a?.watch ?? 0} | ` +
+      `WAIT: ${a?.wait ?? 0} | REJECT: ${a?.rejected ?? 0} | ` +
+      `confiança baixa: ${a?.lowConfidence ?? 0}`
     );
   }
 
   if (a?.skipReason) {
     lines.push(`⏳ IA não chamada: ${a.skipReason}`);
+  }
+
+  const bestPre = m?.preCandidates?.[0] || null;
+
+  if (bestPre) {
+    lines.push(
+      '',
+      '👀 <b>Melhor pré-candidato para observação</b>',
+      debugCandidateText(bestPre)
+    );
   }
 
   if (best) {
@@ -495,14 +524,18 @@ function scanNoSignalText(report) {
     '',
     `📊 ${m?.selectedMarkets ?? 0} mercados selecionados`,
     `✅ ${m?.mathApproved ?? 0} passaram pelo filtro técnico`,
+    `👀 ${m?.preCandidates?.length ?? 0} pré-candidato(s) ${m?.preCandidateMinScore ?? cfg.preCandidateMinScore}–${cfg.minScore - 1}`,
     `📡 ${a?.apiCalls ?? 0} chamada(s) nova(s) à IA`,
     `🎯 0 sinais liberados`
   ];
 
-  if (m?.mathApproved > 0) {
+  if ((a?.selected || 0) > 0) {
+    if ((a?.watch || 0) > 0) lines.push(`👀 IA colocou ${a.watch} candidato(s) em WATCH`);
     if ((a?.wait || 0) > 0) lines.push(`⏳ IA marcou WAIT em ${a.wait}`);
     if ((a?.rejected || 0) > 0) lines.push(`🚫 IA rejeitou ${a.rejected}`);
-    if ((a?.lowConfidence || 0) > 0) lines.push(`📉 ${a.lowConfidence} APPROVE abaixo da confiança mínima`);
+    if ((a?.lowConfidence || 0) > 0) {
+      lines.push(`📉 ${a.lowConfidence} APPROVE abaixo da confiança mínima`);
+    }
     if (a?.skipReason) lines.push(`🆓 IA economizada: ${a.skipReason}`);
   }
 
@@ -515,7 +548,9 @@ function scanNoSignalText(report) {
 }
 
 function countAiDecision(meta, ai) {
-  if (ai.decision === 'WAIT') {
+  if (ai.decision === 'WATCH') {
+    meta.watch += 1;
+  } else if (ai.decision === 'WAIT') {
     meta.wait += 1;
   } else if (ai.decision === 'REJECT') {
     meta.rejected += 1;
@@ -533,6 +568,7 @@ async function validateSignalsWithAI(signals) {
     cacheHits: 0,
     skipped: 0,
     approved: 0,
+    watch: 0,
     wait: 0,
     rejected: 0,
     lowConfidence: 0,
@@ -598,6 +634,7 @@ async function validateSignalsWithAI(signals) {
       countAiDecision(meta, cached);
 
       if (
+        s.candidateTier !== 'PRE_CANDIDATE' &&
         cached.decision === 'APPROVE' &&
         cached.confidence >= cfg.aiMinConfidence
       ) {
@@ -628,6 +665,7 @@ async function validateSignalsWithAI(signals) {
       );
 
       if (
+        s.candidateTier !== 'PRE_CANDIDATE' &&
         ai.decision === 'APPROVE' &&
         ai.confidence >= cfg.aiMinConfidence
       ) {
@@ -675,12 +713,14 @@ async function doScan({ forceReply = false } = {}) {
 
     const {
       signals: mathSignals,
+      preCandidates,
       snapshots,
       debug
     } = await scanMarket({
       topMarkets: cfg.topMarkets,
       minQuoteVolume: cfg.minVolume,
       minScore: cfg.minScore,
+      preCandidateMinScore: cfg.preCandidateMinScore,
       minVolumeRatio: cfg.minVolumeRatio,
       minOiPct: cfg.minOiPct,
       hardMinVolumeRatio: cfg.hardMinVolumeRatio,
@@ -691,9 +731,21 @@ async function doScan({ forceReply = false } = {}) {
 
     await updateTrackedSignals(snapshots);
 
-    console.log(`[scan] ${mathSignals.length} sinais matemáticos >= ${cfg.minScore}`);
+    console.log(
+      `[scan] ${mathSignals.length} sinais matemáticos >= ${cfg.minScore}; ` +
+      `${preCandidates.length} pré-candidato(s) >= ${cfg.preCandidateMinScore}`
+    );
 
-    const aiResult = await validateSignalsWithAI(mathSignals);
+    // Prioridade: sinal que já passou no filtro técnico.
+    // Se não houver, a IA analisa somente o melhor pré-candidato como WATCHLIST.
+    const aiInput = mathSignals.length
+      ? mathSignals.map(s => ({ ...s, candidateTier: 'STANDARD' }))
+      : preCandidates.slice(0, 1).map(s => ({
+          ...s,
+          candidateTier: 'PRE_CANDIDATE'
+        }));
+
+    const aiResult = await validateSignalsWithAI(aiInput);
     const signals = aiResult.approved;
 
     console.log(
@@ -746,6 +798,7 @@ async function doScan({ forceReply = false } = {}) {
         apiCalls: 0,
         cacheHits: 0,
         approved: 0,
+        watch: 0,
         wait: 0,
         rejected: 0,
         lowConfidence: 0,
@@ -780,7 +833,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.3.2 FREE</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.3.3 FREE</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o mercado agora\n' +
       '/status — ver configuração\n' +
@@ -794,10 +847,11 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.3.2 FREE\n` +
+      `✅ Online — V1.3.3 FREE\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🪙 Top mercados: ${cfg.topMarkets}\n` +
-      `⭐ Score mínimo: ${cfg.minScore}\n` +
+      `⭐ Score mínimo para sinal: ${cfg.minScore}\n` +
+      `👀 Pré-candidato IA: ${cfg.preCandidateMinScore}–${cfg.minScore - 1}\n` +
       `💵 Volume mínimo 24h: $${Math.round(cfg.minVolume / 1e6)}M\n` +
       `📊 Volume para confirmar: ${cfg.minVolumeRatio.toFixed(2)}x\n` +
       `🚫 Piso absoluto de volume: ${cfg.hardMinVolumeRatio.toFixed(2)}x\n` +
@@ -855,7 +909,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.3.2-free',
+    version: '1.3.3-free',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -868,7 +922,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.3.2 FREE pronto ✅');
+console.log('Crypto Futures Scanner V1.3.3 FREE pronto ✅');
 
 setTimeout(() => doScan().catch(console.error), 5000);
 setInterval(() => doScan().catch(console.error), cfg.intervalMin * 60_000);

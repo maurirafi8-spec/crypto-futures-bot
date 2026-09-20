@@ -316,9 +316,10 @@ function chooseMarkets(markets, exchangeNames, limit) {
 }
 
 export async function scanMarket({
-  topMarkets = 4,
+  topMarkets = 6,
   minQuoteVolume = 20_000_000,
   minScore = 70,
+  preCandidateMinScore = 60,
   minVolumeRatio = 0.60,
   minOiPct = 0.50,
   hardMinVolumeRatio = 0.40,
@@ -338,7 +339,7 @@ export async function scanMarket({
   const markets = chooseMarkets(
     marketList,
     exchangeNames,
-    Math.min(topMarkets, 4)
+    Math.min(topMarkets, 6)
   );
 
   if (!markets.length) {
@@ -464,28 +465,55 @@ export async function scanMarket({
 
       const volume24hOk = quoteVolume24h >= minQuoteVolume;
       const scoreOk = sig.score >= minScore;
+      const isPreCandidate =
+        volume24hOk &&
+        sig.score >= preCandidateMinScore &&
+        sig.score < minScore;
+
       const mathApproved =
         volume24hOk &&
         scoreOk &&
         confirmation.confirmed;
 
-      let rejectionReason = '';
+      // V1.3.3: guarda TODOS os motivos de rejeição.
+      const rejectionReasons = [];
 
       if (!volume24hOk) {
-        rejectionReason =
-          `Volume 24h ${(quoteVolume24h / 1e6).toFixed(1)}M abaixo do mínimo ${(minQuoteVolume / 1e6).toFixed(0)}M`;
-      } else if (!scoreOk) {
-        rejectionReason = `Score ${sig.score} abaixo do mínimo ${minScore}`;
-      } else if (!confirmation.volumeFloorOk) {
-        rejectionReason =
-          `Volume relativo ${t15.volumeRatio.toFixed(2)}x abaixo do piso ${hardMinVolumeRatio.toFixed(2)}x`;
-      } else if (confirmation.oiDivergence && !confirmation.divergenceException) {
-        rejectionReason =
-          `OI ${oiPct.toFixed(2)}% abaixo do bloqueio ${oiRejectPct.toFixed(2)}%`;
-      } else if (!confirmation.confirmed) {
-        rejectionReason =
-          `Sem confirmação: volume ${t15.volumeRatio.toFixed(2)}x (alvo ${minVolumeRatio.toFixed(2)}x) e OI ${oiPct >= 0 ? '+' : ''}${oiPct.toFixed(2)}% (alvo +${minOiPct.toFixed(2)}%)`;
+        rejectionReasons.push(
+          `Volume 24h ${(quoteVolume24h / 1e6).toFixed(1)}M abaixo do mínimo ${(minQuoteVolume / 1e6).toFixed(0)}M`
+        );
       }
+
+      if (!scoreOk) {
+        rejectionReasons.push(
+          `Score ${sig.score} abaixo do mínimo ${minScore}`
+        );
+      }
+
+      if (!confirmation.volumeFloorOk) {
+        rejectionReasons.push(
+          `Volume relativo ${t15.volumeRatio.toFixed(2)}x abaixo do piso ${hardMinVolumeRatio.toFixed(2)}x`
+        );
+      }
+
+      if (confirmation.oiDivergence && !confirmation.divergenceException) {
+        rejectionReasons.push(
+          `OI ${oiPct.toFixed(2)}% abaixo do bloqueio ${oiRejectPct.toFixed(2)}%`
+        );
+      }
+
+      if (
+        confirmation.volumeFloorOk &&
+        !confirmation.oiDivergence &&
+        !confirmation.confirmed
+      ) {
+        rejectionReasons.push(
+          `Sem confirmação: volume ${t15.volumeRatio.toFixed(2)}x (alvo ${minVolumeRatio.toFixed(2)}x) e OI ${oiPct >= 0 ? '+' : ''}${oiPct.toFixed(2)}% (alvo +${minOiPct.toFixed(2)}%)`
+        );
+      }
+
+      const rejectionReason =
+        rejectionReasons[0] || '';
 
       allResults.push({
         symbol: displaySymbol,
@@ -501,12 +529,19 @@ export async function scanMarket({
         t4h,
         oiPct,
         fundingRate,
+        candidateTier: mathApproved
+          ? 'STANDARD'
+          : isPreCandidate
+            ? 'PRE_CANDIDATE'
+            : 'REJECTED',
         gates: {
           volume24hOk,
           scoreOk,
+          preCandidate: isPreCandidate,
           confirmationOk: confirmation.confirmed,
           mathApproved
         },
+        rejectionReasons,
         rejectionReason
       });
     } catch (error) {
@@ -551,6 +586,18 @@ export async function scanMarket({
     .filter(r => r.gates.mathApproved)
     .sort((a, b) => b.score - a.score);
 
+  // Pré-candidato: score 60–69 (por padrão), sem afrouxar a regra
+  // que libera sinal real. Ele só pode ser analisado pela IA/Watchlist.
+  const preCandidates = allResults
+    .filter(r => r.gates.preCandidate)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      if (b.t15.volumeRatio !== a.t15.volumeRatio) {
+        return b.t15.volumeRatio - a.t15.volumeRatio;
+      }
+      return b.oiPct - a.oiPct;
+    });
+
   const rejected = [
     ...allResults
       .filter(r => !r.gates.mathApproved)
@@ -563,9 +610,19 @@ export async function scanMarket({
         oiPct: r.oiPct,
         quoteVolume: r.quoteVolume,
         confirmation: r.confirmation.label,
-        reason: r.rejectionReason || 'Filtro técnico não confirmado'
+        candidateTier: r.candidateTier,
+        reasons: r.rejectionReasons?.length
+          ? r.rejectionReasons
+          : ['Filtro técnico não confirmado'],
+        reason:
+          r.rejectionReasons?.[0] ||
+          r.rejectionReason ||
+          'Filtro técnico não confirmado'
       })),
-    ...preRejected
+    ...preRejected.map(r => ({
+      ...r,
+      reasons: [r.reason || 'Falha de análise']
+    }))
   ].sort((a, b) => {
     const aScore = Number.isFinite(a.score) ? a.score : -1;
     const bScore = Number.isFinite(b.score) ? b.score : -1;
@@ -574,11 +631,24 @@ export async function scanMarket({
 
   return {
     signals,
+    preCandidates,
     snapshots: allResults,
     debug: {
       selectedMarkets: markets.length,
       analyzedMarkets: allResults.length,
       mathApproved: signals.length,
+      preCandidateMinScore,
+      preCandidates: preCandidates.map(r => ({
+        symbol: r.symbol,
+        exchange: r.exchange,
+        side: r.side,
+        score: r.score,
+        volumeRatio: r.t15.volumeRatio,
+        oiPct: r.oiPct,
+        quoteVolume: r.quoteVolume,
+        reasons: r.rejectionReasons,
+        reason: r.rejectionReason || 'Pré-candidato'
+      })),
       rejected
     }
   };
@@ -637,7 +707,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.3.2: filtro matemático + IA + diagnóstico de rejeições. ` +
+    `<i>V1.3.3: filtro matemático + IA + pré-candidatos em watchlist. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

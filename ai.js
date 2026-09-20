@@ -25,6 +25,7 @@ function buildPayload(signal) {
       exchange: signal.exchange,
       side: signal.side,
       score: signal.score,
+      tier: signal.candidateTier || 'STANDARD',
       confirmation: signal.confirmation?.label || '',
       price: num(signal.entry, 8),
       change24hPct: num(signal.change24h, 3),
@@ -61,24 +62,28 @@ function buildPayload(signal) {
       fundingRatePct: num(signal.fundingRate, 5)
     },
     btcContext: signal.btcContext || null,
-    deterministicReasons: (signal.reasons || []).slice(0, 6)
+    deterministicReasons: (signal.reasons || []).slice(0, 6),
+    technicalGateFailures: (signal.rejectionReasons || []).slice(0, 6)
   };
 }
 
 function systemPrompt() {
   return [
     'Você é a segunda camada de validação de um scanner de futuros de criptomoedas.',
-    'Sua função é FILTRAR sinais; não invente dados ausentes e não tente maximizar quantidade de operações.',
+    'Sua função é FILTRAR sinais e watchlists; não invente dados ausentes e não tente maximizar quantidade de operações.',
     'Avalie confluência multi-timeframe, volume, Open Interest, funding, RSI, MACD, distância do stop e contexto do BTC.',
-    'O scanner matemático já aplicou filtros básicos. Procure principalmente contradições, tendência esticada, baixa participação e divergências.',
-    'A decisão deve ser APPROVE, WAIT ou REJECT.',
-    'APPROVE somente quando o lado candidato estiver coerente com o conjunto dos dados.',
+    'Existem dois tiers: STANDARD e PRE_CANDIDATE.',
+    'STANDARD já passou pelo filtro técnico e pode receber APPROVE, WATCH, WAIT ou REJECT.',
+    'PRE_CANDIDATE tem score abaixo do mínimo de entrada e NUNCA pode receber APPROVE.',
+    'Para PRE_CANDIDATE use WATCH se vale acompanhar porque está perto de confirmar; WAIT se ainda falta confirmação clara; REJECT se está fraco ou contraditório.',
+    'WATCH significa apenas observação, nunca entrada.',
+    'APPROVE somente quando um STANDARD estiver coerente com o conjunto dos dados.',
     'WAIT quando a ideia for plausível, mas faltarem confirmação/participação ou houver sinais mistos.',
     'REJECT quando houver contradição relevante, risco assimétrico ruim ou contexto oposto.',
     'Não altere o lado candidato. Se você preferir a direção oposta, use REJECT.',
     'Retorne SOMENTE JSON válido, sem markdown.',
     'Formato obrigatório:',
-    '{"decision":"APPROVE|WAIT|REJECT","confidence":0-100,"risk":"LOW|MEDIUM|HIGH","style":"SCALP|NORMAL","reason":"frase curta em português","warnings":["item curto"]}'
+    '{"decision":"APPROVE|WATCH|WAIT|REJECT","confidence":0-100,"risk":"LOW|MEDIUM|HIGH","style":"SCALP|NORMAL","reason":"frase curta em português","warnings":["item curto"]}'
   ].join(' ');
 }
 
@@ -103,7 +108,7 @@ function parseJson(content) {
   const obj = JSON.parse(raw);
 
   const decision = String(obj.decision || '').toUpperCase();
-  if (!['APPROVE', 'WAIT', 'REJECT'].includes(decision)) {
+  if (!['APPROVE', 'WATCH', 'WAIT', 'REJECT'].includes(decision)) {
     throw new Error(`Decisão inválida da IA: ${decision || 'vazia'}`);
   }
 
@@ -151,7 +156,7 @@ export async function analyzeSignalWithAI(signal, {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
         'HTTP-Referer': process.env.OPENROUTER_SITE_URL || 'https://crypto-futures-bot.onrender.com',
-        'X-Title': 'Crypto Futures Scanner V1.3.2 Free'
+        'X-Title': 'Crypto Futures Scanner V1.3.3 Free'
       },
       body: JSON.stringify({
         model,
@@ -181,7 +186,20 @@ export async function analyzeSignalWithAI(signal, {
 
     const data = JSON.parse(body);
     const content = data?.choices?.[0]?.message?.content;
-    const parsed = parseJson(content);
+    let parsed = parseJson(content);
+
+    // Segurança: pré-candidato nunca vira entrada, mesmo se o modelo
+    // devolver APPROVE contrariando o prompt.
+    if (
+      signal.candidateTier === 'PRE_CANDIDATE' &&
+      parsed.decision === 'APPROVE'
+    ) {
+      parsed = {
+        ...parsed,
+        decision: 'WATCH',
+        reason: `Pré-candidato: ${parsed.reason}`.slice(0, 240)
+      };
+    }
 
     return {
       ...parsed,
