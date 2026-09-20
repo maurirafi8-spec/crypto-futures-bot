@@ -91,6 +91,10 @@ function analyzeTf(candles) {
     Math.max(1, previousVolumes.length);
 
   return {
+    openTime: c.openTime,
+    open: c.open,
+    high: c.high,
+    low: c.low,
     price: c.close,
     ema20: last(e20),
     ema50: last(e50),
@@ -172,8 +176,7 @@ function scoreSignal(t15, t1h, t4h, oiPct, fundingRate) {
     }
   }
 
-  // A Coinalyze já retorna funding em percentual.
-  // Ex.: 0.005 significa 0.005%, então não multiplicamos por 100.
+  // Coinalyze já retorna funding em percentual.
   if (fundingRate <= -0.01) {
     add('LONG', 4, `Funding ${fundingRate.toFixed(4)}%`);
   }
@@ -188,6 +191,39 @@ function scoreSignal(t15, t1h, t4h, oiPct, fundingRate) {
     side,
     score: Math.min(100, Math.max(long, short)),
     reasons: side === 'LONG' ? whyLong : whyShort
+  };
+}
+
+function confirmationStatus(t15, oiPct, minVolumeRatio, minOiPct) {
+  const volumeOk = t15.volumeRatio >= minVolumeRatio;
+  const oiOk = oiPct >= minOiPct;
+
+  // Uma confirmação muito forte pode compensar a outra fraca.
+  const strongVolume = t15.volumeRatio >= 1.15;
+  const strongOi = oiPct >= 0.5;
+
+  const confirmed =
+    (volumeOk && oiOk) ||
+    strongVolume ||
+    strongOi;
+
+  let label = '⏳ AGUARDANDO';
+
+  if (strongVolume && strongOi) {
+    label = '🔥 DUPLA CONFIRMAÇÃO';
+  } else if (strongOi) {
+    label = '✅ OI FORTE';
+  } else if (strongVolume) {
+    label = '✅ VOLUME FORTE';
+  } else if (volumeOk && oiOk) {
+    label = '✅ VOLUME + OI';
+  }
+
+  return {
+    confirmed,
+    label,
+    volumeOk,
+    oiOk
   };
 }
 
@@ -258,7 +294,9 @@ function chooseMarkets(markets, exchangeNames, limit) {
 export async function scanMarket({
   topMarkets = 4,
   minQuoteVolume = 50_000_000,
-  minScore = 70
+  minScore = 70,
+  minVolumeRatio = 0.70,
+  minOiPct = 0.05
 } = {}) {
   const [marketList, exchangeList] = await Promise.all([
     futureMarkets(),
@@ -315,7 +353,7 @@ export async function scanMarket({
     oiRaw.map(x => [x.symbol, x.history || []])
   );
 
-  const results = [];
+  const allResults = [];
 
   for (const market of markets) {
     try {
@@ -370,9 +408,15 @@ export async function scanMarket({
       const fundingRate = fundingMap.get(market.symbol) || 0;
 
       const sig = scoreSignal(t15, t1h, t4h, oiPct, fundingRate);
+      const confirmation = confirmationStatus(
+        t15,
+        oiPct,
+        minVolumeRatio,
+        minOiPct
+      );
       const levels = buildLevels(sig.side, t15.price, t15.atr);
 
-      results.push({
+      allResults.push({
         symbol: market.symbol_on_exchange || `${market.base_asset}USDT`,
         dataSymbol: market.symbol,
         exchange: market.exchangeName,
@@ -380,6 +424,7 @@ export async function scanMarket({
         change24h,
         ...sig,
         ...levels,
+        confirmation,
         t15,
         t1h,
         t4h,
@@ -391,9 +436,17 @@ export async function scanMarket({
     }
   }
 
-  return results
-    .filter(r => r.score >= minScore)
+  const signals = allResults
+    .filter(r =>
+      r.score >= minScore &&
+      r.confirmation.confirmed
+    )
     .sort((a, b) => b.score - a.score);
+
+  return {
+    signals,
+    snapshots: allResults
+  };
 }
 
 function signalStrength(score) {
@@ -424,7 +477,8 @@ export function signalText(s) {
     `${emoji} <b>${s.symbol} — ${s.side}</b>\n` +
     `🏦 ${s.exchange}\n` +
     `⭐ Score: <b>${s.score}/100</b>\n` +
-    `💪 Força: <b>${signalStrength(s.score)}</b>\n\n` +
+    `💪 Força: <b>${signalStrength(s.score)}</b>\n` +
+    `🔎 Confirmação: <b>${s.confirmation.label}</b>\n\n` +
 
     `💰 Entrada: <b>${n(s.entry)}</b>\n` +
     `🛑 Stop: <b>${n(s.stop)}</b>\n` +
@@ -442,7 +496,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>Sinal técnico experimental. ` +
+    `<i>O bot só envia sinais confirmados por volume/OI. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }
