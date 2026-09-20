@@ -469,6 +469,29 @@ export async function scanMarket({
     }
   }
 
+  const btc = allResults.find(r =>
+    String(r.symbol).toUpperCase().startsWith('BTC')
+  );
+
+  const btcContext = btc
+    ? {
+        side: btc.side,
+        score: btc.score,
+        change24hPct: Number(btc.change24h.toFixed(3)),
+        trend15m: btc.t15.bullish ? 'BULLISH' : btc.t15.bearish ? 'BEARISH' : 'MIXED',
+        trend1h: btc.t1h.bullish ? 'BULLISH' : btc.t1h.bearish ? 'BEARISH' : 'MIXED',
+        trend4h: btc.t4h.bullish ? 'BULLISH' : btc.t4h.bearish ? 'BEARISH' : 'MIXED',
+        rsi15m: Number(btc.t15.rsi.toFixed(2)),
+        volumeRatio15m: Number(btc.t15.volumeRatio.toFixed(3)),
+        openInterestChangePct: Number(btc.oiPct.toFixed(3)),
+        fundingRatePct: Number(btc.fundingRate.toFixed(5))
+      }
+    : null;
+
+  for (const r of allResults) {
+    r.btcContext = btcContext;
+  }
+
   const signals = allResults
     .filter(r =>
       r.score >= minScore &&
@@ -511,7 +534,13 @@ export function signalText(s) {
     `🏦 ${s.exchange}\n` +
     `⭐ Score: <b>${s.score}/100</b>\n` +
     `💪 Força: <b>${signalStrength(s.score)}</b>\n` +
-    `🔎 Confirmação: <b>${s.confirmation.label}</b>\n\n` +
+    `🔎 Confirmação: <b>${s.confirmation.label}</b>\n` +
+    (s.ai
+      ? `🤖 IA: <b>${s.ai.decision}</b> · Confiança ${Math.round(s.ai.confidence)}% · ` +
+        `${s.ai.style} · Risco ${s.ai.risk}\n` +
+        `🧠 IA: ${s.ai.reason}\n`
+      : '') +
+    `\n` +
 
     `💰 Entrada: <b>${n(s.entry)}</b>\n` +
     `🛑 Stop: <b>${n(s.stop)}</b>\n` +
@@ -529,7 +558,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.2.2: exige confirmação por Volume/OI e bloqueia divergência forte de OI. ` +
+    `<i>V1.3: filtro matemático + validação opcional por IA antes do alerta. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

@@ -1,0 +1,42 @@
+CRYPTO FUTURES SCANNER V1.3.1 — OPENROUTER FREE
+
+SUBSTITUA/ADICIONE NO GITHUB:
+- ai.js
+- binance.js
+- index.js
+- indicators.js
+- scanner.js
+- telegram.js
+
+O QUE MUDA NA V1.3.1 FREE
+- Modelo padrão: openrouter/free.
+- Aceita AI_MODEL ou OPENROUTER_MODEL (AI_MODEL tem prioridade).
+- Só o MELHOR candidato matemático por scan pode ir para a IA.
+- Cache de 30 minutos para o mesmo ativo/lado: reaproveita a decisão sem gastar chamada.
+- Intervalo mínimo de 30 minutos entre chamadas novas à IA.
+- Limite interno de 45 chamadas por dia, deixando uma pequena margem dentro da cota gratuita.
+- /status mostra quantas chamadas da IA foram usadas no dia.
+- /ia mostra as decisões recentes e o orçamento restante.
+- Se a cota/intervalo bloquear uma consulta, o bot NÃO libera o sinal sem validação (AI_FAIL_OPEN=false).
+- Mantém todos os filtros V1.2.2: score, volume, OI, funding, bloqueio de divergência, TP/STOP e acompanhamento.
+
+NO RENDER
+Obrigatória:
+OPENROUTER_API_KEY=sua_chave
+
+Recomendada:
+AI_MODEL=openrouter/free
+
+Pode deixar sem criar; estes já são os padrões:
+AI_ENABLED=true
+AI_MIN_CONFIDENCE=65
+AI_MAX_CANDIDATES=1
+AI_DAILY_LIMIT=45
+AI_MIN_GAP_MINUTES=30
+AI_CACHE_MINUTES=30
+AI_FAIL_OPEN=false
+
+IMPORTANTE
+- Se você já tinha OPENROUTER_MODEL configurado com um modelo pago, crie AI_MODEL=openrouter/free para forçar o modo grátis.
+- O contador de chamadas e o cache ficam em memória e reiniciam após deploy/restart do Render.
+- O histórico do bot também continua sendo experimental; valide os resultados antes de usar capital real.
