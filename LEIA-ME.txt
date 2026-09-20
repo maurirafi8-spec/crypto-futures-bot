@@ -1,4 +1,4 @@
-CRYPTO FUTURES SCANNER V1.2.1
+CRYPTO FUTURES SCANNER V1.2.2
 
 SUBSTITUA NO GITHUB ESTES 5 ARQUIVOS:
 - binance.js
@@ -7,23 +7,28 @@ SUBSTITUA NO GITHUB ESTES 5 ARQUIVOS:
 - scanner.js
 - telegram.js
 
-AJUSTE PRINCIPAL DA V1.2.1
-- Score mínimo continua 70.
-- Nunca envia sinal com volume abaixo de 0.40x.
-- Depois desse piso, confirma o sinal quando:
-  * Volume >= 0.60x; OU
-  * Open Interest >= +0.50%.
-- Se Volume e OI confirmarem juntos, o alerta mostra dupla confirmação.
+AJUSTES PRINCIPAIS DA V1.2.2
+- Volume mínimo 24h padrão: US$20 milhões.
+- Score mínimo: 70.
+- Piso absoluto de volume: 0.40x.
+- Confirmação por Volume >= 0.60x OU OI >= +0.50%.
+- NOVA PROTEÇÃO DE OI:
+  * Se o Open Interest cair abaixo de -1.00%, o sinal é bloqueado.
+  * Exceção somente quando Score >= 82 E Volume >= 1.00x.
+- Exemplo: o SOL LONG com OI -2.80%, score 70 e volume 0.66x agora é REJEITADO.
 - Mantém acompanhamento automático de TP1, TP2, TP3 e STOP.
 - Mantém /ativos e /resultados.
+- Mantém proteção automática contra erro 429 da Coinalyze.
 
-IMPORTANTE SOBRE O RENDER
-Esta versão usa NOVOS nomes de variáveis opcionais para não herdar os valores da V1.2:
-V121_VOLUME_CONFIRM_RATIO=0.60
-V121_OI_CONFIRM_PCT=0.50
-V121_HARD_MIN_VOLUME_RATIO=0.40
+VARIÁVEIS OPCIONAIS NO RENDER
+Você NÃO precisa criar nenhuma delas; os valores abaixo já são os padrões:
+V122_VOLUME_CONFIRM_RATIO=0.60
+V122_OI_CONFIRM_PCT=0.50
+V122_HARD_MIN_VOLUME_RATIO=0.40
+V122_OI_REJECT_PCT=-1.00
+V122_EXCEPTION_SCORE=82
+V122_EXCEPTION_VOLUME_RATIO=1.00
 
-Você NÃO precisa criar essas variáveis. Os valores acima já são os padrões do código.
-Se existirem MIN_VOLUME_RATIO ou MIN_OI_CONFIRM_PCT antigos no Render, eles serão ignorados pela V1.2.1.
+Se MIN_QUOTE_VOLUME_USDT já estiver como 20000000 no Render, pode deixar como está.
 
-O histórico de acompanhamento fica em memória e reinicia em novo deploy/restart.
+O histórico de acompanhamento fica em memória e reinicia após novo deploy/restart.

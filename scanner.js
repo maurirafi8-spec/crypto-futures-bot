@@ -197,23 +197,41 @@ function scoreSignal(t15, t1h, t4h, oiPct, fundingRate) {
 function confirmationStatus(
   t15,
   oiPct,
+  score,
   minVolumeRatio,
   minOiPct,
-  hardMinVolumeRatio
+  hardMinVolumeRatio,
+  oiRejectPct,
+  exceptionScore,
+  exceptionVolumeRatio
 ) {
   const volumeRatio = Number(t15.volumeRatio || 0);
   const volumeFloorOk = volumeRatio >= hardMinVolumeRatio;
   const volumeOk = volumeRatio >= minVolumeRatio;
   const oiOk = oiPct >= minOiPct;
 
-  // V1.2.1: nunca confirma mercado com volume extremamente fraco.
-  // Passando o piso, basta uma confirmação relevante: Volume OU OI.
-  const confirmed = volumeFloorOk && (volumeOk || oiOk);
+  // V1.2.2: protege contra divergência forte de Open Interest.
+  // Se o OI cair abaixo do limite, o sinal é rejeitado.
+  // Exceção: score alto + volume realmente forte.
+  const oiDivergence = oiPct < oiRejectPct;
+  const divergenceException =
+    oiDivergence &&
+    score >= exceptionScore &&
+    volumeRatio >= exceptionVolumeRatio;
+
+  const confirmed =
+    volumeFloorOk &&
+    (volumeOk || oiOk) &&
+    (!oiDivergence || divergenceException);
 
   let label = '⏳ AGUARDANDO';
 
   if (!volumeFloorOk) {
     label = '🚫 VOLUME MUITO BAIXO';
+  } else if (oiDivergence && !divergenceException) {
+    label = '🚫 OI EM DIVERGÊNCIA';
+  } else if (divergenceException) {
+    label = '⚠️ OI NEGATIVO / VOLUME FORTE';
   } else if (volumeOk && oiOk) {
     label = '🔥 VOLUME + OI';
   } else if (oiOk) {
@@ -227,7 +245,9 @@ function confirmationStatus(
     label,
     volumeFloorOk,
     volumeOk,
-    oiOk
+    oiOk,
+    oiDivergence,
+    divergenceException
   };
 }
 
@@ -297,11 +317,14 @@ function chooseMarkets(markets, exchangeNames, limit) {
 
 export async function scanMarket({
   topMarkets = 4,
-  minQuoteVolume = 50_000_000,
+  minQuoteVolume = 20_000_000,
   minScore = 70,
   minVolumeRatio = 0.60,
   minOiPct = 0.50,
-  hardMinVolumeRatio = 0.40
+  hardMinVolumeRatio = 0.40,
+  oiRejectPct = -1.00,
+  exceptionScore = 82,
+  exceptionVolumeRatio = 1.00
 } = {}) {
   const [marketList, exchangeList] = await Promise.all([
     futureMarkets(),
@@ -416,9 +439,13 @@ export async function scanMarket({
       const confirmation = confirmationStatus(
         t15,
         oiPct,
+        sig.score,
         minVolumeRatio,
         minOiPct,
-        hardMinVolumeRatio
+        hardMinVolumeRatio,
+        oiRejectPct,
+        exceptionScore,
+        exceptionVolumeRatio
       );
       const levels = buildLevels(sig.side, t15.price, t15.atr);
 
@@ -502,7 +529,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.2.1: exige volume mínimo de mercado e confirmação por Volume ou OI. ` +
+    `<i>V1.2.2: exige confirmação por Volume/OI e bloqueia divergência forte de OI. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

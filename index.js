@@ -9,11 +9,14 @@ const cfg = {
   intervalMin: Number(process.env.SCAN_INTERVAL_MINUTES || 5),
   topMarkets: Math.min(Number(process.env.TOP_MARKETS || 4), 4),
   minScore: Number(process.env.MIN_SCORE || 70),
-  minVolume: Number(process.env.MIN_QUOTE_VOLUME_USDT || 50_000_000),
+  minVolume: Number(process.env.MIN_QUOTE_VOLUME_USDT || 20_000_000),
   cooldownMin: Number(process.env.COOLDOWN_MINUTES || 90),
-  minVolumeRatio: Number(process.env.V121_VOLUME_CONFIRM_RATIO || 0.60),
-  minOiPct: Number(process.env.V121_OI_CONFIRM_PCT || 0.50),
-  hardMinVolumeRatio: Number(process.env.V121_HARD_MIN_VOLUME_RATIO || 0.40)
+  minVolumeRatio: Number(process.env.V122_VOLUME_CONFIRM_RATIO || 0.60),
+  minOiPct: Number(process.env.V122_OI_CONFIRM_PCT || 0.50),
+  hardMinVolumeRatio: Number(process.env.V122_HARD_MIN_VOLUME_RATIO || 0.40),
+  oiRejectPct: Number(process.env.V122_OI_REJECT_PCT || -1.00),
+  exceptionScore: Number(process.env.V122_EXCEPTION_SCORE || 82),
+  exceptionVolumeRatio: Number(process.env.V122_EXCEPTION_VOLUME_RATIO || 1.00)
 };
 
 if (!cfg.token) throw new Error('BOT_TOKEN não configurado');
@@ -274,7 +277,10 @@ async function doScan({ forceReply = false } = {}) {
       minScore: cfg.minScore,
       minVolumeRatio: cfg.minVolumeRatio,
       minOiPct: cfg.minOiPct,
-      hardMinVolumeRatio: cfg.hardMinVolumeRatio
+      hardMinVolumeRatio: cfg.hardMinVolumeRatio,
+      oiRejectPct: cfg.oiRejectPct,
+      exceptionScore: cfg.exceptionScore,
+      exceptionVolumeRatio: cfg.exceptionVolumeRatio
     });
 
     // Primeiro atualiza sinais antigos com os preços/candles deste scan.
@@ -330,7 +336,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.2.1</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.2.2</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o mercado agora\n' +
       '/status — ver configuração\n' +
@@ -342,7 +348,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.2.1\n` +
+      `✅ Online — V1.2.2\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🪙 Top mercados: ${cfg.topMarkets}\n` +
       `⭐ Score mínimo: ${cfg.minScore}\n` +
@@ -350,6 +356,8 @@ async function handleMessage(msg) {
       `📊 Volume para confirmar: ${cfg.minVolumeRatio.toFixed(2)}x\n` +
       `🚫 Piso absoluto de volume: ${cfg.hardMinVolumeRatio.toFixed(2)}x\n` +
       `📈 OI para confirmar: +${cfg.minOiPct.toFixed(2)}%\n` +
+      `🛡 Bloqueio OI: abaixo de ${cfg.oiRejectPct.toFixed(2)}%\n` +
+      `⚡ Exceção: score ${cfg.exceptionScore}+ e volume ${cfg.exceptionVolumeRatio.toFixed(2)}x+\n` +
       `🧊 Cooldown: ${cfg.cooldownMin} min\n` +
       `📡 Dados: Coinalyze\n` +
       `🎯 Acompanhando: ${activeSignals.size} sinal(is)`
@@ -392,7 +400,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.2.1',
+    version: '1.2.2',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -400,7 +408,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.2.1 pronto ✅');
+console.log('Crypto Futures Scanner V1.2.2 pronto ✅');
 
 setTimeout(() => doScan().catch(console.error), 5000);
 setInterval(() => doScan().catch(console.error), cfg.intervalMin * 60_000);
