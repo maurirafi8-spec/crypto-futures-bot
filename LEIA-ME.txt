@@ -1,4 +1,4 @@
-CRYPTO FUTURES SCANNER V1.3.4 FREE — CLOSED CANDLES
+CRYPTO FUTURES SCANNER V1.3.5 FREE — PENDING AI
 
 SUBSTITUA/ADICIONE NO GITHUB:
 - ai.js
@@ -8,44 +8,64 @@ SUBSTITUA/ADICIONE NO GITHUB:
 - scanner.js
 - telegram.js
 
-CORREÇÕES IMPORTANTES DA V1.3.4
-1) SOMENTE CANDLES FECHADOS
-- 15m: ignora a vela ainda em formação.
-- 1h: ignora a vela ainda em formação.
-- 4h: agrega 1h e ignora o bloco 4h ainda incompleto.
-- Volume relativo e indicadores não ficam artificialmente baixos logo após abrir uma vela.
-- Volume 24h usa 96 candles de 15m FECHADOS.
-- Open Interest histórico também tenta ignorar o período de 15m ainda aberto.
+NOVIDADE PRINCIPAL
+Quando um ativo PASSA 100% pelo filtro técnico, mas o OpenRouter está
+na janela de economia do plano grátis, o bot NÃO esconde a oportunidade.
 
-2) /ia MAIS ÚTIL
-- Mantém o histórico das decisões bem-sucedidas desde o último deploy.
-- Se a IA não for chamada por economia do plano grátis, /ia mostra o último evento.
-- Se a chamada falhar, /ia informa o último erro em vez de parecer que nada aconteceu.
+Ele mostra:
 
-3) "QUASE APROVADO"
-- Se um ativo já tem score >= 70, volume 24h suficiente e falhou em apenas UM filtro,
-  ele aparece destacado como 🟡 QUASE APROVADO.
-- Continua NÃO sendo sinal de entrada.
-- Ajuda a identificar casos como score alto + OI forte onde só faltou um gate.
+🟠 SINAL TÉCNICO APROVADO
+🤖 AGUARDANDO VALIDAÇÃO DA IA
 
-REGRAS QUE CONTINUAM
-- 6 mercados.
-- Score 70+ para sinal real.
-- Pré-candidato IA: 60–69.
-- Volume mínimo 24h: US$20M.
-- Volume confirmação: 0.60x.
-- Piso de volume: 0.40x.
-- OI confirmação: +0.50%.
-- Bloqueio OI abaixo de -1.00%.
-- Exceção OI: score 82+ e volume 1.00x+.
-- OpenRouter FREE: 1 candidato, janela mínima 30 min, cache 30 min, limite interno 45/dia.
+BNBUSDT LONG
+⭐ Score: 80/100
+📊 Volume relativo: ...
+📈 OI: ...
+💵 Volume 24h: ...
+⏳ próxima chamada em ~XX min
+
+IMPORTANTE
+Esse candidato NÃO é entrada.
+Ele só vira sinal de verdade se a camada IA responder APPROVE com a
+confiança mínima configurada.
+
+COMANDO /ia
+Agora também mostra:
+
+⏳ PENDENTE DE IA
+BNBUSDT LONG
+Score 80/100
+Volume ...
+OI ...
+Motivo: economia do plano grátis
+Próxima chamada ~XX min
+
+COMANDO /status
+Mostra a linha:
+🟠 Pendente de IA: BNBUSDT LONG
+ou:
+🟠 Pendente de IA: nenhum
+
+REGRAS MANTIDAS
+- 6 mercados
+- score 70+ para sinal real
+- pré-candidato 60–69
+- candles SOMENTE FECHADOS
+- volume mínimo 24h US$20M
+- volume de confirmação 0.60x
+- piso absoluto 0.40x
+- OI confirmação +0.50%
+- bloqueio OI abaixo de -1.00%
+- OpenRouter Free com 1 candidato por janela
+- intervalo mínimo 30 min
+- cache 30 min
+- limite interno 45 chamadas/dia
 
 TESTE APÓS DEPLOY
 /status
 /scan
-/debug
 /ia
+/debug
 
-No /status deve aparecer:
-V1.3.4 FREE
-🕯 Candles: SOMENTE FECHADOS
+A V1.3.5 nunca envia candidato pendente para /ativos e nunca o acompanha
+como operação até a IA realmente aprovar.

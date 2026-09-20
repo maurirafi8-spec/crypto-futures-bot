@@ -773,7 +773,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.3.4: somente candles fechados + IA + watchlist + quase aprovados. ` +
+    `<i>V1.3.5: candles fechados + IA + watchlist + pendência técnica visível. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

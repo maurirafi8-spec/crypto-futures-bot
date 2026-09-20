@@ -156,7 +156,7 @@ export async function analyzeSignalWithAI(signal, {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
         'HTTP-Referer': process.env.OPENROUTER_SITE_URL || 'https://crypto-futures-bot.onrender.com',
-        'X-Title': 'Crypto Futures Scanner V1.3.4 Free'
+        'X-Title': 'Crypto Futures Scanner V1.3.5 Free'
       },
       body: JSON.stringify({
         model,

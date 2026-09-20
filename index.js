@@ -47,6 +47,12 @@ const activeSignals = new Map();
 const resultHistory = [];
 const aiHistory = [];
 let lastAiEvent = null;
+
+// Último candidato que passou 100% pelo filtro técnico,
+// mas ficou aguardando a janela gratuita da IA.
+// Isso NÃO é sinal de entrada e nunca entra em activeSignals.
+let pendingAiCandidate = null;
+
 let lastScanReport = null;
 
 
@@ -132,6 +138,74 @@ function registerAICall() {
   aiCallsToday += 1;
   aiLastCallAt = Date.now();
   lastAiSkipReason = '';
+}
+
+function aiWaitInfo() {
+  refreshAIBudgetDay();
+
+  if (aiCallsToday >= cfg.aiDailyLimit) {
+    return {
+      blocked: true,
+      minutes: null,
+      text: `limite diário gratuito atingido (${aiCallsToday}/${cfg.aiDailyLimit})`
+    };
+  }
+
+  if (!aiLastCallAt) {
+    return {
+      blocked: false,
+      minutes: 0,
+      text: 'IA disponível agora'
+    };
+  }
+
+  const waitMs =
+    cfg.aiMinGapMin * 60_000 -
+    (Date.now() - aiLastCallAt);
+
+  if (waitMs <= 0) {
+    return {
+      blocked: false,
+      minutes: 0,
+      text: 'IA disponível agora'
+    };
+  }
+
+  const minutes = Math.max(1, Math.ceil(waitMs / 60_000));
+
+  return {
+    blocked: true,
+    minutes,
+    text: `próxima chamada em ~${minutes} min`
+  };
+}
+
+function setPendingAI(signal, reason = '') {
+  const wait = aiWaitInfo();
+
+  pendingAiCandidate = {
+    symbol: signal.symbol,
+    dataSymbol: signal.dataSymbol,
+    exchange: signal.exchange,
+    side: signal.side,
+    score: signal.score,
+    entry: signal.entry,
+    stop: signal.stop,
+    tp1: signal.tp1,
+    tp2: signal.tp2,
+    tp3: signal.tp3,
+    volumeRatio: Number(signal.t15?.volumeRatio || 0),
+    oiPct: Number(signal.oiPct || 0),
+    fundingRate: Number(signal.fundingRate || 0),
+    quoteVolume: Number(signal.quoteVolume || 0),
+    confirmation: signal.confirmation?.label || '',
+    reason: reason || wait.text,
+    createdAt: Date.now()
+  };
+}
+
+function clearPendingAI() {
+  pendingAiCandidate = null;
 }
 
 function alertKey(s) {
@@ -399,26 +473,45 @@ function aiHistoryText() {
   }
 
   const budget = aiBudgetStats();
+  const lines = [];
 
-  if (!aiHistory.length) {
-    const extra = lastAiEvent?.message
-      ? `\nÚltimo evento: ${lastAiEvent.message}`
-      : '';
-
-    return (
-      `🤖 A IA ainda não concluiu nenhuma avaliação desde o último deploy.` +
-      `${extra}\n` +
-      `🆓 Uso IA hoje: ${budget.used}/${budget.limit}`
+  if (pendingAiCandidate) {
+    lines.push(
+      '⏳ <b>PENDENTE DE IA</b>',
+      `${pendingAiCandidate.symbol} ${pendingAiCandidate.side}`,
+      `⭐ Score: ${pendingAiCandidate.score}/100`,
+      `📊 Volume: ${pendingAiCandidate.volumeRatio.toFixed(2)}x`,
+      `📈 OI: ${pendingAiCandidate.oiPct >= 0 ? '+' : ''}${pendingAiCandidate.oiPct.toFixed(2)}%`,
+      `Motivo: ${pendingAiCandidate.reason || aiWaitInfo().text}`,
+      `🤖 ${aiWaitInfo().text}`,
+      '',
+      '<i>Este candidato passou no filtro técnico, mas ainda NÃO é entrada.</i>'
     );
   }
 
-  const lines = [
+  if (!aiHistory.length) {
+    const extra = lastAiEvent?.message
+      ? `Último evento: ${lastAiEvent.message}`
+      : 'Nenhuma decisão concluída desde o último deploy.';
+
+    lines.push(
+      ...(lines.length ? ['', '────────────'] : []),
+      '🤖 <b>Histórico da IA</b>',
+      extra,
+      `🆓 Uso IA hoje: ${budget.used}/${budget.limit}`
+    );
+
+    return lines.join('\n');
+  }
+
+  lines.push(
+    ...(lines.length ? ['', '────────────'] : []),
     `🤖 <b>Histórico da IA desde o último deploy</b>`,
     `Modelo: <code>${aiModel()}</code>`,
     `🆓 Uso IA hoje: ${budget.used}/${budget.limit} (${budget.remaining} restantes)`,
     `⏳ Intervalo mínimo: ${budget.minGapMin} min | Cache: ${budget.cacheMin} min`,
     ''
-  ];
+  );
 
   for (const r of aiHistory.slice(0, 10)) {
     lines.push(
@@ -436,6 +529,41 @@ function aiHistoryText() {
 function formatMillions(value) {
   if (!Number.isFinite(Number(value))) return '—';
   return `$${(Number(value) / 1e6).toFixed(1)}M`;
+}
+
+function pendingAIText(pending = pendingAiCandidate) {
+  if (!pending) {
+    return '✅ Nenhum sinal técnico está aguardando validação da IA.';
+  }
+
+  const wait = aiWaitInfo();
+
+  const oi = Number.isFinite(pending.oiPct)
+    ? `${pending.oiPct >= 0 ? '+' : ''}${pending.oiPct.toFixed(2)}%`
+    : '—';
+
+  const vol = Number.isFinite(pending.volumeRatio)
+    ? `${pending.volumeRatio.toFixed(2)}x`
+    : '—';
+
+  const price = Number(pending.entry);
+  const entryText = Number.isFinite(price)
+    ? fmt(price)
+    : '—';
+
+  return (
+    `🟠 <b>SINAL TÉCNICO APROVADO</b>\n` +
+    `🤖 <b>AGUARDANDO VALIDAÇÃO DA IA</b>\n\n` +
+    `${pending.side === 'LONG' ? '🟢' : '🔴'} ` +
+    `<b>${pending.symbol} ${pending.side}</b>\n` +
+    `⭐ Score: <b>${pending.score}/100</b>\n` +
+    `📊 Volume relativo: ${vol}\n` +
+    `📈 OI: ${oi}\n` +
+    `💵 Volume 24h: ${formatMillions(pending.quoteVolume)}\n` +
+    `💰 Entrada técnica: ${entryText}\n` +
+    `⏳ ${wait.text}\n\n` +
+    `<i>Não é entrada ainda. O sinal só será liberado se passar pela camada IA.</i>`
+  );
 }
 
 function debugCandidateText(r) {
@@ -509,6 +637,14 @@ function lastScanDebugText() {
     lines.push(`⏳ IA não chamada: ${a.skipReason}`);
   }
 
+  if (lastScanReport?.pendingAI) {
+    lines.push(
+      '',
+      '🟠 <b>Sinal técnico aprovado — pendente de IA</b>',
+      pendingAIText(lastScanReport.pendingAI)
+    );
+  }
+
   const bestNear = m?.nearApproved?.[0] || null;
   const bestPre = m?.preCandidates?.[0] || null;
 
@@ -574,6 +710,16 @@ function scanNoSignalText(report) {
       lines.push(`📉 ${a.lowConfidence} APPROVE abaixo da confiança mínima`);
     }
     if (a?.skipReason) lines.push(`🆓 IA economizada: ${a.skipReason}`);
+  }
+
+  if (report.pendingAI) {
+    lines.push(
+      '',
+      pendingAIText(report.pendingAI)
+    );
+
+    lines.push('', 'Use /ia para acompanhar o candidato pendente.');
+    return lines.join('\n');
   }
 
   const bestNear = m?.nearApproved?.[0] || null;
@@ -673,6 +819,14 @@ async function validateSignalsWithAI(signals) {
   for (const s of selected) {
     const cached = getCachedAI(s);
     if (cached) {
+      if (
+        pendingAiCandidate &&
+        pendingAiCandidate.symbol === s.symbol &&
+        pendingAiCandidate.side === s.side
+      ) {
+        clearPendingAI();
+      }
+
       meta.cacheHits += 1;
       console.log(`[ai] cache ${s.symbol}: ${cached.decision} ${Math.round(cached.confidence)}%`);
       rememberAI(s, cached);
@@ -702,6 +856,14 @@ async function validateSignalsWithAI(signals) {
 
     try {
       console.log(`[ai] avaliando ${s.symbol} ${s.side} com ${aiModel()}`);
+
+      if (
+        pendingAiCandidate &&
+        pendingAiCandidate.symbol === s.symbol &&
+        pendingAiCandidate.side === s.side
+      ) {
+        clearPendingAI();
+      }
 
       registerAICall();
       meta.apiCalls += 1;
@@ -803,6 +965,35 @@ async function doScan({ forceReply = false } = {}) {
     const aiResult = await validateSignalsWithAI(aiInput);
     const signals = aiResult.approved;
 
+    // V1.3.5:
+    // Se um STANDARD passou 100% pelo filtro técnico e a IA não pôde
+    // ser chamada por causa da janela/cota grátis, exibimos como PENDENTE.
+    // Continua bloqueado como entrada.
+    const standardCandidate = aiInput.find(
+      s => s.candidateTier === 'STANDARD'
+    );
+
+    const aiSkippedForBudget =
+      standardCandidate &&
+      aiResult.meta.skipped > 0 &&
+      aiResult.meta.apiCalls === 0 &&
+      aiResult.meta.cacheHits === 0 &&
+      aiResult.meta.skipReason;
+
+    if (aiSkippedForBudget) {
+      setPendingAI(
+        standardCandidate,
+        aiResult.meta.skipReason
+      );
+    } else if (
+      !standardCandidate ||
+      aiResult.meta.apiCalls > 0 ||
+      aiResult.meta.cacheHits > 0
+    ) {
+      // O mercado mudou ou a IA já avaliou a oportunidade atual.
+      clearPendingAI();
+    }
+
     console.log(
       `[scan] ${signals.length} sinais liberados após camada IA`
     );
@@ -812,7 +1003,10 @@ async function doScan({ forceReply = false } = {}) {
       durationMs: Date.now() - startedAt,
       math: debug,
       ai: aiResult.meta,
-      finalSignals: signals.length
+      finalSignals: signals.length,
+      pendingAI: pendingAiCandidate
+        ? { ...pendingAiCandidate }
+        : null
     };
 
     if (activeChatId) {
@@ -861,6 +1055,9 @@ async function doScan({ forceReply = false } = {}) {
         skipReason: ''
       },
       finalSignals: 0,
+      pendingAI: pendingAiCandidate
+        ? { ...pendingAiCandidate }
+        : null,
       error: error.message
     };
 
@@ -888,7 +1085,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.3.4 FREE</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.3.5 FREE</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o mercado agora\n' +
       '/status — ver configuração\n' +
@@ -902,7 +1099,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.3.4 FREE\n` +
+      `✅ Online — V1.3.5 FREE\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🪙 Top mercados: ${cfg.topMarkets}\n` +
       `⭐ Score mínimo para sinal: ${cfg.minScore}\n` +
@@ -921,6 +1118,7 @@ async function handleMessage(msg) {
       `✅ Confiança mínima IA: ${cfg.aiMinConfidence}%\n` +
       `🆓 IA grátis: ${aiBudgetStats().used}/${aiBudgetStats().limit} chamadas hoje\n` +
       `⏳ Economia IA: 1 candidato / mínimo ${cfg.aiMinGapMin} min / cache ${cfg.aiCacheMin} min\n` +
+      `🟠 Pendente de IA: ${pendingAiCandidate ? `${pendingAiCandidate.symbol} ${pendingAiCandidate.side}` : 'nenhum'}\n` +
       `🎯 Acompanhando: ${activeSignals.size} sinal(is)`
     );
   } else if (text.startsWith('/ativos')) {
@@ -965,20 +1163,23 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.3.4-free',
+    version: '1.3.5-free',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
     aiEnabled: aiEnabledNow(),
     aiModel: aiEnabledNow() ? aiModel() : null,
     aiHistory: aiHistory.length,
+    pendingAI: pendingAiCandidate
+      ? `${pendingAiCandidate.symbol}:${pendingAiCandidate.side}`
+      : null,
     lastScanAt: lastScanReport?.at ? new Date(lastScanReport.at).toISOString() : null,
     lastScanFinalSignals: lastScanReport?.finalSignals ?? null,
     time: new Date().toISOString()
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.3.4 FREE pronto ✅');
+console.log('Crypto Futures Scanner V1.3.5 FREE pronto ✅');
 
 setTimeout(() => doScan().catch(console.error), 5000);
 setInterval(() => doScan().catch(console.error), cfg.intervalMin * 60_000);
