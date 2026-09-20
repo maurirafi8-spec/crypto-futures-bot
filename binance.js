@@ -1,7 +1,11 @@
 const BASE = 'https://api.coinalyze.net/v1';
 const API_KEY = process.env.COINALYZE_API_KEY;
 
-async function get(path, params = {}) {
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function get(path, params = {}, tentativa = 0) {
   if (!API_KEY) {
     throw new Error('COINALYZE_API_KEY não configurada');
   }
@@ -17,10 +21,24 @@ async function get(path, params = {}) {
   const res = await fetch(url, {
     headers: {
       api_key: API_KEY,
-      'User-Agent': 'crypto-futures-scanner/1.0'
+      'User-Agent': 'crypto-futures-scanner/1.1'
     },
     signal: AbortSignal.timeout(20000)
   });
+
+  if (res.status === 429 && tentativa < 4) {
+    const retryAfter = Math.max(
+      1,
+      Number(res.headers.get('retry-after') || 10)
+    );
+
+    console.log(
+      `[Coinalyze] limite atingido. Aguardando ${retryAfter}s...`
+    );
+
+    await sleep((retryAfter + 1) * 1000);
+    return get(path, params, tentativa + 1);
+  }
 
   if (!res.ok) {
     throw new Error(`Coinalyze ${res.status}: ${await res.text()}`);
@@ -31,6 +49,14 @@ async function get(path, params = {}) {
 
 export async function futureMarkets() {
   return get('/future-markets');
+}
+
+let exchangesCache = null;
+
+export async function exchanges() {
+  if (exchangesCache) return exchangesCache;
+  exchangesCache = await get('/exchanges');
+  return exchangesCache;
 }
 
 export async function ohlcvHistory(symbols, interval, from, to) {

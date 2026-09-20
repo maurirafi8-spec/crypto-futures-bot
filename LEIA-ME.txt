@@ -1,0 +1,18 @@
+Crypto Futures Scanner V1.1
+
+Substitua no GitHub os arquivos:
+- binance.js
+- scanner.js
+- index.js
+
+Os arquivos indicators.js e telegram.js estão incluídos apenas como cópia de segurança e não precisam ser alterados se os seus já estão funcionando.
+
+No Render, mantenha:
+COINALYZE_API_KEY=sua_chave
+TOP_MARKETS=4
+MIN_SCORE=70
+MIN_QUOTE_VOLUME_USDT=50000000
+SCAN_INTERVAL_MINUTES=5
+COOLDOWN_MINUTES=90
+
+Depois faça o deploy e teste /status e /scan.
