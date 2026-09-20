@@ -194,34 +194,38 @@ function scoreSignal(t15, t1h, t4h, oiPct, fundingRate) {
   };
 }
 
-function confirmationStatus(t15, oiPct, minVolumeRatio, minOiPct) {
-  const volumeOk = t15.volumeRatio >= minVolumeRatio;
+function confirmationStatus(
+  t15,
+  oiPct,
+  minVolumeRatio,
+  minOiPct,
+  hardMinVolumeRatio
+) {
+  const volumeRatio = Number(t15.volumeRatio || 0);
+  const volumeFloorOk = volumeRatio >= hardMinVolumeRatio;
+  const volumeOk = volumeRatio >= minVolumeRatio;
   const oiOk = oiPct >= minOiPct;
 
-  // Uma confirmação muito forte pode compensar a outra fraca.
-  const strongVolume = t15.volumeRatio >= 1.15;
-  const strongOi = oiPct >= 0.5;
-
-  const confirmed =
-    (volumeOk && oiOk) ||
-    strongVolume ||
-    strongOi;
+  // V1.2.1: nunca confirma mercado com volume extremamente fraco.
+  // Passando o piso, basta uma confirmação relevante: Volume OU OI.
+  const confirmed = volumeFloorOk && (volumeOk || oiOk);
 
   let label = '⏳ AGUARDANDO';
 
-  if (strongVolume && strongOi) {
-    label = '🔥 DUPLA CONFIRMAÇÃO';
-  } else if (strongOi) {
-    label = '✅ OI FORTE';
-  } else if (strongVolume) {
-    label = '✅ VOLUME FORTE';
+  if (!volumeFloorOk) {
+    label = '🚫 VOLUME MUITO BAIXO';
   } else if (volumeOk && oiOk) {
-    label = '✅ VOLUME + OI';
+    label = '🔥 VOLUME + OI';
+  } else if (oiOk) {
+    label = '✅ OI FORTE';
+  } else if (volumeOk) {
+    label = '✅ VOLUME CONFIRMADO';
   }
 
   return {
     confirmed,
     label,
+    volumeFloorOk,
     volumeOk,
     oiOk
   };
@@ -295,8 +299,9 @@ export async function scanMarket({
   topMarkets = 4,
   minQuoteVolume = 50_000_000,
   minScore = 70,
-  minVolumeRatio = 0.70,
-  minOiPct = 0.05
+  minVolumeRatio = 0.60,
+  minOiPct = 0.50,
+  hardMinVolumeRatio = 0.40
 } = {}) {
   const [marketList, exchangeList] = await Promise.all([
     futureMarkets(),
@@ -412,7 +417,8 @@ export async function scanMarket({
         t15,
         oiPct,
         minVolumeRatio,
-        minOiPct
+        minOiPct,
+        hardMinVolumeRatio
       );
       const levels = buildLevels(sig.side, t15.price, t15.atr);
 
@@ -496,7 +502,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>O bot só envia sinais confirmados por volume/OI. ` +
+    `<i>V1.2.1: exige volume mínimo de mercado e confirmação por Volume ou OI. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

@@ -1,4 +1,4 @@
-CRYPTO FUTURES SCANNER V1.2
+CRYPTO FUTURES SCANNER V1.2.1
 
 SUBSTITUA NO GITHUB ESTES 5 ARQUIVOS:
 - binance.js
@@ -7,21 +7,23 @@ SUBSTITUA NO GITHUB ESTES 5 ARQUIVOS:
 - scanner.js
 - telegram.js
 
-NOVIDADES V1.2
-- Filtra sinais fracos por confirmação de Volume + Open Interest.
-- Volume mínimo de confirmação padrão: 0.70x.
-- OI mínimo de confirmação padrão: +0.05%.
-- Volume forte (>=1.15x) ou OI forte (>=+0.50%) pode confirmar sozinho.
-- Novo campo "Confirmação" no alerta.
-- Acompanhamento automático de TP1, TP2, TP3 e STOP.
-- Comando /ativos.
-- Comando /resultados.
-- Tratamento conservador quando STOP e alvo aparecem no mesmo candle.
+AJUSTE PRINCIPAL DA V1.2.1
+- Score mínimo continua 70.
+- Nunca envia sinal com volume abaixo de 0.40x.
+- Depois desse piso, confirma o sinal quando:
+  * Volume >= 0.60x; OU
+  * Open Interest >= +0.50%.
+- Se Volume e OI confirmarem juntos, o alerta mostra dupla confirmação.
+- Mantém acompanhamento automático de TP1, TP2, TP3 e STOP.
+- Mantém /ativos e /resultados.
 
-VARIÁVEIS OPCIONAIS NO RENDER:
-MIN_VOLUME_RATIO=0.70
-MIN_OI_CONFIRM_PCT=0.05
+IMPORTANTE SOBRE O RENDER
+Esta versão usa NOVOS nomes de variáveis opcionais para não herdar os valores da V1.2:
+V121_VOLUME_CONFIRM_RATIO=0.60
+V121_OI_CONFIRM_PCT=0.50
+V121_HARD_MIN_VOLUME_RATIO=0.40
 
-IMPORTANTE
-O histórico de acompanhamento desta versão fica em memória e reinicia em novo deploy/restart do serviço.
-O rastreador começa a avaliar TP/STOP a partir do candle de 15 minutos seguinte ao candle em que o sinal foi criado, para evitar marcar como resultado um movimento que aconteceu antes da entrada.
+Você NÃO precisa criar essas variáveis. Os valores acima já são os padrões do código.
+Se existirem MIN_VOLUME_RATIO ou MIN_OI_CONFIRM_PCT antigos no Render, eles serão ignorados pela V1.2.1.
+
+O histórico de acompanhamento fica em memória e reinicia em novo deploy/restart.
