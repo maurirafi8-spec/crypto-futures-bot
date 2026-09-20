@@ -1,0 +1,47 @@
+CRYPTO FUTURES SCANNER V1.3.2 FREE — DEBUG / DIAGNÓSTICO
+
+SUBSTITUA/ADICIONE NO GITHUB:
+- ai.js
+- binance.js
+- index.js
+- indicators.js
+- scanner.js
+- telegram.js
+
+O QUE MUDA NA V1.3.2
+- Novo comando /debug.
+- O /scan agora explica quando não existe sinal.
+- Mostra quantos mercados foram selecionados e analisados.
+- Mostra quantos passaram no filtro matemático.
+- Mostra quantas chamadas NOVAS foram feitas à IA.
+- Mostra quantas decisões vieram do cache.
+- Mostra o melhor candidato rejeitado e o motivo.
+- Mostra até 3 outros rejeitados no /debug.
+- Distingue rejeição técnica de WAIT/REJECT da IA.
+- Não aumenta o consumo do OpenRouter: continua 1 candidato e intervalo mínimo de 30 min.
+- Mantém a proteção de 45 chamadas/dia e cache de 30 min.
+- Mantém os filtros da V1.2.2 e o acompanhamento TP/STOP.
+
+EXEMPLOS DE MOTIVOS DO /debug
+- Score 68 abaixo do mínimo 70
+- Volume relativo 0.35x abaixo do piso 0.40x
+- OI -2.80% abaixo do bloqueio -1.00%
+- Sem confirmação: volume 0.55x e OI +0.22%
+- Volume 24h abaixo de US$20M
+
+NO RENDER
+Não precisa criar variável nova.
+Mantenha, por exemplo:
+OPENROUTER_API_KEY=sua_chave
+AI_MODEL=openrouter/free
+MIN_QUOTE_VOLUME_USDT=20000000
+
+Comandos principais:
+/status
+/scan
+/debug
+/ia
+/ativos
+/resultados
+
+Observação: histórico, cache e diagnóstico ficam em memória e reiniciam após redeploy/restart.

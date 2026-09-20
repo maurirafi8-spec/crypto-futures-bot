@@ -382,12 +382,16 @@ export async function scanMarket({
   );
 
   const allResults = [];
+  const preRejected = [];
 
   for (const market of markets) {
     try {
       const c15 = mapHistory(map15.get(market.symbol));
       const c1h = mapHistory(map1h.get(market.symbol));
       const c4h = resample4h(c1h);
+
+      const displaySymbol =
+        market.symbol_on_exchange || `${market.base_asset}USDT`;
 
       if (c15.length < 210 || c1h.length < 210 || c4h.length < 205) {
         console.log(
@@ -397,6 +401,17 @@ export async function scanMarket({
           c1h.length,
           c4h.length
         );
+
+        preRejected.push({
+          symbol: displaySymbol,
+          exchange: market.exchangeName,
+          side: '—',
+          score: null,
+          volumeRatio: null,
+          oiPct: null,
+          quoteVolume: null,
+          reason: `Histórico insuficiente: 15m ${c15.length}, 1h ${c1h.length}, 4h ${c4h.length}`
+        });
         continue;
       }
 
@@ -406,8 +421,6 @@ export async function scanMarket({
         (sum, c) => sum + c.quoteVolume,
         0
       );
-
-      if (quoteVolume24h < minQuoteVolume) continue;
 
       const first24 = last96[0];
       const last24 = last(last96);
@@ -449,8 +462,33 @@ export async function scanMarket({
       );
       const levels = buildLevels(sig.side, t15.price, t15.atr);
 
+      const volume24hOk = quoteVolume24h >= minQuoteVolume;
+      const scoreOk = sig.score >= minScore;
+      const mathApproved =
+        volume24hOk &&
+        scoreOk &&
+        confirmation.confirmed;
+
+      let rejectionReason = '';
+
+      if (!volume24hOk) {
+        rejectionReason =
+          `Volume 24h ${(quoteVolume24h / 1e6).toFixed(1)}M abaixo do mínimo ${(minQuoteVolume / 1e6).toFixed(0)}M`;
+      } else if (!scoreOk) {
+        rejectionReason = `Score ${sig.score} abaixo do mínimo ${minScore}`;
+      } else if (!confirmation.volumeFloorOk) {
+        rejectionReason =
+          `Volume relativo ${t15.volumeRatio.toFixed(2)}x abaixo do piso ${hardMinVolumeRatio.toFixed(2)}x`;
+      } else if (confirmation.oiDivergence && !confirmation.divergenceException) {
+        rejectionReason =
+          `OI ${oiPct.toFixed(2)}% abaixo do bloqueio ${oiRejectPct.toFixed(2)}%`;
+      } else if (!confirmation.confirmed) {
+        rejectionReason =
+          `Sem confirmação: volume ${t15.volumeRatio.toFixed(2)}x (alvo ${minVolumeRatio.toFixed(2)}x) e OI ${oiPct >= 0 ? '+' : ''}${oiPct.toFixed(2)}% (alvo +${minOiPct.toFixed(2)}%)`;
+      }
+
       allResults.push({
-        symbol: market.symbol_on_exchange || `${market.base_asset}USDT`,
+        symbol: displaySymbol,
         dataSymbol: market.symbol,
         exchange: market.exchangeName,
         quoteVolume: quoteVolume24h,
@@ -462,10 +500,27 @@ export async function scanMarket({
         t1h,
         t4h,
         oiPct,
-        fundingRate
+        fundingRate,
+        gates: {
+          volume24hOk,
+          scoreOk,
+          confirmationOk: confirmation.confirmed,
+          mathApproved
+        },
+        rejectionReason
       });
     } catch (error) {
       console.error('[scan] falha', market.symbol, error.message);
+      preRejected.push({
+        symbol: market.symbol_on_exchange || `${market.base_asset}USDT`,
+        exchange: market.exchangeName,
+        side: '—',
+        score: null,
+        volumeRatio: null,
+        oiPct: null,
+        quoteVolume: null,
+        reason: `Falha ao analisar: ${error.message}`.slice(0, 180)
+      });
     }
   }
 
@@ -493,15 +548,39 @@ export async function scanMarket({
   }
 
   const signals = allResults
-    .filter(r =>
-      r.score >= minScore &&
-      r.confirmation.confirmed
-    )
+    .filter(r => r.gates.mathApproved)
     .sort((a, b) => b.score - a.score);
+
+  const rejected = [
+    ...allResults
+      .filter(r => !r.gates.mathApproved)
+      .map(r => ({
+        symbol: r.symbol,
+        exchange: r.exchange,
+        side: r.side,
+        score: r.score,
+        volumeRatio: r.t15.volumeRatio,
+        oiPct: r.oiPct,
+        quoteVolume: r.quoteVolume,
+        confirmation: r.confirmation.label,
+        reason: r.rejectionReason || 'Filtro técnico não confirmado'
+      })),
+    ...preRejected
+  ].sort((a, b) => {
+    const aScore = Number.isFinite(a.score) ? a.score : -1;
+    const bScore = Number.isFinite(b.score) ? b.score : -1;
+    return bScore - aScore;
+  });
 
   return {
     signals,
-    snapshots: allResults
+    snapshots: allResults,
+    debug: {
+      selectedMarkets: markets.length,
+      analyzedMarkets: allResults.length,
+      mathApproved: signals.length,
+      rejected
+    }
   };
 }
 
@@ -558,7 +637,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.3: filtro matemático + validação opcional por IA antes do alerta. ` +
+    `<i>V1.3.2: filtro matemático + IA + diagnóstico de rejeições. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

@@ -42,6 +42,7 @@ const cooldown = new Map();
 const activeSignals = new Map();
 const resultHistory = [];
 const aiHistory = [];
+let lastScanReport = null;
 
 
 // Controle de orçamento da camada IA para o plano gratuito.
@@ -405,9 +406,142 @@ function aiHistoryText() {
   return lines.join('\n');
 }
 
+
+function formatMillions(value) {
+  if (!Number.isFinite(Number(value))) return '—';
+  return `$${(Number(value) / 1e6).toFixed(1)}M`;
+}
+
+function debugCandidateText(r) {
+  if (!r) return 'Nenhum candidato disponível.';
+
+  const score = Number.isFinite(r.score) ? `${r.score}/100` : '—';
+  const vol = Number.isFinite(r.volumeRatio) ? `${r.volumeRatio.toFixed(2)}x` : '—';
+  const oi = Number.isFinite(r.oiPct)
+    ? `${r.oiPct >= 0 ? '+' : ''}${r.oiPct.toFixed(2)}%`
+    : '—';
+
+  return (
+    `<b>${r.symbol} ${r.side || ''}</b>\n` +
+    `⭐ Score: ${score}\n` +
+    `📊 Volume relativo: ${vol}\n` +
+    `📈 OI: ${oi}\n` +
+    `💵 Volume 24h: ${formatMillions(r.quoteVolume)}\n` +
+    `❌ Motivo: ${r.reason || 'não informado'}`
+  );
+}
+
+function lastScanDebugText() {
+  if (!lastScanReport) {
+    return '🧪 Ainda não existe diagnóstico. Rode /scan primeiro.';
+  }
+
+  const m = lastScanReport.math;
+  const a = lastScanReport.ai;
+  const rejected = m?.rejected || [];
+  const best = rejected[0] || null;
+
+  const lines = [
+    '🧪 <b>Diagnóstico do último scan</b>',
+    '',
+    `📊 Mercados selecionados: ${m?.selectedMarkets ?? 0}`,
+    `🔬 Mercados analisados: ${m?.analyzedMarkets ?? 0}`,
+    `✅ Passaram filtro técnico: ${m?.mathApproved ?? 0}`,
+    `🤖 Candidatos selecionados para IA: ${a?.selected ?? 0}`,
+    `📡 Chamadas novas à IA: ${a?.apiCalls ?? 0}`,
+    `♻️ Respostas vindas do cache: ${a?.cacheHits ?? 0}`,
+    `🎯 Sinais liberados: ${lastScanReport.finalSignals ?? 0}`
+  ];
+
+  if ((a?.wait || 0) > 0 || (a?.rejected || 0) > 0 || (a?.lowConfidence || 0) > 0) {
+    lines.push(
+      `🤖 IA — APPROVE: ${a?.approved ?? 0} | WAIT: ${a?.wait ?? 0} | ` +
+      `REJECT: ${a?.rejected ?? 0} | confiança baixa: ${a?.lowConfidence ?? 0}`
+    );
+  }
+
+  if (a?.skipReason) {
+    lines.push(`⏳ IA não chamada: ${a.skipReason}`);
+  }
+
+  if (best) {
+    lines.push('', '🥈 <b>Melhor candidato rejeitado</b>', debugCandidateText(best));
+  }
+
+  if (rejected.length > 1) {
+    lines.push('', '📋 <b>Outros rejeitados</b>');
+    for (const r of rejected.slice(1, 4)) {
+      const score = Number.isFinite(r.score) ? r.score : '—';
+      lines.push(`• ${r.symbol} — score ${score} — ${r.reason}`);
+    }
+  }
+
+  lines.push(
+    '',
+    `⏱ Duração: ${(lastScanReport.durationMs / 1000).toFixed(1)}s`,
+    '<i>Use este diagnóstico para ajustar filtros sem adivinhar.</i>'
+  );
+
+  return lines.join('\n');
+}
+
+function scanNoSignalText(report) {
+  const m = report.math;
+  const a = report.ai;
+  const best = (m?.rejected || [])[0];
+
+  const lines = [
+    '🔎 <b>Scan concluído</b>',
+    '',
+    `📊 ${m?.selectedMarkets ?? 0} mercados selecionados`,
+    `✅ ${m?.mathApproved ?? 0} passaram pelo filtro técnico`,
+    `📡 ${a?.apiCalls ?? 0} chamada(s) nova(s) à IA`,
+    `🎯 0 sinais liberados`
+  ];
+
+  if (m?.mathApproved > 0) {
+    if ((a?.wait || 0) > 0) lines.push(`⏳ IA marcou WAIT em ${a.wait}`);
+    if ((a?.rejected || 0) > 0) lines.push(`🚫 IA rejeitou ${a.rejected}`);
+    if ((a?.lowConfidence || 0) > 0) lines.push(`📉 ${a.lowConfidence} APPROVE abaixo da confiança mínima`);
+    if (a?.skipReason) lines.push(`🆓 IA economizada: ${a.skipReason}`);
+  }
+
+  if (best) {
+    lines.push('', '🥈 <b>Melhor rejeitado no filtro técnico</b>', debugCandidateText(best));
+  }
+
+  lines.push('', 'Use /debug para ver os demais motivos.');
+  return lines.join('\n');
+}
+
+function countAiDecision(meta, ai) {
+  if (ai.decision === 'WAIT') {
+    meta.wait += 1;
+  } else if (ai.decision === 'REJECT') {
+    meta.rejected += 1;
+  } else if (ai.decision === 'APPROVE') {
+    if (ai.confidence >= cfg.aiMinConfidence) meta.approved += 1;
+    else meta.lowConfidence += 1;
+  }
+}
+
 async function validateSignalsWithAI(signals) {
+  const meta = {
+    input: signals.length,
+    selected: 0,
+    apiCalls: 0,
+    cacheHits: 0,
+    skipped: 0,
+    approved: 0,
+    wait: 0,
+    rejected: 0,
+    lowConfidence: 0,
+    errors: 0,
+    skipReason: ''
+  };
+
   if (!cfg.aiEnabled) {
-    return signals.map(s => ({
+    const approved = signals.map(s => ({
       ...s,
       ai: {
         decision: 'APPROVE',
@@ -418,12 +552,16 @@ async function validateSignalsWithAI(signals) {
         model: 'OFF'
       }
     }));
+
+    meta.selected = signals.length;
+    meta.approved = approved.length;
+    return { approved, meta };
   }
 
   if (!aiConfigured()) {
     if (cfg.aiFailOpen) {
       console.log('[ai] OPENROUTER_API_KEY ausente; fail-open ativo');
-      return signals.map(s => ({
+      const approved = signals.map(s => ({
         ...s,
         ai: {
           decision: 'APPROVE',
@@ -434,21 +572,30 @@ async function validateSignalsWithAI(signals) {
           model: 'OFF'
         }
       }));
+
+      meta.selected = signals.length;
+      meta.approved = approved.length;
+      return { approved, meta };
     }
 
     console.log('[ai] OPENROUTER_API_KEY ausente; sinais bloqueados');
-    return [];
+    meta.selected = Math.min(signals.length, cfg.aiMaxCandidates);
+    meta.skipped = meta.selected;
+    meta.skipReason = 'OPENROUTER_API_KEY ausente';
+    return { approved: [], meta };
   }
 
-  // No modo gratuito, apenas o melhor candidato matemático chega à camada IA.
   const selected = signals.slice(0, cfg.aiMaxCandidates);
+  meta.selected = selected.length;
   const approved = [];
 
   for (const s of selected) {
     const cached = getCachedAI(s);
     if (cached) {
+      meta.cacheHits += 1;
       console.log(`[ai] cache ${s.symbol}: ${cached.decision} ${Math.round(cached.confidence)}%`);
       rememberAI(s, cached);
+      countAiDecision(meta, cached);
 
       if (
         cached.decision === 'APPROVE' &&
@@ -460,6 +607,8 @@ async function validateSignalsWithAI(signals) {
     }
 
     if (!canSpendAICall()) {
+      meta.skipped += 1;
+      meta.skipReason = lastAiSkipReason;
       console.log(`[ai] ${s.symbol}: chamada pulada — ${lastAiSkipReason}`);
       continue;
     }
@@ -467,11 +616,12 @@ async function validateSignalsWithAI(signals) {
     try {
       console.log(`[ai] avaliando ${s.symbol} ${s.side} com ${aiModel()}`);
 
-      // Conta a tentativa antes da requisição, pois chamadas com erro também podem consumir cota.
       registerAICall();
+      meta.apiCalls += 1;
       const ai = await analyzeSignalWithAI(s);
       saveCachedAI(s, ai);
       rememberAI(s, ai);
+      countAiDecision(meta, ai);
 
       console.log(
         `[ai] ${s.symbol}: ${ai.decision} ${Math.round(ai.confidence)}% — ${ai.reason}`
@@ -484,25 +634,25 @@ async function validateSignalsWithAI(signals) {
         approved.push({ ...s, ai });
       }
     } catch (error) {
+      meta.errors += 1;
       console.error(`[ai] ${s.symbol}: ${error.message}`);
 
       if (cfg.aiFailOpen) {
-        approved.push({
-          ...s,
-          ai: {
-            decision: 'APPROVE',
-            confidence: 0,
-            risk: 'MEDIUM',
-            style: 'NORMAL',
-            reason: `IA falhou; liberado pelo filtro matemático: ${error.message}`.slice(0, 220),
-            model: 'ERROR'
-          }
-        });
+        const ai = {
+          decision: 'APPROVE',
+          confidence: 0,
+          risk: 'MEDIUM',
+          style: 'NORMAL',
+          reason: `IA falhou; liberado pelo filtro matemático: ${error.message}`.slice(0, 220),
+          model: 'ERROR'
+        };
+        approved.push({ ...s, ai });
+        meta.approved += 1;
       }
     }
   }
 
-  return approved;
+  return { approved, meta };
 }
 
 async function doScan({ forceReply = false } = {}) {
@@ -518,11 +668,16 @@ async function doScan({ forceReply = false } = {}) {
   }
 
   scanning = true;
+  const startedAt = Date.now();
 
   try {
     console.log(`[scan] iniciando ${new Date().toISOString()}`);
 
-    const { signals: mathSignals, snapshots } = await scanMarket({
+    const {
+      signals: mathSignals,
+      snapshots,
+      debug
+    } = await scanMarket({
       topMarkets: cfg.topMarkets,
       minQuoteVolume: cfg.minVolume,
       minScore: cfg.minScore,
@@ -534,16 +689,24 @@ async function doScan({ forceReply = false } = {}) {
       exceptionVolumeRatio: cfg.exceptionVolumeRatio
     });
 
-    // Primeiro atualiza sinais antigos com os preços/candles deste scan.
     await updateTrackedSignals(snapshots);
 
     console.log(`[scan] ${mathSignals.length} sinais matemáticos >= ${cfg.minScore}`);
 
-    const signals = await validateSignalsWithAI(mathSignals);
+    const aiResult = await validateSignalsWithAI(mathSignals);
+    const signals = aiResult.approved;
 
     console.log(
       `[scan] ${signals.length} sinais liberados após camada IA`
     );
+
+    lastScanReport = {
+      at: Date.now(),
+      durationMs: Date.now() - startedAt,
+      math: debug,
+      ai: aiResult.meta,
+      finalSignals: signals.length
+    };
 
     if (activeChatId) {
       const fresh = forceReply
@@ -554,13 +717,7 @@ async function doScan({ forceReply = false } = {}) {
         await sendMessage(
           cfg.token,
           activeChatId,
-          aiEnabledNow()
-            ? (
-                mathSignals.length > 0 && lastAiSkipReason
-                  ? `🆓 Candidato encontrado, mas a chamada da IA foi economizada: ${lastAiSkipReason}.`
-                  : '🤖 Nenhum candidato foi aprovado pela camada IA agora.'
-              )
-            : '🔎 Nenhum sinal passou pelo score + confirmação de Volume/OI agora.'
+          scanNoSignalText(lastScanReport)
         );
       }
 
@@ -574,6 +731,30 @@ async function doScan({ forceReply = false } = {}) {
     return signals;
   } catch (error) {
     console.error('[scan]', error.message);
+
+    lastScanReport = {
+      at: Date.now(),
+      durationMs: Date.now() - startedAt,
+      math: {
+        selectedMarkets: 0,
+        analyzedMarkets: 0,
+        mathApproved: 0,
+        rejected: []
+      },
+      ai: {
+        selected: 0,
+        apiCalls: 0,
+        cacheHits: 0,
+        approved: 0,
+        wait: 0,
+        rejected: 0,
+        lowConfidence: 0,
+        errors: 1,
+        skipReason: ''
+      },
+      finalSignals: 0,
+      error: error.message
+    };
 
     if (forceReply && activeChatId) {
       await sendMessage(
@@ -599,20 +780,21 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.3.1 FREE</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.3.2 FREE</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o mercado agora\n' +
       '/status — ver configuração\n' +
       '/top — mostrar os melhores sinais atuais\n' +
       '/ativos — sinais em acompanhamento\n' +
       '/resultados — últimos resultados acompanhados\n' +
-      '/ia — últimas decisões do Analista IA'
+      '/ia — últimas decisões do Analista IA\n' +
+      '/debug — diagnóstico do último scan'
     );
   } else if (text.startsWith('/status')) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.3.1 FREE\n` +
+      `✅ Online — V1.3.2 FREE\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🪙 Top mercados: ${cfg.topMarkets}\n` +
       `⭐ Score mínimo: ${cfg.minScore}\n` +
@@ -637,6 +819,8 @@ async function handleMessage(msg) {
     await sendMessage(cfg.token, activeChatId, resultsText());
   } else if (text.startsWith('/ia')) {
     await sendMessage(cfg.token, activeChatId, aiHistoryText());
+  } else if (text.startsWith('/debug')) {
+    await sendMessage(cfg.token, activeChatId, lastScanDebugText());
   } else if (text.startsWith('/scan') || text.startsWith('/top')) {
     if (!scanning) {
       await sendMessage(
@@ -671,18 +855,20 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.3.1-free',
+    version: '1.3.2-free',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
     aiEnabled: aiEnabledNow(),
     aiModel: aiEnabledNow() ? aiModel() : null,
     aiHistory: aiHistory.length,
+    lastScanAt: lastScanReport?.at ? new Date(lastScanReport.at).toISOString() : null,
+    lastScanFinalSignals: lastScanReport?.finalSignals ?? null,
     time: new Date().toISOString()
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.3.1 FREE pronto ✅');
+console.log('Crypto Futures Scanner V1.3.2 FREE pronto ✅');
 
 setTimeout(() => doScan().catch(console.error), 5000);
 setInterval(() => doScan().catch(console.error), cfg.intervalMin * 60_000);
