@@ -1,4 +1,4 @@
-CRYPTO FUTURES SCANNER V1.3.3 FREE — WATCHLIST IA
+CRYPTO FUTURES SCANNER V1.3.4 FREE — CLOSED CANDLES
 
 SUBSTITUA/ADICIONE NO GITHUB:
 - ai.js
@@ -8,34 +8,44 @@ SUBSTITUA/ADICIONE NO GITHUB:
 - scanner.js
 - telegram.js
 
-NOVIDADES DA V1.3.3
-- Analisa 6 mercados por padrão.
-- Mantém score 70+ para liberar sinal real.
-- Cria faixa de PRÉ-CANDIDATO entre score 60 e 69.
-- Se não houver sinal 70+, o melhor pré-candidato pode ir para a IA.
-- Pré-candidato NUNCA vira entrada automaticamente.
-- A IA pode responder:
-  APPROVE = liberar apenas candidato STANDARD
-  WATCH = observar, sem entrada
-  WAIT = aguardar confirmação
-  REJECT = rejeitar
-- /debug agora mostra TODOS os motivos de rejeição.
-- Continua usando no máximo 1 candidato por janela da IA.
-- Mantém cache/intervalo do plano grátis.
-- Mantém volume mínimo 24h de US$20M e regras de OI da V1.2.2.
+CORREÇÕES IMPORTANTES DA V1.3.4
+1) SOMENTE CANDLES FECHADOS
+- 15m: ignora a vela ainda em formação.
+- 1h: ignora a vela ainda em formação.
+- 4h: agrega 1h e ignora o bloco 4h ainda incompleto.
+- Volume relativo e indicadores não ficam artificialmente baixos logo após abrir uma vela.
+- Volume 24h usa 96 candles de 15m FECHADOS.
+- Open Interest histórico também tenta ignorar o período de 15m ainda aberto.
 
-IMPORTANTE
-Se no Render ainda existir TOP_MARKETS=4, esta versão não fica presa nele:
-usa V133_TOP_MARKETS=6 por padrão.
+2) /ia MAIS ÚTIL
+- Mantém o histórico das decisões bem-sucedidas desde o último deploy.
+- Se a IA não for chamada por economia do plano grátis, /ia mostra o último evento.
+- Se a chamada falhar, /ia informa o último erro em vez de parecer que nada aconteceu.
 
-VARIÁVEIS OPCIONAIS
-V133_TOP_MARKETS=6
-PRE_CANDIDATE_MIN_SCORE=60
+3) "QUASE APROVADO"
+- Se um ativo já tem score >= 70, volume 24h suficiente e falhou em apenas UM filtro,
+  ele aparece destacado como 🟡 QUASE APROVADO.
+- Continua NÃO sendo sinal de entrada.
+- Ajuda a identificar casos como score alto + OI forte onde só faltou um gate.
 
-As variáveis já existentes continuam funcionando:
-MIN_SCORE=70
-MIN_QUOTE_VOLUME_USDT=20000000
-OPENROUTER_API_KEY=...
-AI_MODEL=openrouter/free
+REGRAS QUE CONTINUAM
+- 6 mercados.
+- Score 70+ para sinal real.
+- Pré-candidato IA: 60–69.
+- Volume mínimo 24h: US$20M.
+- Volume confirmação: 0.60x.
+- Piso de volume: 0.40x.
+- OI confirmação: +0.50%.
+- Bloqueio OI abaixo de -1.00%.
+- Exceção OI: score 82+ e volume 1.00x+.
+- OpenRouter FREE: 1 candidato, janela mínima 30 min, cache 30 min, limite interno 45/dia.
 
-O histórico de sinais/IA continua em memória e reinicia após deploy/restart.
+TESTE APÓS DEPLOY
+/status
+/scan
+/debug
+/ia
+
+No /status deve aparecer:
+V1.3.4 FREE
+🕯 Candles: SOMENTE FECHADOS

@@ -30,6 +30,38 @@ function last(arr) {
   return arr[arr.length - 1];
 }
 
+const M15_MS = 15 * 60 * 1000;
+const H1_MS = 60 * 60 * 1000;
+const H4_MS = 4 * 60 * 60 * 1000;
+
+// V1.3.4: indicadores e volume usam somente candles totalmente fechados.
+// Isso evita volume relativo artificialmente baixo logo após abrir uma vela nova.
+function onlyClosedCandles(candles, intervalMs, nowMs = Date.now()) {
+  const graceMs = 5000;
+
+  return (candles || [])
+    .filter(c =>
+      Number.isFinite(c.openTime) &&
+      c.openTime + intervalMs <= nowMs - graceMs
+    )
+    .sort((a, b) => a.openTime - b.openTime);
+}
+
+function onlyClosedOi(history, intervalMs = M15_MS, nowMs = Date.now()) {
+  const graceMs = 5000;
+
+  return (history || []).filter(x => {
+    const rawTs = Number(x.t ?? x.timestamp ?? 0);
+    if (!Number.isFinite(rawTs) || rawTs <= 0) return true;
+
+    const tsMs = rawTs < 10_000_000_000
+      ? rawTs * 1000
+      : rawTs;
+
+    return tsMs + intervalMs <= nowMs - graceMs;
+  });
+}
+
 function mapHistory(data) {
   return (data || []).map(k => ({
     openTime: Number(k.t) * 1000,
@@ -387,9 +419,20 @@ export async function scanMarket({
 
   for (const market of markets) {
     try {
-      const c15 = mapHistory(map15.get(market.symbol));
-      const c1h = mapHistory(map1h.get(market.symbol));
-      const c4h = resample4h(c1h);
+      const nowMs = Date.now();
+
+      const c15All = mapHistory(map15.get(market.symbol));
+      const c1hAll = mapHistory(map1h.get(market.symbol));
+
+      const c15 = onlyClosedCandles(c15All, M15_MS, nowMs);
+      const c1h = onlyClosedCandles(c1hAll, H1_MS, nowMs);
+
+      // Primeiro agrega 1h -> 4h; depois remove o bloco 4h ainda em formação.
+      const c4h = onlyClosedCandles(
+        resample4h(c1h),
+        H4_MS,
+        nowMs
+      );
 
       const displaySymbol =
         market.symbol_on_exchange || `${market.base_asset}USDT`;
@@ -411,7 +454,11 @@ export async function scanMarket({
           volumeRatio: null,
           oiPct: null,
           quoteVolume: null,
-          reason: `Histórico insuficiente: 15m ${c15.length}, 1h ${c1h.length}, 4h ${c4h.length}`
+          reason:
+            `Histórico fechado insuficiente: ` +
+            `15m ${c15.length}/${c15All.length}, ` +
+            `1h ${c1h.length}/${c1hAll.length}, ` +
+            `4h ${c4h.length}`
         });
         continue;
       }
@@ -427,7 +474,11 @@ export async function scanMarket({
       const last24 = last(last96);
       const change24h = pctChange(first24.close, last24.close);
 
-      const oi = oiMap.get(market.symbol) || [];
+      const oi = onlyClosedOi(
+        oiMap.get(market.symbol) || [],
+        M15_MS,
+        nowMs
+      );
       let oiPct = 0;
 
       if (oi.length >= 2) {
@@ -515,6 +566,14 @@ export async function scanMarket({
       const rejectionReason =
         rejectionReasons[0] || '';
 
+      // "Quase aprovado": score já atingiu o mínimo e somente UM gate
+      // impediu a entrada. Continua rejeitado, mas fica destacado no debug.
+      const nearApproved =
+        !mathApproved &&
+        scoreOk &&
+        volume24hOk &&
+        rejectionReasons.length === 1;
+
       allResults.push({
         symbol: displaySymbol,
         dataSymbol: market.symbol,
@@ -529,11 +588,15 @@ export async function scanMarket({
         t4h,
         oiPct,
         fundingRate,
+        candlePolicy: 'CLOSED_ONLY',
+        nearApproved,
         candidateTier: mathApproved
           ? 'STANDARD'
-          : isPreCandidate
-            ? 'PRE_CANDIDATE'
-            : 'REJECTED',
+          : nearApproved
+            ? 'NEAR_APPROVED'
+            : isPreCandidate
+              ? 'PRE_CANDIDATE'
+              : 'REJECTED',
         gates: {
           volume24hOk,
           scoreOk,
@@ -611,6 +674,7 @@ export async function scanMarket({
         quoteVolume: r.quoteVolume,
         confirmation: r.confirmation.label,
         candidateTier: r.candidateTier,
+        nearApproved: Boolean(r.nearApproved),
         reasons: r.rejectionReasons?.length
           ? r.rejectionReasons
           : ['Filtro técnico não confirmado'],
@@ -638,6 +702,8 @@ export async function scanMarket({
       analyzedMarkets: allResults.length,
       mathApproved: signals.length,
       preCandidateMinScore,
+      closedCandlePolicy: true,
+      nearApproved: rejected.filter(r => r.nearApproved),
       preCandidates: preCandidates.map(r => ({
         symbol: r.symbol,
         exchange: r.exchange,
@@ -707,7 +773,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.3.3: filtro matemático + IA + pré-candidatos em watchlist. ` +
+    `<i>V1.3.4: somente candles fechados + IA + watchlist + quase aprovados. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

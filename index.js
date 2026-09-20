@@ -46,6 +46,7 @@ const cooldown = new Map();
 const activeSignals = new Map();
 const resultHistory = [];
 const aiHistory = [];
+let lastAiEvent = null;
 let lastScanReport = null;
 
 
@@ -370,7 +371,7 @@ function aiDecisionIcon(decision) {
 }
 
 function rememberAI(signal, ai) {
-  aiHistory.unshift({
+  const item = {
     symbol: signal.symbol,
     side: signal.side,
     score: signal.score,
@@ -379,22 +380,40 @@ function rememberAI(signal, ai) {
     confidence: ai.confidence,
     reason: ai.reason,
     model: ai.model,
+    cached: Boolean(ai.cached),
     at: Date.now()
-  });
+  };
+
+  aiHistory.unshift(item);
+  lastAiEvent = {
+    type: 'DECISION',
+    ...item
+  };
 
   if (aiHistory.length > 30) aiHistory.length = 30;
 }
 
 function aiHistoryText() {
-  if (!aiHistory.length) {
-    return aiEnabledNow()
-      ? '🤖 A IA ainda não avaliou nenhum candidato nesta execução.'
-      : '🤖 Analista IA está desativado ou sem OPENROUTER_API_KEY.';
+  if (!aiEnabledNow()) {
+    return '🤖 Analista IA está desativado ou sem OPENROUTER_API_KEY.';
   }
 
   const budget = aiBudgetStats();
+
+  if (!aiHistory.length) {
+    const extra = lastAiEvent?.message
+      ? `\nÚltimo evento: ${lastAiEvent.message}`
+      : '';
+
+    return (
+      `🤖 A IA ainda não concluiu nenhuma avaliação desde o último deploy.` +
+      `${extra}\n` +
+      `🆓 Uso IA hoje: ${budget.used}/${budget.limit}`
+    );
+  }
+
   const lines = [
-    `🤖 <b>Últimas decisões da IA</b>`,
+    `🤖 <b>Histórico da IA desde o último deploy</b>`,
     `Modelo: <code>${aiModel()}</code>`,
     `🆓 Uso IA hoje: ${budget.used}/${budget.limit} (${budget.remaining} restantes)`,
     `⏳ Intervalo mínimo: ${budget.minGapMin} min | Cache: ${budget.cacheMin} min`,
@@ -432,7 +451,12 @@ function debugCandidateText(r) {
     ? r.reasons
     : [r.reason || 'não informado'];
 
+  const badge = r.nearApproved
+    ? `🟡 <b>QUASE APROVADO — apenas 1 filtro faltou</b>\n`
+    : '';
+
   return (
+    `${badge}` +
     `<b>${r.symbol} ${r.side || ''}</b>\n` +
     `⭐ Score: ${score}\n` +
     `📊 Volume relativo: ${vol}\n` +
@@ -459,6 +483,8 @@ function lastScanDebugText() {
     `📊 Mercados selecionados: ${m?.selectedMarkets ?? 0}`,
     `🔬 Mercados analisados: ${m?.analyzedMarkets ?? 0}`,
     `✅ Passaram filtro técnico: ${m?.mathApproved ?? 0}`,
+    `🕯 Indicadores: somente candles fechados`,
+    `🟡 Quase aprovados: ${m?.nearApproved?.length ?? 0}`,
     `👀 Pré-candidatos ${m?.preCandidateMinScore ?? cfg.preCandidateMinScore}–${cfg.minScore - 1}: ${m?.preCandidates?.length ?? 0}`,
     `🤖 Candidatos selecionados para IA: ${a?.selected ?? 0}`,
     `📡 Chamadas novas à IA: ${a?.apiCalls ?? 0}`,
@@ -483,7 +509,16 @@ function lastScanDebugText() {
     lines.push(`⏳ IA não chamada: ${a.skipReason}`);
   }
 
+  const bestNear = m?.nearApproved?.[0] || null;
   const bestPre = m?.preCandidates?.[0] || null;
+
+  if (bestNear) {
+    lines.push(
+      '',
+      '🟡 <b>Mais perto de liberar sinal</b>',
+      debugCandidateText(bestNear)
+    );
+  }
 
   if (bestPre) {
     lines.push(
@@ -524,6 +559,8 @@ function scanNoSignalText(report) {
     '',
     `📊 ${m?.selectedMarkets ?? 0} mercados selecionados`,
     `✅ ${m?.mathApproved ?? 0} passaram pelo filtro técnico`,
+    `🕯 Volume/indicadores: candles fechados`,
+    `🟡 ${m?.nearApproved?.length ?? 0} quase aprovado(s)`,
     `👀 ${m?.preCandidates?.length ?? 0} pré-candidato(s) ${m?.preCandidateMinScore ?? cfg.preCandidateMinScore}–${cfg.minScore - 1}`,
     `📡 ${a?.apiCalls ?? 0} chamada(s) nova(s) à IA`,
     `🎯 0 sinais liberados`
@@ -539,7 +576,15 @@ function scanNoSignalText(report) {
     if (a?.skipReason) lines.push(`🆓 IA economizada: ${a.skipReason}`);
   }
 
-  if (best) {
+  const bestNear = m?.nearApproved?.[0] || null;
+
+  if (bestNear) {
+    lines.push(
+      '',
+      '🟡 <b>Mais perto de liberar sinal</b>',
+      debugCandidateText(bestNear)
+    );
+  } else if (best) {
     lines.push('', '🥈 <b>Melhor rejeitado no filtro técnico</b>', debugCandidateText(best));
   }
 
@@ -646,6 +691,11 @@ async function validateSignalsWithAI(signals) {
     if (!canSpendAICall()) {
       meta.skipped += 1;
       meta.skipReason = lastAiSkipReason;
+      lastAiEvent = {
+        type: 'SKIP',
+        at: Date.now(),
+        message: `${s.symbol}: ${lastAiSkipReason}`
+      };
       console.log(`[ai] ${s.symbol}: chamada pulada — ${lastAiSkipReason}`);
       continue;
     }
@@ -673,6 +723,11 @@ async function validateSignalsWithAI(signals) {
       }
     } catch (error) {
       meta.errors += 1;
+      lastAiEvent = {
+        type: 'ERROR',
+        at: Date.now(),
+        message: `${s.symbol}: ${error.message}`.slice(0, 260)
+      };
       console.error(`[ai] ${s.symbol}: ${error.message}`);
 
       if (cfg.aiFailOpen) {
@@ -833,7 +888,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.3.3 FREE</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.3.4 FREE</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o mercado agora\n' +
       '/status — ver configuração\n' +
@@ -847,7 +902,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.3.3 FREE\n` +
+      `✅ Online — V1.3.4 FREE\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🪙 Top mercados: ${cfg.topMarkets}\n` +
       `⭐ Score mínimo para sinal: ${cfg.minScore}\n` +
@@ -860,6 +915,7 @@ async function handleMessage(msg) {
       `⚡ Exceção: score ${cfg.exceptionScore}+ e volume ${cfg.exceptionVolumeRatio.toFixed(2)}x+\n` +
       `🧊 Cooldown: ${cfg.cooldownMin} min\n` +
       `📡 Dados: Coinalyze\n` +
+      `🕯 Candles: SOMENTE FECHADOS\n` +
       `🤖 IA: ${aiEnabledNow() ? 'ATIVA' : 'INATIVA'}\n` +
       `🧠 Modelo: ${aiEnabledNow() ? aiModel() : '—'}\n` +
       `✅ Confiança mínima IA: ${cfg.aiMinConfidence}%\n` +
@@ -909,7 +965,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.3.3-free',
+    version: '1.3.4-free',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -922,7 +978,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.3.3 FREE pronto ✅');
+console.log('Crypto Futures Scanner V1.3.4 FREE pronto ✅');
 
 setTimeout(() => doScan().catch(console.error), 5000);
 setInterval(() => doScan().catch(console.error), cfg.intervalMin * 60_000);
