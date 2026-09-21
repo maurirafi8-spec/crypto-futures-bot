@@ -1,4 +1,4 @@
-CRYPTO FUTURES SCANNER V1.3.6 FREE — AI STATS
+CRYPTO FUTURES SCANNER V1.3.7 FREE — IA PRIORITÁRIA
 
 SUBSTITUA/ADICIONE NO GITHUB:
 - ai.js
@@ -8,81 +8,59 @@ SUBSTITUA/ADICIONE NO GITHUB:
 - scanner.js
 - telegram.js
 
-NOVIDADES DA V1.3.6
+NOVIDADE PRINCIPAL
+Setups MUITO fortes podem usar uma janela de IA menor do que os 30 min normais.
 
-1) /ia SEM DUPLICATAS
-- Decisões reaproveitadas do cache não são adicionadas novamente
-  se a análise original idêntica já estiver no histórico.
-- Cada análise mostra a origem:
-  🧠 NOVA ANÁLISE
-  ♻️ CACHE
+REGRA PADRÃO DA PRIORIDADE
+O candidato precisa já ter passado no filtro técnico (STANDARD) e ter:
+- Score >= 85
+- Volume relativo >= 1.00x
+- Open Interest >= +0.50%
 
-2) SINAL MOSTRA A ORIGEM DA IA
-Exemplo:
-🤖 IA: APPROVE · Confiança 82%
-🧠 Origem: NOVA ANÁLISE
+JANELAS
+- IA NORMAL: mínimo 30 min entre chamadas.
+- IA PRIORITÁRIA: mínimo 5 min entre chamadas.
+- Cache do mesmo ativo/lado: 30 min.
+- Limite diário total interno: 45 chamadas.
+- Limite diário PRIORITÁRIO: 12 chamadas.
 
-ou:
-♻️ Origem: CACHE
+EXEMPLO
+BTCUSDT LONG
+Score 90
+Volume 1.61x
+OI +0.55%
 
-3) /ativos MAIS COMPLETO
-Agora cada sinal acompanhado mostra:
-- Score técnico
-- Decisão da IA
-- Confiança da IA
-- Origem NOVA ANÁLISE ou CACHE
-- Entrada, Stop e TP3
-- Estágio atual (sem alvo / TP1 / TP2)
+Esse setup entra na PRIORIDADE IA. Se a última chamada foi há pelo menos
+5 min, ele pode ser avaliado sem esperar os 30 min da janela normal.
 
-4) RESULTADOS COM SCORE + CONFIANÇA IA
-Ao encerrar TP3, STOP, STOP após alvo, reversão ou caso ambíguo,
-o bot grava:
-- ativo e direção
-- resultado
-- score técnico original
-- confiança da IA
-- modelo
-- se veio de cache ou nova análise
-- estilo e risco definidos pela IA
+PROTEÇÕES
+- Prioridade NÃO ignora o limite diário total.
+- Prioridade tem teto próprio de 12 chamadas/dia.
+- Pré-candidatos 60–69 nunca usam prioridade.
+- Cache é consultado antes de gastar chamada.
+- O sinal ainda precisa de APPROVE + confiança mínima da IA.
 
-5) /resultados COMPARA CONFIANÇA × RESULTADO
-Faixas:
-65–74%
-75–84%
-85–100%
+NO TELEGRAM
+/status mostra a regra e o uso da prioridade.
+/ia diferencia:
+- ⚡ NOVA ANÁLISE PRIORITÁRIA
+- 🧠 NOVA ANÁLISE NORMAL
+- ♻️ CACHE
 
-A tela conta:
-🏆 TP3
-🛑 STOP direto
-🟡 STOP após TP1/TP2
-⚪ ambíguo/reversão
+VARIÁVEIS OPCIONAIS NO RENDER
+AI_PRIORITY_ENABLED=true
+AI_PRIORITY_SCORE=85
+AI_PRIORITY_VOLUME_RATIO=1.00
+AI_PRIORITY_OI_PCT=0.50
+AI_PRIORITY_GAP_MINUTES=5
+AI_PRIORITY_DAILY_LIMIT=12
 
-Isso NÃO afirma que uma faixa é melhor até existir amostra suficiente.
-Serve para começarmos a medir se confiança maior realmente se traduz
-em melhores resultados.
+Não precisa criar essas variáveis: os valores acima já são padrão.
 
-REGRAS MANTIDAS
-- 6 mercados
-- score 70+ para sinal real
-- pré-candidato 60–69
-- candles somente fechados
-- Coinalyze
-- OpenRouter Free
-- 1 candidato por janela
-- intervalo mínimo 30 min
-- cache 30 min
-- limite interno 45 chamadas/dia
-- acompanhamento TP1 / TP2 / TP3 / STOP
-- candidato técnico pendente de IA
-
-TESTE APÓS DEPLOY
+TESTE
 /status
 /scan
 /ia
+/debug
 /ativos
 /resultados
-/debug
-
-OBSERVAÇÃO
-Histórico, resultados e acompanhamento ficam em memória.
-Reiniciam quando o serviço recebe restart ou novo deploy.

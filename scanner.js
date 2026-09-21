@@ -753,7 +753,11 @@ export function signalText(s) {
     (s.ai
       ? `🤖 IA: <b>${s.ai.decision}</b> · Confiança ${Math.round(s.ai.confidence)}% · ` +
         `${s.ai.style} · Risco ${s.ai.risk}\n` +
-        `${s.ai.cached ? '♻️ Origem: CACHE' : '🧠 Origem: NOVA ANÁLISE'}\n` +
+        `${s.ai.cached
+          ? '♻️ Origem: CACHE'
+          : s.ai.callMode === 'PRIORITY'
+            ? '⚡ Origem: NOVA ANÁLISE PRIORITÁRIA'
+            : '🧠 Origem: NOVA ANÁLISE NORMAL'}\n` +
         `🧠 IA: ${s.ai.reason}\n`
       : '') +
     `\n` +
@@ -774,7 +778,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.3.6: candles fechados + IA + histórico sem duplicatas + estatísticas. ` +
+    `<i>V1.3.7: IA prioritária para setups fortes + candles fechados + estatísticas. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

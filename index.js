@@ -29,8 +29,24 @@ const cfg = {
   aiMaxCandidates: Math.min(Number(process.env.AI_MAX_CANDIDATES || 1), 1),
   // Reserva algumas chamadas abaixo do teto diário do plano gratuito.
   aiDailyLimit: Math.min(Number(process.env.AI_DAILY_LIMIT || 45), 45),
-  // 30 min => no máximo ~48 janelas/dia; o limite diário corta em 45.
+  // 30 min para candidatos normais.
   aiMinGapMin: Math.max(Number(process.env.AI_MIN_GAP_MINUTES || 30), 1),
+
+  // V1.3.7: setups muito fortes podem usar uma janela prioritária menor.
+  aiPriorityEnabled:
+    String(process.env.AI_PRIORITY_ENABLED || 'true').toLowerCase() !== 'false',
+  aiPriorityScore: Number(process.env.AI_PRIORITY_SCORE || 85),
+  aiPriorityVolumeRatio: Number(process.env.AI_PRIORITY_VOLUME_RATIO || 1.00),
+  aiPriorityOiPct: Number(process.env.AI_PRIORITY_OI_PCT || 0.50),
+  aiPriorityGapMin: Math.max(
+    Number(process.env.AI_PRIORITY_GAP_MINUTES || 5),
+    1
+  ),
+  aiPriorityDailyLimit: Math.min(
+    Math.max(Number(process.env.AI_PRIORITY_DAILY_LIMIT || 12), 0),
+    20
+  ),
+
   // Reaproveita a decisão recente do mesmo ativo/lado sem gastar nova chamada.
   aiCacheMin: Math.max(Number(process.env.AI_CACHE_MINUTES || 30), 1)
 };
@@ -59,8 +75,10 @@ let lastScanReport = null;
 // Controle de orçamento da camada IA para o plano gratuito.
 let aiUsageDay = '';
 let aiCallsToday = 0;
+let aiPriorityCallsToday = 0;
 let aiLastCallAt = 0;
 let lastAiSkipReason = '';
+let lastAiCallMode = 'NORMAL';
 const aiDecisionCache = new Map();
 
 function aiDayKey(ts = Date.now()) {
@@ -72,8 +90,10 @@ function refreshAIBudgetDay() {
   if (today !== aiUsageDay) {
     aiUsageDay = today;
     aiCallsToday = 0;
+    aiPriorityCallsToday = 0;
     aiLastCallAt = 0;
     lastAiSkipReason = '';
+    lastAiCallMode = 'NORMAL';
     aiDecisionCache.clear();
   }
 }
@@ -85,7 +105,14 @@ function aiBudgetStats() {
     limit: cfg.aiDailyLimit,
     remaining: Math.max(0, cfg.aiDailyLimit - aiCallsToday),
     minGapMin: cfg.aiMinGapMin,
-    cacheMin: cfg.aiCacheMin
+    cacheMin: cfg.aiCacheMin,
+    priorityEnabled: cfg.aiPriorityEnabled,
+    priorityUsed: aiPriorityCallsToday,
+    priorityLimit: cfg.aiPriorityDailyLimit,
+    priorityGapMin: cfg.aiPriorityGapMin,
+    priorityScore: cfg.aiPriorityScore,
+    priorityVolumeRatio: cfg.aiPriorityVolumeRatio,
+    priorityOiPct: cfg.aiPriorityOiPct
   };
 }
 
@@ -115,38 +142,138 @@ function saveCachedAI(signal, ai) {
   });
 }
 
-function canSpendAICall() {
+function isPriorityAICandidate(signal) {
+  if (!cfg.aiPriorityEnabled) return false;
+  if (!signal || signal.candidateTier !== 'STANDARD') return false;
+
+  const score = Number(signal.score || 0);
+  const volumeRatio = Number(signal.t15?.volumeRatio || 0);
+  const oiPct = Number(signal.oiPct || 0);
+
+  return (
+    score >= cfg.aiPriorityScore &&
+    volumeRatio >= cfg.aiPriorityVolumeRatio &&
+    oiPct >= cfg.aiPriorityOiPct
+  );
+}
+
+function aiCallPermission(signal) {
   refreshAIBudgetDay();
 
   if (aiCallsToday >= cfg.aiDailyLimit) {
-    lastAiSkipReason = `limite diário gratuito atingido (${aiCallsToday}/${cfg.aiDailyLimit})`;
-    return false;
+    lastAiSkipReason =
+      `limite diário gratuito atingido (${aiCallsToday}/${cfg.aiDailyLimit})`;
+
+    return {
+      allowed: false,
+      mode: 'BLOCKED',
+      priorityEligible: isPriorityAICandidate(signal),
+      reason: lastAiSkipReason
+    };
   }
 
-  const waitMs = cfg.aiMinGapMin * 60_000 - (Date.now() - aiLastCallAt);
-  if (aiLastCallAt && waitMs > 0) {
-    const mins = Math.max(1, Math.ceil(waitMs / 60_000));
-    lastAiSkipReason = `economia do plano grátis: próxima chamada em ~${mins} min`;
-    return false;
+  const now = Date.now();
+  const elapsedMs = aiLastCallAt
+    ? now - aiLastCallAt
+    : Number.POSITIVE_INFINITY;
+
+  const normalGapMs = cfg.aiMinGapMin * 60_000;
+
+  if (!aiLastCallAt || elapsedMs >= normalGapMs) {
+    lastAiSkipReason = '';
+
+    return {
+      allowed: true,
+      mode: 'NORMAL',
+      priorityEligible: isPriorityAICandidate(signal),
+      reason: ''
+    };
   }
 
-  return true;
+  const priorityEligible = isPriorityAICandidate(signal);
+
+  if (priorityEligible) {
+    if (aiPriorityCallsToday >= cfg.aiPriorityDailyLimit) {
+      const normalWaitMs = Math.max(0, normalGapMs - elapsedMs);
+      const mins = Math.max(1, Math.ceil(normalWaitMs / 60_000));
+
+      lastAiSkipReason =
+        `cota prioritária diária atingida ` +
+        `(${aiPriorityCallsToday}/${cfg.aiPriorityDailyLimit}); ` +
+        `janela normal em ~${mins} min`;
+
+      return {
+        allowed: false,
+        mode: 'BLOCKED',
+        priorityEligible: true,
+        reason: lastAiSkipReason
+      };
+    }
+
+    const priorityGapMs = cfg.aiPriorityGapMin * 60_000;
+
+    if (elapsedMs >= priorityGapMs) {
+      lastAiSkipReason = '';
+
+      return {
+        allowed: true,
+        mode: 'PRIORITY',
+        priorityEligible: true,
+        reason: ''
+      };
+    }
+
+    const priorityWaitMs = Math.max(0, priorityGapMs - elapsedMs);
+    const mins = Math.max(1, Math.ceil(priorityWaitMs / 60_000));
+
+    lastAiSkipReason =
+      `prioridade IA: próxima chamada em ~${mins} min`;
+
+    return {
+      allowed: false,
+      mode: 'BLOCKED',
+      priorityEligible: true,
+      reason: lastAiSkipReason
+    };
+  }
+
+  const waitMs = Math.max(0, normalGapMs - elapsedMs);
+  const mins = Math.max(1, Math.ceil(waitMs / 60_000));
+
+  lastAiSkipReason =
+    `economia do plano grátis: próxima chamada em ~${mins} min`;
+
+  return {
+    allowed: false,
+    mode: 'BLOCKED',
+    priorityEligible: false,
+    reason: lastAiSkipReason
+  };
 }
 
-function registerAICall() {
+function registerAICall(mode = 'NORMAL') {
   refreshAIBudgetDay();
+
   aiCallsToday += 1;
   aiLastCallAt = Date.now();
+  lastAiCallMode = mode;
+
+  if (mode === 'PRIORITY') {
+    aiPriorityCallsToday += 1;
+  }
+
   lastAiSkipReason = '';
 }
 
-function aiWaitInfo() {
+function aiWaitInfo(signal = null) {
   refreshAIBudgetDay();
 
   if (aiCallsToday >= cfg.aiDailyLimit) {
     return {
       blocked: true,
       minutes: null,
+      mode: 'BLOCKED',
+      priority: Boolean(signal && isPriorityAICandidate(signal)),
       text: `limite diário gratuito atingido (${aiCallsToday}/${cfg.aiDailyLimit})`
     };
   }
@@ -155,33 +282,75 @@ function aiWaitInfo() {
     return {
       blocked: false,
       minutes: 0,
+      mode: 'NORMAL',
+      priority: Boolean(signal && isPriorityAICandidate(signal)),
       text: 'IA disponível agora'
     };
   }
 
-  const waitMs =
-    cfg.aiMinGapMin * 60_000 -
-    (Date.now() - aiLastCallAt);
+  const elapsedMs = Date.now() - aiLastCallAt;
+  const normalWaitMs =
+    cfg.aiMinGapMin * 60_000 - elapsedMs;
 
-  if (waitMs <= 0) {
+  if (normalWaitMs <= 0) {
     return {
       blocked: false,
       minutes: 0,
+      mode: 'NORMAL',
+      priority: Boolean(signal && isPriorityAICandidate(signal)),
       text: 'IA disponível agora'
     };
   }
 
-  const minutes = Math.max(1, Math.ceil(waitMs / 60_000));
+  const priority =
+    signal &&
+    isPriorityAICandidate(signal) &&
+    aiPriorityCallsToday < cfg.aiPriorityDailyLimit;
+
+  if (priority) {
+    const priorityWaitMs =
+      cfg.aiPriorityGapMin * 60_000 - elapsedMs;
+
+    if (priorityWaitMs <= 0) {
+      return {
+        blocked: false,
+        minutes: 0,
+        mode: 'PRIORITY',
+        priority: true,
+        text: '⚡ IA prioritária disponível agora'
+      };
+    }
+
+    const minutes = Math.max(
+      1,
+      Math.ceil(priorityWaitMs / 60_000)
+    );
+
+    return {
+      blocked: true,
+      minutes,
+      mode: 'PRIORITY',
+      priority: true,
+      text: `⚡ janela prioritária em ~${minutes} min`
+    };
+  }
+
+  const minutes = Math.max(
+    1,
+    Math.ceil(normalWaitMs / 60_000)
+  );
 
   return {
     blocked: true,
     minutes,
-    text: `próxima chamada em ~${minutes} min`
+    mode: 'NORMAL',
+    priority: false,
+    text: `próxima chamada normal em ~${minutes} min`
   };
 }
 
 function setPendingAI(signal, reason = '') {
-  const wait = aiWaitInfo();
+  const wait = aiWaitInfo(signal);
 
   pendingAiCandidate = {
     symbol: signal.symbol,
@@ -199,6 +368,8 @@ function setPendingAI(signal, reason = '') {
     fundingRate: Number(signal.fundingRate || 0),
     quoteVolume: Number(signal.quoteVolume || 0),
     confirmation: signal.confirmation?.label || '',
+    priorityEligible: isPriorityAICandidate(signal),
+    waitMode: wait.mode,
     reason: reason || wait.text,
     createdAt: Date.now()
   };
@@ -571,6 +742,7 @@ function rememberAI(signal, ai) {
     model: ai.model,
     cached: Boolean(ai.cached),
     source: ai.cached ? 'CACHE' : 'NEW',
+    callMode: ai.callMode || 'NORMAL',
     at: Date.now()
   };
 
@@ -620,8 +792,16 @@ function aiHistoryText() {
       `⭐ Score: ${pendingAiCandidate.score}/100`,
       `📊 Volume: ${pendingAiCandidate.volumeRatio.toFixed(2)}x`,
       `📈 OI: ${pendingAiCandidate.oiPct >= 0 ? '+' : ''}${pendingAiCandidate.oiPct.toFixed(2)}%`,
-      `Motivo: ${pendingAiCandidate.reason || aiWaitInfo().text}`,
-      `🤖 ${aiWaitInfo().text}`,
+      ...(pendingAiCandidate.priorityEligible
+        ? ['⚡ PRIORIDADE IA ATIVA']
+        : []),
+      `Motivo: ${pendingAiCandidate.reason}`,
+      `🤖 ${aiWaitInfo({
+        score: pendingAiCandidate.score,
+        oiPct: pendingAiCandidate.oiPct,
+        candidateTier: 'STANDARD',
+        t15: { volumeRatio: pendingAiCandidate.volumeRatio }
+      }).text}`,
       '',
       '<i>Este candidato passou no filtro técnico, mas ainda NÃO é entrada.</i>'
     );
@@ -647,14 +827,17 @@ function aiHistoryText() {
     `🤖 <b>Histórico da IA desde o último deploy</b>`,
     `Modelo: <code>${aiModel()}</code>`,
     `🆓 Uso IA hoje: ${budget.used}/${budget.limit} (${budget.remaining} restantes)`,
-    `⏳ Intervalo mínimo: ${budget.minGapMin} min | Cache: ${budget.cacheMin} min`,
+    `⚡ Prioridade hoje: ${budget.priorityUsed}/${budget.priorityLimit} · gap ${budget.priorityGapMin} min`,
+    `⏳ Normal: ${budget.minGapMin} min | Cache: ${budget.cacheMin} min`,
     ''
   );
 
   for (const r of aiHistory.slice(0, 10)) {
     const source = r.cached
       ? '♻️ <b>CACHE</b>'
-      : '🧠 <b>NOVA ANÁLISE</b>';
+      : r.callMode === 'PRIORITY'
+        ? '⚡ <b>NOVA ANÁLISE PRIORITÁRIA</b>'
+        : '🧠 <b>NOVA ANÁLISE NORMAL</b>';
 
     lines.push(
       `${aiDecisionIcon(r.decision)} <b>${r.symbol} ${r.side}</b> — ` +
@@ -679,7 +862,16 @@ function pendingAIText(pending = pendingAiCandidate) {
     return '✅ Nenhum sinal técnico está aguardando validação da IA.';
   }
 
-  const wait = aiWaitInfo();
+  const pseudoSignal = {
+    symbol: pending.symbol,
+    side: pending.side,
+    score: pending.score,
+    oiPct: pending.oiPct,
+    candidateTier: 'STANDARD',
+    t15: { volumeRatio: pending.volumeRatio }
+  };
+
+  const wait = aiWaitInfo(pseudoSignal);
 
   const oi = Number.isFinite(pending.oiPct)
     ? `${pending.oiPct >= 0 ? '+' : ''}${pending.oiPct.toFixed(2)}%`
@@ -704,6 +896,9 @@ function pendingAIText(pending = pendingAiCandidate) {
     `📈 OI: ${oi}\n` +
     `💵 Volume 24h: ${formatMillions(pending.quoteVolume)}\n` +
     `💰 Entrada técnica: ${entryText}\n` +
+    (pending.priorityEligible
+      ? `⚡ <b>PRIORIDADE IA</b> — score/volume/OI fortes\n`
+      : '') +
     `⏳ ${wait.text}\n\n` +
     `<i>Não é entrada ainda. O sinal só será liberado se passar pela camada IA.</i>`
   );
@@ -759,6 +954,7 @@ function lastScanDebugText() {
     `👀 Pré-candidatos ${m?.preCandidateMinScore ?? cfg.preCandidateMinScore}–${cfg.minScore - 1}: ${m?.preCandidates?.length ?? 0}`,
     `🤖 Candidatos selecionados para IA: ${a?.selected ?? 0}`,
     `📡 Chamadas novas à IA: ${a?.apiCalls ?? 0}`,
+    `⚡ Chamadas prioritárias: ${a?.priorityCalls ?? 0}`,
     `♻️ Respostas vindas do cache: ${a?.cacheHits ?? 0}`,
     `🎯 Sinais liberados: ${lastScanReport.finalSignals ?? 0}`
   ];
@@ -842,6 +1038,9 @@ function scanNoSignalText(report) {
     `🟡 ${m?.nearApproved?.length ?? 0} quase aprovado(s)`,
     `👀 ${m?.preCandidates?.length ?? 0} pré-candidato(s) ${m?.preCandidateMinScore ?? cfg.preCandidateMinScore}–${cfg.minScore - 1}`,
     `📡 ${a?.apiCalls ?? 0} chamada(s) nova(s) à IA`,
+    ...(a?.priorityCalls
+      ? [`⚡ ${a.priorityCalls} chamada(s) prioritária(s)`]
+      : []),
     `🎯 0 sinais liberados`
   ];
 
@@ -899,6 +1098,8 @@ async function validateSignalsWithAI(signals) {
     input: signals.length,
     selected: 0,
     apiCalls: 0,
+    priorityCalls: 0,
+    priorityEligible: 0,
     cacheHits: 0,
     skipped: 0,
     approved: 0,
@@ -985,20 +1186,28 @@ async function validateSignalsWithAI(signals) {
       continue;
     }
 
-    if (!canSpendAICall()) {
+    const permission = aiCallPermission(s);
+
+    if (permission.priorityEligible) {
+      meta.priorityEligible += 1;
+    }
+
+    if (!permission.allowed) {
       meta.skipped += 1;
-      meta.skipReason = lastAiSkipReason;
+      meta.skipReason = permission.reason || lastAiSkipReason;
       lastAiEvent = {
         type: 'SKIP',
         at: Date.now(),
-        message: `${s.symbol}: ${lastAiSkipReason}`
+        message: `${s.symbol}: ${meta.skipReason}`
       };
-      console.log(`[ai] ${s.symbol}: chamada pulada — ${lastAiSkipReason}`);
+      console.log(`[ai] ${s.symbol}: chamada pulada — ${meta.skipReason}`);
       continue;
     }
 
     try {
-      console.log(`[ai] avaliando ${s.symbol} ${s.side} com ${aiModel()}`);
+      console.log(
+        `[ai] avaliando ${s.symbol} ${s.side} com ${aiModel()} [${permission.mode}]`
+      );
 
       if (
         pendingAiCandidate &&
@@ -1008,9 +1217,19 @@ async function validateSignalsWithAI(signals) {
         clearPendingAI();
       }
 
-      registerAICall();
+      registerAICall(permission.mode);
       meta.apiCalls += 1;
-      const ai = await analyzeSignalWithAI(s);
+
+      if (permission.mode === 'PRIORITY') {
+        meta.priorityCalls += 1;
+      }
+
+      const aiRaw = await analyzeSignalWithAI(s);
+      const ai = {
+        ...aiRaw,
+        callMode: permission.mode
+      };
+
       saveCachedAI(s, ai);
       rememberAI(s, ai);
       countAiDecision(meta, ai);
@@ -1228,7 +1447,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.3.6 FREE</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.3.7 FREE</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o mercado agora\n' +
       '/status — ver configuração\n' +
@@ -1242,7 +1461,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.3.6 FREE\n` +
+      `✅ Online — V1.3.7 FREE\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🪙 Top mercados: ${cfg.topMarkets}\n` +
       `⭐ Score mínimo para sinal: ${cfg.minScore}\n` +
@@ -1307,7 +1526,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.3.6-free',
+    version: '1.3.7-free',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -1323,7 +1542,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.3.6 FREE pronto ✅');
+console.log('Crypto Futures Scanner V1.3.7 FREE pronto ✅');
 
 setTimeout(() => doScan().catch(console.error), 5000);
 setInterval(() => doScan().catch(console.error), cfg.intervalMin * 60_000);
