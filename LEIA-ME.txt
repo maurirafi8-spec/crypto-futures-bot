@@ -1,60 +1,73 @@
-CRYPTO FUTURES SCANNER V1.3.9.2 FREE
+CRYPTO FUTURES SCANNER V1.3.9.3 FREE
+WATCH OBSERVATION
 
-WAIT CONDICIONAL 55–59%
+NOVIDADE
+A decisão WATCH agora pode virar uma observação ativa.
 
-OBJETIVO
-Não baixar o filtro normal de WAIT para todo mundo.
+REGRAS DA WATCHLIST
 
-REGRA PADRÃO
-WAIT >= 60%
-→ entra na watchlist normalmente.
+WAIT PADRÃO
+- WAIT >= 60%
+→ entra na watchlist.
 
-REGRA CONDICIONAL
-WAIT entre 55% e 59%
-→ só entra se TODAS estas condições forem verdadeiras:
+WAIT CONDICIONAL
+- WAIT 55–59%
+- score >= 80
+- volume 15m >= 0.60x
+- OI >= +1.00%
+→ entra na watchlist.
 
-- score técnico >= 80
-- volume relativo 15m >= 0.60x
-- Open Interest >= +1.00%
+WATCH ATIVO
+- WATCH >= 60%
+→ entra na watchlist de observação.
 
-EXEMPLO
-DOGEUSDT LONG
-Score 80
-Volume 0.60x
-OI +3.75%
-IA WAIT 55%
+IMPORTANTE
+WATCH NÃO É SINAL.
+WATCH não é convertido automaticamente em entrada.
 
-Agora:
-✅ entra na watchlist CONDICIONAL
-→ aguarda novo candle fechado
-→ espera melhora técnica
-→ faz RECHECK
-→ só vira sinal se depois passar pelas regras normais de APPROVE.
+O fluxo é:
+WATCH 60%+
+→ observar
+→ esperar novo candle fechado de 15m
+→ exigir melhora técnica
+→ RECHECK da IA
+→ APPROVE / WAIT / WATCH / REJECT
 
-O QUE NÃO MUDOU
-- score mínimo de entrada: 70
-- confiança mínima para liberar APPROVE: 65%
-- volume mínimo 24h
-- bloqueio de OI
-- candles fechados
-- prioridade IA
-- cache
-- limites de requests
-- TP / STOP
-- acompanhamento
+Somente APPROVE que cumprir as regras normais do bot pode liberar sinal.
 
-LINHAS NOVAS NO /status
-🧷 WAIT padrão: 60%+
-🧷 WAIT condicional: 55–59% se score 80+ · vol 0.60x+ · OI +1.00%+
+GATILHOS DE RECHECK
+- RSI esfriou 2+ pontos
+- RSI saiu da região esticada
+- score +5
+- volume relativo +0.20x
+- OI +0.25 p.p.
+- aproximação da EMA20 em 0.25 p.p.
+- ou observação antiga + novo candle fechado
 
-VARIÁVEIS OPCIONAIS
-AI_WAIT_CONDITIONAL_MIN_CONFIDENCE=55
-AI_WAIT_CONDITIONAL_SCORE=80
-AI_WAIT_CONDITIONAL_VOLUME_RATIO=0.60
-AI_WAIT_CONDITIONAL_OI_PCT=1.00
+PROTEÇÕES
+- gap recheck: 15 min
+- máximo 8 rechecks/dia
+- máximo 3 por setup
+- limite global de IA continua 45 requests/dia
+- se direção mudar, sai da watchlist
+- se filtro matemático perder confirmação, sai da watchlist
 
-Não precisa criar nenhuma delas no Render.
-Os valores acima já são os padrões.
+NOVO NO /status
+👀 WATCH ativo: 60%+
+⏳ WAIT/WATCH em observação
+
+NOVO NO /ia
+Mostra:
+- decisão original WAIT ou WATCH
+- confiança
+- regra que colocou na watchlist
+- número de rechecks
+
+VARIÁVEL OPCIONAL
+AI_WATCH_RECHECK_MIN_CONFIDENCE=60
+
+Não precisa criar no Render.
+60% já é o padrão.
 
 SUBSTITUA OS 6 ARQUIVOS:
 ai.js

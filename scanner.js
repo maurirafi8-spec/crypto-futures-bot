@@ -782,7 +782,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.3.9.2: WAIT 55–59% entra condicionalmente quando o setup técnico é forte. ` +
+    `<i>V1.3.9.3: WATCH >=60% vira observação ativa e participa do recheck inteligente. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

@@ -106,6 +106,13 @@ const cfg = {
     0
   ),
 
+  // V1.3.9.3: WATCH é uma observação ativa, não entrada.
+  // WATCH >= 60% pode ficar na mesma watchlist de recheck.
+  aiWatchRecheckMinConfidence: Math.max(
+    Number(process.env.AI_WATCH_RECHECK_MIN_CONFIDENCE || 60),
+    0
+  ),
+
   aiWaitRecheckStaleMin: Math.max(
     Number(process.env.AI_WAIT_RECHECK_STALE_MINUTES || 30),
     15
@@ -285,15 +292,17 @@ function waitWatchEligibility(signal, ai) {
     return {
       eligible: false,
       mode: 'OFF',
-      reason: 'recheck WAIT desativado'
+      reason: 'recheck de observação desativado'
     };
   }
 
-  if (ai?.decision !== 'WAIT') {
+  const decision = String(ai?.decision || '').toUpperCase();
+
+  if (!['WAIT', 'WATCH'].includes(decision)) {
     return {
       eligible: false,
-      mode: 'NOT_WAIT',
-      reason: `decisão ${ai?.decision || 'vazia'}`
+      mode: 'NOT_OBSERVATION',
+      reason: `decisão ${decision || 'vazia'}`
     };
   }
 
@@ -301,7 +310,7 @@ function waitWatchEligibility(signal, ai) {
     return {
       eligible: false,
       mode: 'PRE_CANDIDATE',
-      reason: 'pré-candidato não entra no recheck WAIT'
+      reason: 'pré-candidato não entra na watchlist ativa'
     };
   }
 
@@ -310,18 +319,40 @@ function waitWatchEligibility(signal, ai) {
   const oiPct = Number(signal?.oiPct || 0);
   const volumeRatio = Number(signal?.t15?.volumeRatio || 0);
 
-  // Regra normal: WAIT >= 60%.
+  // WATCH: é observação explícita da IA. Não vira entrada,
+  // mas WATCH >= 60% fica acompanhado para nova análise.
+  if (decision === 'WATCH') {
+    if (confidence >= cfg.aiWatchRecheckMinConfidence) {
+      return {
+        eligible: true,
+        mode: 'WATCH',
+        reason:
+          `WATCH ${Math.round(confidence)}% >= ` +
+          `${cfg.aiWatchRecheckMinConfidence}%`
+      };
+    }
+
+    return {
+      eligible: false,
+      mode: 'WATCH_LOW_CONFIDENCE',
+      reason:
+        `WATCH ${Math.round(confidence)}% abaixo de ` +
+        `${cfg.aiWatchRecheckMinConfidence}%`
+    };
+  }
+
+  // WAIT padrão: >=60%.
   if (confidence >= cfg.aiWaitRecheckMinConfidence) {
     return {
       eligible: true,
-      mode: 'STANDARD',
+      mode: 'WAIT_STANDARD',
       reason:
         `WAIT ${Math.round(confidence)}% >= ` +
         `${cfg.aiWaitRecheckMinConfidence}%`
     };
   }
 
-  // Regra condicional: WAIT 55–59% + setup técnico forte.
+  // WAIT condicional: 55–59% + setup técnico forte.
   const conditional =
     confidence >= cfg.aiWaitConditionalMinConfidence &&
     confidence < cfg.aiWaitRecheckMinConfidence &&
@@ -332,7 +363,7 @@ function waitWatchEligibility(signal, ai) {
   if (conditional) {
     return {
       eligible: true,
-      mode: 'CONDITIONAL',
+      mode: 'WAIT_CONDITIONAL',
       reason:
         `WAIT ${Math.round(confidence)}% aceito por setup forte · ` +
         `score ${score} · vol ${volumeRatio.toFixed(2)}x · ` +
@@ -342,7 +373,7 @@ function waitWatchEligibility(signal, ai) {
 
   return {
     eligible: false,
-    mode: 'LOW_CONFIDENCE',
+    mode: 'WAIT_LOW_CONFIDENCE',
     reason:
       `WAIT ${Math.round(confidence)}% abaixo do mínimo; ` +
       `regra condicional exige ${cfg.aiWaitConditionalMinConfidence}%+ · ` +
@@ -379,6 +410,7 @@ function registerWaitDecision(signal, ai) {
     attempts: wasRecheck
       ? Math.min((previous?.attempts || 0) + 1, cfg.aiWaitRecheckMaxAttempts)
       : (previous?.attempts || 0),
+    decision: String(ai.decision || 'WAIT').toUpperCase(),
     confidence: Number(ai.confidence || 0),
     reason: String(ai.reason || '').slice(0, 260),
     eligibilityMode: eligibility.mode,
@@ -394,14 +426,14 @@ function registerWaitDecision(signal, ai) {
 
 function waitRecheckAssessment(signal) {
   if (!cfg.aiWaitRecheckEnabled) {
-    return { ready: false, reason: 'recheck WAIT desativado' };
+    return { ready: false, reason: 'recheck de observação desativado' };
   }
 
   const key = waitWatchKey(signal);
   const watch = aiWaitWatchlist.get(key);
 
   if (!watch) {
-    return { ready: false, reason: 'não está na watchlist WAIT' };
+    return { ready: false, reason: 'não está na watchlist de observação' };
   }
 
   const ageMin = (Date.now() - watch.createdAt) / 60_000;
@@ -413,7 +445,7 @@ function waitRecheckAssessment(signal) {
     return {
       ready: false,
       expired: true,
-      reason: `WAIT expirou após ${Math.round(ageMin)} min`
+      reason: `${watch.decision || 'OBSERVAÇÃO'} expirou após ${Math.round(ageMin)} min`
     };
   }
 
@@ -431,7 +463,7 @@ function waitRecheckAssessment(signal) {
       ready: false,
       quota: true,
       reason:
-        `cota diária de recheck WAIT atingida ` +
+        `cota diária de recheck de observação atingida ` +
         `(${aiWaitRecheckCallsToday}/${cfg.aiWaitRecheckDailyLimit})`
     };
   }
@@ -501,14 +533,14 @@ function waitRecheckAssessment(signal) {
     );
   }
 
-  // Mesmo sem melhora numérica clara, não deixamos WAIT "preso" para sempre:
+  // Mesmo sem melhora numérica clara, não deixamos WAIT/WATCH preso para sempre:
   // após 30 min e com novo candle fechado, a IA pode revisar o contexto.
   if (
     !meaningfulReasons.length &&
     sinceDecisionMin >= cfg.aiWaitRecheckStaleMin
   ) {
     meaningfulReasons.push(
-      `WAIT com ${Math.round(sinceDecisionMin)} min e novo candle fechado`
+      `${watch.decision || 'OBSERVAÇÃO'} com ${Math.round(sinceDecisionMin)} min e novo candle fechado`
     );
   }
 
@@ -567,11 +599,11 @@ function reconcileWaitWatchlist(snapshots) {
 
 function waitWatchlistText() {
   if (!aiWaitWatchlist.size) {
-    return '⏳ Nenhum WAIT está em observação para recheck.';
+    return '⏳ Nenhum WAIT/WATCH está em observação para recheck.';
   }
 
   const lines = [
-    '🔄 <b>WAIT em observação</b>',
+    '🔄 <b>Observações ativas da IA</b>',
     ''
   ];
 
@@ -581,18 +613,29 @@ function waitWatchlistText() {
       Math.floor((Date.now() - watch.lastDecisionAt) / 60_000)
     );
 
+    let entryRule = 'PADRÃO';
+
+    if (watch.eligibilityMode === 'WAIT_CONDITIONAL') {
+      entryRule = 'WAIT CONDICIONAL 55–59%';
+    } else if (watch.eligibilityMode === 'WAIT_STANDARD') {
+      entryRule = 'WAIT PADRÃO 60%+';
+    } else if (watch.eligibilityMode === 'WATCH') {
+      entryRule = 'WATCH 60%+';
+    }
+
     lines.push(
-      `⏳ <b>${watch.symbol} ${watch.side}</b> — ` +
-      `${Math.round(watch.confidence)}%\n` +
-      `🕯 Aguardando melhora em candle fechado · ${ageMin} min desde a decisão\n` +
+      `👀 <b>${watch.symbol} ${watch.side}</b> — ` +
+      `${watch.decision || 'OBS'} ${Math.round(watch.confidence)}%\n` +
+      `🕯 Aguardando novo candle + melhora · ${ageMin} min desde a decisão\n` +
       `🔁 Rechecks: ${watch.attempts}/${cfg.aiWaitRecheckMaxAttempts}\n` +
-      `🧷 Entrada na watchlist: ${watch.eligibilityMode === 'CONDITIONAL' ? 'CONDICIONAL 55–59%' : 'PADRÃO 60%+'}\n` +
+      `🧷 Entrada na watchlist: ${entryRule}\n` +
       `${watch.reason}`
     );
   }
 
   return lines.join('\n');
 }
+
 
 function getCachedAI(signal) {
   const key = aiCacheKey(signal);
@@ -603,10 +646,10 @@ function getCachedAI(signal) {
   const ttlMin = cacheTtlMin(signal, item);
   const ageMs = Date.now() - item.at;
 
-  // WAIT usa uma política especial: ele permanece em cache até surgir
+  // WAIT/WATCH usam uma política especial: permanecem em cache até surgir
   // um gatilho real de recheck. Assim evitamos gastar chamadas apenas
-  // porque o cache prioritário de 10 min venceu antes de fechar um candle.
-  if (item.ai?.decision === 'WAIT') {
+  // porque o TTL comum venceu antes de fechar um candle.
+  if (['WAIT', 'WATCH'].includes(item.ai?.decision)) {
     const assessment = waitRecheckAssessment(signal);
 
     if (assessment.ready) {
@@ -690,11 +733,11 @@ function aiCallPermission(signal) {
     ? now - aiLastCallAt
     : Number.POSITIVE_INFINITY;
 
-  // V1.3.9: um WAIT com novo candle/melhora pode usar uma janela própria.
+  // V1.3.9.3: WAIT/WATCH com novo candle/melhora podem usar uma janela própria.
   if (signal?._aiWaitRecheck?.ready) {
     if (aiWaitRecheckCallsToday >= cfg.aiWaitRecheckDailyLimit) {
       lastAiSkipReason =
-        `cota de recheck WAIT atingida ` +
+        `cota de recheck de observação atingida ` +
         `(${aiWaitRecheckCallsToday}/${cfg.aiWaitRecheckDailyLimit})`;
 
       return {
@@ -724,7 +767,7 @@ function aiCallPermission(signal) {
     const mins = Math.max(1, Math.ceil(waitMs / 60_000));
 
     lastAiSkipReason =
-      `recheck WAIT em ~${mins} min`;
+      `recheck de observação em ~${mins} min`;
 
     return {
       allowed: false,
@@ -2268,7 +2311,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.3.9.2 FREE</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.3.9.3 FREE</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o mercado agora\n' +
       '/status — ver configuração\n' +
@@ -2282,7 +2325,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.3.9.2 FREE\n` +
+      `✅ Online — V1.3.9.3 FREE\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🪙 Top mercados: ${cfg.topMarkets}\n` +
       `⭐ Score mínimo para sinal: ${cfg.minScore}\n` +
@@ -2316,8 +2359,9 @@ async function handleMessage(msg) {
       `🔄 Recheck WAIT: ${cfg.aiWaitRecheckEnabled ? 'ATIVO' : 'INATIVO'} · novo candle + melhora · gap ${cfg.aiWaitRecheckGapMin} min\n` +
       `🧷 WAIT padrão: ${cfg.aiWaitRecheckMinConfidence}%+\n` +
       `🧷 WAIT condicional: ${cfg.aiWaitConditionalMinConfidence}–${cfg.aiWaitRecheckMinConfidence - 1}% se score ${cfg.aiWaitConditionalScore}+ · vol ${cfg.aiWaitConditionalVolumeRatio.toFixed(2)}x+ · OI +${cfg.aiWaitConditionalOiPct.toFixed(2)}%+\n` +
+      `👀 WATCH ativo: ${cfg.aiWatchRecheckMinConfidence}%+\n` +
       `🔄 Rechecks hoje: ${aiBudgetStats().waitRecheckUsed}/${aiBudgetStats().waitRecheckLimit} · máx ${cfg.aiWaitRecheckMaxAttempts} por setup\n` +
-      `⏳ WAIT em observação: ${aiWaitWatchlist.size}\n` +
+      `⏳ WAIT/WATCH em observação: ${aiWaitWatchlist.size}\n` +
       `🟠 Pendente de IA: ${pendingAiCandidate ? `${pendingAiCandidate.symbol} ${pendingAiCandidate.side}` : 'nenhum'}\n` +
       `🎯 Acompanhando: ${activeSignals.size} sinal(is)\n` +
       `📚 Resultados registrados: ${resultHistory.length}`
@@ -2364,7 +2408,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.3.9.2-free',
+    version: '1.3.9.3-free',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -2388,6 +2432,7 @@ http.createServer((req, res) => {
     aiWaitConditionalScore: cfg.aiWaitConditionalScore,
     aiWaitConditionalVolumeRatio: cfg.aiWaitConditionalVolumeRatio,
     aiWaitConditionalOiPct: cfg.aiWaitConditionalOiPct,
+    aiWatchRecheckMinConfidence: cfg.aiWatchRecheckMinConfidence,
     pendingAI: pendingAiCandidate
       ? `${pendingAiCandidate.symbol}:${pendingAiCandidate.side}`
       : null,
@@ -2397,7 +2442,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.3.9.2 FREE pronto ✅');
+console.log('Crypto Futures Scanner V1.3.9.3 FREE pronto ✅');
 
 setTimeout(() => doScan().catch(console.error), 5000);
 setInterval(() => doScan().catch(console.error), cfg.intervalMin * 60_000);
