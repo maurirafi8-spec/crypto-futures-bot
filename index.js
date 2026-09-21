@@ -81,7 +81,9 @@ let lastScanReport = null;
 
 // Controle de orçamento da camada IA para o plano gratuito.
 let aiUsageDay = '';
-let aiCallsToday = 0;
+let aiCallsToday = 0;              // tentativas/chamadas consumidas
+let aiCompletedToday = 0;          // decisões válidas concluídas
+let aiFailedToday = 0;             // erros/timeout/parser
 let aiPriorityCallsToday = 0;
 let aiLastCallAt = 0;
 let lastAiSkipReason = '';
@@ -97,6 +99,8 @@ function refreshAIBudgetDay() {
   if (today !== aiUsageDay) {
     aiUsageDay = today;
     aiCallsToday = 0;
+    aiCompletedToday = 0;
+    aiFailedToday = 0;
     aiPriorityCallsToday = 0;
     aiLastCallAt = 0;
     lastAiSkipReason = '';
@@ -109,6 +113,8 @@ function aiBudgetStats() {
   refreshAIBudgetDay();
   return {
     used: aiCallsToday,
+    completed: aiCompletedToday,
+    failed: aiFailedToday,
     limit: cfg.aiDailyLimit,
     remaining: Math.max(0, cfg.aiDailyLimit - aiCallsToday),
     minGapMin: cfg.aiMinGapMin,
@@ -396,6 +402,8 @@ function setPendingAI(signal, reason = '') {
     priorityEligible: isPriorityAICandidate(signal),
     waitMode: wait.mode,
     reason: reason || wait.text,
+    lastAttemptError: null,
+    lastAttemptAt: null,
     createdAt: Date.now()
   };
 }
@@ -826,7 +834,9 @@ function aiHistoryText() {
       ...(pendingAiCandidate.priorityEligible
         ? ['⚡ PRIORIDADE IA ATIVA']
         : []),
-      `Motivo: ${pendingAiCandidate.reason}`,
+      ...(pendingAiCandidate.lastAttemptError
+        ? [`⚠️ Última tentativa: ${pendingAiCandidate.lastAttemptError}`]
+        : []),
       `🤖 ${aiWaitInfo({
         score: pendingAiCandidate.score,
         oiPct: pendingAiCandidate.oiPct,
@@ -857,7 +867,8 @@ function aiHistoryText() {
     ...(lines.length ? ['', '────────────'] : []),
     `🤖 <b>Histórico da IA desde o último deploy</b>`,
     `Modelo: <code>${aiModel()}</code>`,
-    `🆓 Uso IA hoje: ${budget.used}/${budget.limit} (${budget.remaining} restantes)`,
+    `🆓 Tentativas IA hoje: ${budget.used}/${budget.limit} (${budget.remaining} restantes)`,
+    `✅ Análises concluídas: ${budget.completed} · ⚠️ Falhas: ${budget.failed}`,
     `⚡ Prioridade hoje: ${budget.priorityUsed}/${budget.priorityLimit} · gap ${budget.priorityGapMin} min`,
     `⏳ Normal: ${budget.minGapMin} min`,
     `♻️ Cache normal: ${budget.cacheMin} min | prioritário: ${budget.priorityCacheMin} min`,
@@ -931,6 +942,9 @@ function pendingAIText(pending = pendingAiCandidate) {
     (pending.priorityEligible
       ? `⚡ <b>PRIORIDADE IA</b> — score/volume/OI fortes\n`
       : '') +
+    (pending.lastAttemptError
+      ? `⚠️ Última tentativa: ${pending.lastAttemptError}\n`
+      : '') +
     `⏳ ${wait.text}\n\n` +
     `<i>Não é entrada ainda. O sinal só será liberado se passar pela camada IA.</i>`
   );
@@ -985,7 +999,9 @@ function lastScanDebugText() {
     `🟡 Quase aprovados: ${m?.nearApproved?.length ?? 0}`,
     `👀 Pré-candidatos ${m?.preCandidateMinScore ?? cfg.preCandidateMinScore}–${cfg.minScore - 1}: ${m?.preCandidates?.length ?? 0}`,
     `🤖 Candidatos selecionados para IA: ${a?.selected ?? 0}`,
-    `📡 Chamadas novas à IA: ${a?.apiCalls ?? 0}`,
+    `📡 Tentativas novas à IA: ${a?.apiCalls ?? 0}`,
+    `✅ Análises concluídas: ${a?.completed ?? 0}`,
+    `⚠️ Falhas/timeout/parser: ${a?.errors ?? 0}`,
     `⚡ Chamadas prioritárias: ${a?.priorityCalls ?? 0}`,
     `♻️ Respostas vindas do cache: ${a?.cacheHits ?? 0}`,
     `⏸ Sem vaga nova neste scan: ${a?.freshDeferred ?? 0}`,
@@ -1070,7 +1086,11 @@ function scanNoSignalText(report) {
     `🕯 Volume/indicadores: candles fechados`,
     `🟡 ${m?.nearApproved?.length ?? 0} quase aprovado(s)`,
     `👀 ${m?.preCandidates?.length ?? 0} pré-candidato(s) ${m?.preCandidateMinScore ?? cfg.preCandidateMinScore}–${cfg.minScore - 1}`,
-    `📡 ${a?.apiCalls ?? 0} chamada(s) nova(s) à IA`,
+    `📡 ${a?.apiCalls ?? 0} tentativa(s) nova(s) à IA`,
+    `✅ ${a?.completed ?? 0} análise(s) concluída(s)`,
+    ...(a?.errors
+      ? [`⚠️ ${a.errors} falha(s) de IA`]
+      : []),
     ...(a?.priorityCalls
       ? [`⚡ ${a.priorityCalls} chamada(s) prioritária(s)`]
       : []),
@@ -1142,6 +1162,7 @@ async function validateSignalsWithAI(signals) {
     rejected: 0,
     lowConfidence: 0,
     errors: 0,
+    completed: 0,
     skipReason: ''
   };
 
@@ -1321,14 +1342,6 @@ async function validateSignalsWithAI(signals) {
         `com ${aiModel()} [${permission.mode}]`
       );
 
-      if (
-        pendingAiCandidate &&
-        pendingAiCandidate.symbol === s.symbol &&
-        pendingAiCandidate.side === s.side
-      ) {
-        clearPendingAI();
-      }
-
       registerAICall(permission.mode);
       freshCallsUsed += 1;
       meta.apiCalls += 1;
@@ -1346,6 +1359,16 @@ async function validateSignalsWithAI(signals) {
       saveCachedAI(s, ai);
       rememberAI(s, ai);
       countAiDecision(meta, ai);
+      aiCompletedToday += 1;
+      meta.completed += 1;
+
+      if (
+        pendingAiCandidate &&
+        pendingAiCandidate.symbol === s.symbol &&
+        pendingAiCandidate.side === s.side
+      ) {
+        clearPendingAI();
+      }
 
       console.log(
         `[ai] ${s.symbol}: ${ai.decision} ` +
@@ -1362,14 +1385,43 @@ async function validateSignalsWithAI(signals) {
     } catch (error) {
       freshCallsUsed += 1;
       meta.errors += 1;
+      aiFailedToday += 1;
+
+      const errMsg = String(error?.message || error || 'erro desconhecido')
+        .replace(/\s+/g, ' ')
+        .slice(0, 180);
 
       lastAiEvent = {
         type: 'ERROR',
         at: Date.now(),
-        message: `${s.symbol}: ${error.message}`.slice(0, 260)
+        message: `${s.symbol}: ${errMsg}`.slice(0, 260)
       };
 
-      console.error(`[ai] ${s.symbol}: ${error.message}`);
+      // V1.3.8.1: falha NÃO remove o candidato técnico.
+      // Mantemos como pendente para tentar novamente na próxima janela.
+      if (s.candidateTier === 'STANDARD') {
+        if (
+          !pendingAiCandidate ||
+          pendingAiCandidate.symbol !== s.symbol ||
+          pendingAiCandidate.side !== s.side
+        ) {
+          setPendingAI(s, 'Falha na última tentativa da IA');
+        }
+
+        if (pendingAiCandidate) {
+          pendingAiCandidate.lastAttemptError = errMsg;
+          pendingAiCandidate.lastAttemptAt = Date.now();
+        }
+
+        if (!pending) {
+          pending = {
+            signal: s,
+            reason: `Falha na IA: ${errMsg}`
+          };
+        }
+      }
+
+      console.error(`[ai] ${s.symbol}: ${errMsg}`);
 
       if (cfg.aiFailOpen) {
         const ai = {
@@ -1500,11 +1552,26 @@ async function doScan({ forceReply = false } = {}) {
     // Um cache aprovado pode liberar um sinal e, ao mesmo tempo,
     // outro candidato sem cache pode ficar pendente.
     if (aiResult.pending?.signal) {
-      setPendingAI(
-        aiResult.pending.signal,
-        aiResult.pending.reason
-      );
-    } else {
+      const samePending =
+        pendingAiCandidate &&
+        pendingAiCandidate.symbol === aiResult.pending.signal.symbol &&
+        pendingAiCandidate.side === aiResult.pending.signal.side;
+
+      if (!samePending) {
+        setPendingAI(
+          aiResult.pending.signal,
+          aiResult.pending.reason
+        );
+      } else if (!pendingAiCandidate.reason) {
+        pendingAiCandidate.reason = aiResult.pending.reason;
+      }
+    } else if (
+      !signals.some(sig =>
+        pendingAiCandidate &&
+        pendingAiCandidate.symbol === sig.symbol &&
+        pendingAiCandidate.side === sig.side
+      )
+    ) {
       clearPendingAI();
     }
 
@@ -1599,7 +1666,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.3.8 FREE</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.3.8.1 FREE</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o mercado agora\n' +
       '/status — ver configuração\n' +
@@ -1613,7 +1680,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.3.8 FREE\n` +
+      `✅ Online — V1.3.8.1 FREE\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🪙 Top mercados: ${cfg.topMarkets}\n` +
       `⭐ Score mínimo para sinal: ${cfg.minScore}\n` +
@@ -1630,7 +1697,8 @@ async function handleMessage(msg) {
       `🤖 IA: ${aiEnabledNow() ? 'ATIVA' : 'INATIVA'}\n` +
       `🧠 Modelo: ${aiEnabledNow() ? aiModel() : '—'}\n` +
       `✅ Confiança mínima IA: ${cfg.aiMinConfidence}%\n` +
-      `🆓 IA grátis: ${aiBudgetStats().used}/${aiBudgetStats().limit} chamadas hoje\n` +
+      `🆓 IA grátis: ${aiBudgetStats().used}/${aiBudgetStats().limit} tentativas hoje\n` +
+      `✅ IA concluídas: ${aiBudgetStats().completed} · ⚠️ falhas: ${aiBudgetStats().failed}\n` +
       `⚡ IA prioritária: ${cfg.aiPriorityEnabled ? 'ATIVA' : 'INATIVA'}\n` +
       `⚡ Regra prioridade: score ${cfg.aiPriorityScore}+ · vol ${cfg.aiPriorityVolumeRatio.toFixed(2)}x+ · OI +${cfg.aiPriorityOiPct.toFixed(2)}%+\n` +
       `⚡ Prioridade hoje: ${aiBudgetStats().priorityUsed}/${aiBudgetStats().priorityLimit} · gap ${aiBudgetStats().priorityGapMin} min\n` +
@@ -1682,13 +1750,16 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.3.8-free',
+    version: '1.3.8.1-free',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
     aiEnabled: aiEnabledNow(),
     aiModel: aiEnabledNow() ? aiModel() : null,
     aiHistory: aiHistory.length,
+    aiAttemptedToday: aiCallsToday,
+    aiCompletedToday,
+    aiFailedToday,
     pendingAI: pendingAiCandidate
       ? `${pendingAiCandidate.symbol}:${pendingAiCandidate.side}`
       : null,
@@ -1698,7 +1769,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.3.8 FREE pronto ✅');
+console.log('Crypto Futures Scanner V1.3.8.1 FREE pronto ✅');
 
 setTimeout(() => doScan().catch(console.error), 5000);
 setInterval(() => doScan().catch(console.error), cfg.intervalMin * 60_000);

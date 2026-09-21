@@ -778,7 +778,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.3.8: cache inteligente + uma vaga nova de IA preservada + candles fechados. ` +
+    `<i>V1.3.8.1: IA resiliente + pendência preservada em erro + cache inteligente. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

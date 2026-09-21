@@ -1,4 +1,4 @@
-CRYPTO FUTURES SCANNER V1.3.8 FREE — SMART CACHE
+CRYPTO FUTURES SCANNER V1.3.8.1 FREE — AI RELIABILITY FIX
 
 SUBSTITUA NO GITHUB:
 - ai.js
@@ -8,79 +8,68 @@ SUBSTITUA NO GITHUB:
 - scanner.js
 - telegram.js
 
-NOVIDADES
+CORREÇÕES IMPORTANTES
 
-1) CACHE NÃO DESPERDIÇA MAIS A VAGA DA IA
+1) CANDIDATO PENDENTE NÃO SOME EM ERRO
 Antes:
-- BTC tinha APPROVE em cache.
-- O bot reaproveitava BTC e encerrava a única vaga.
-- Outro ativo sem cache ficava sem análise.
+- a chamada à IA podia consumir 1 uso;
+- se desse timeout, parser inválido ou outro erro,
+  o candidato podia ficar com estado confuso.
 
 Agora:
-- O bot percorre todos os candidatos.
-- Reaproveita TODOS os caches válidos sem gastar chamada.
-- Depois ainda pode usar UMA chamada nova em outro candidato sem cache.
-- Continua gastando no máximo 1 chamada NOVA por scan.
+- o candidato só deixa de ser pendente depois de uma decisão válida;
+- se a IA falhar, ele continua aguardando;
+- /ia mostra:
+  ⚠️ Última tentativa: <erro resumido>
+
+2) CONTAGEM SEPARADA
+/status e /ia agora diferenciam:
+- tentativas consumidas;
+- análises concluídas com decisão válida;
+- falhas/timeout/parser.
 
 Exemplo:
-BTC -> ♻️ cache APPROVE
-BNB -> sem cache
-Resultado:
-BTC pode ser liberado pelo cache
-+
-BNB pode usar a única chamada nova disponível.
+/status
+🆓 IA grátis: 2/45 tentativas hoje
+✅ IA concluídas: 1 · ⚠️ falhas: 1
 
-2) PRIORIDADE CONTINUA PASSANDO NA FRENTE
-A fila já vem ordenada:
-- prioritários primeiro;
-- depois score;
-- depois volume;
-- depois OI.
-
-Então, entre os candidatos SEM CACHE, a vaga nova favorece o setup forte.
-
-3) CACHE INTELIGENTE
-Cache normal: 30 min
-Cache prioritário: 10 min
-
-Se o setup é prioritário agora OU foi salvo como prioritário,
-a decisão expira mais rápido.
-
-Isso evita usar por 30 minutos uma decisão antiga em setups de mercado rápido.
-
-4) /STATUS
+3) /DEBUG MAIS CLARO
 Mostra:
-♻️ Cache: normal 30 min · prioritário 10 min
+📡 Tentativas novas à IA
+✅ Análises concluídas
+⚠️ Falhas/timeout/parser
+⚡ Chamadas prioritárias
+♻️ Cache
 
-5) /DEBUG
-Mostra:
-♻️ Respostas vindas do cache: X
-📡 Chamadas novas à IA: X
-⏸ Sem vaga nova neste scan: X
+4) CONTAGEM DE TEMPO NÃO FICA CONGELADA
+O "Motivo: próxima chamada em ~5 min" não é mais usado como relógio visual.
+O bot calcula o tempo restante ao vivo quando você usa /ia ou /debug.
 
-VARIÁVEL OPCIONAL
-AI_PRIORITY_CACHE_MINUTES=10
+5) ÚLTIMO ERRO FICA VISÍVEL
+Se OpenRouter retornar erro, timeout ou JSON inválido:
+- último evento da IA registra o erro;
+- candidato técnico permanece pendente;
+- nova tentativa só acontece quando a janela permitir.
 
-Não precisa criar essa variável; 10 min já é o padrão.
-
-REGRAS MANTIDAS
-- 6 mercados
-- score 70+ para sinal
+NÃO MUDOU
+- score mínimo 70
 - pré-candidato 60–69
-- candles somente fechados
-- prioridade: score 85+ / volume 1.00x+ / OI +0.50%+
+- candles fechados
+- prioridade score 85+ / volume 1.00x+ / OI +0.50%+
 - gap prioritário 5 min
 - gap normal 30 min
-- limite total 45/dia
-- prioridade 12/dia
-- 1 chamada NOVA por scan
-- acompanhamento TP1/TP2/TP3/STOP
-- estatísticas score/confiança IA
+- cache normal 30 min
+- cache prioritário 10 min
+- 1 chamada nova por scan
+- limite interno 45/dia
 
-TESTE
+TESTE APÓS DEPLOY
 /status
 /scan
-/debug
 /ia
-/ativos
-/resultados
+/debug
+
+SE HOUVER FALHA DA IA
+/ia deve mostrar:
+⚠️ Última tentativa: ...
+e o ativo continua como PENDENTE DE IA.
