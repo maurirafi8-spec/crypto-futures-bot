@@ -1467,3 +1467,14 @@ export function paperStateInfo() {
     dailyLossLocked: isDailyLossLocked()
   };
 }
+
+
+export function paperOpenSymbols() {
+  return [
+    ...new Set(
+      state.openPositions
+        .map(p => String(p.symbol || '').toUpperCase())
+        .filter(Boolean)
+    )
+  ];
+}

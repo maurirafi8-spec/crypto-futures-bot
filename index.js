@@ -33,14 +33,22 @@ import {
   paperPause,
   paperResume,
   paperReset,
-  paperStateInfo
+  paperStateInfo,
+  paperOpenSymbols
 } from './paper-trader.js';
 
 const cfg = {
   token: process.env.BOT_TOKEN,
   chatId: process.env.TELEGRAM_CHAT_ID || '',
   port: Number(process.env.PORT || 3000),
-  intervalMin: Number(process.env.SCAN_INTERVAL_MINUTES || 5),
+  intervalMin: Math.max(
+    Number(process.env.SCAN_INTERVAL_MINUTES || 1),
+    1
+  ),
+  scanBatchSize: Math.min(
+    Math.max(Number(process.env.SCAN_BATCH_SIZE || 4), 2),
+    4
+  ),
   topMarkets: Math.min(
     Math.max(Number(process.env.V133_TOP_MARKETS || 12), 1),
     12
@@ -194,6 +202,197 @@ const aiDecisionCache = new Map();
 // O registro guarda o estado do mercado na hora da decisão para comparar
 // com os próximos candles fechados.
 const aiWaitWatchlist = new Map();
+
+const FAST_CORE_BASES = [
+  'BTC',
+  'ETH',
+  'SOL'
+];
+
+const ROTATION_SCAN_BASES = [
+  'XRP',
+  'BNB',
+  'DOGE',
+  'ADA',
+  'LINK',
+  'AVAX',
+  'SUI',
+  'LTC',
+  'BCH',
+  'DOT',
+  'NEAR',
+  'UNI',
+  'AAVE',
+  'ETC',
+  'ATOM',
+  'INJ',
+  'HBAR',
+  'TRX',
+  'FIL',
+  'ARB',
+  'OP'
+];
+
+let scanCoreCursor = 0;
+let scanRotationCursor = 0;
+let scanUrgentCursor = 0;
+let lastScanBatch = [];
+
+function baseFromSymbol(symbol) {
+  return String(symbol || '')
+    .toUpperCase()
+    .replace(/[-_/]/g, '')
+    .replace(/USDT.*$/, '')
+    .replace(/PERP.*$/, '');
+}
+
+function urgentScanBases() {
+  const values = [];
+
+  for (const symbol of paperOpenSymbols()) {
+    const base = baseFromSymbol(symbol);
+    if (base) values.push(base);
+  }
+
+  for (const watch of aiWaitWatchlist.values()) {
+    const base = baseFromSymbol(watch.symbol);
+    if (base) values.push(base);
+  }
+
+  if (pendingAiCandidate?.symbol) {
+    const base = baseFromSymbol(pendingAiCandidate.symbol);
+    if (base) values.push(base);
+  }
+
+  return [...new Set(values)]
+    .filter(base => base && base !== 'USDT');
+}
+
+function takeRotating(items, cursor, count, blocked = new Set()) {
+  const out = [];
+
+  if (!items.length || count <= 0) {
+    return {
+      values: out,
+      nextCursor: cursor
+    };
+  }
+
+  let checked = 0;
+  let idx = cursor % items.length;
+
+  while (
+    out.length < count &&
+    checked < items.length * 2
+  ) {
+    const value = items[idx];
+
+    if (
+      value &&
+      !blocked.has(value) &&
+      !out.includes(value)
+    ) {
+      out.push(value);
+    }
+
+    idx = (idx + 1) % items.length;
+    checked += 1;
+  }
+
+  return {
+    values: out,
+    nextCursor: idx
+  };
+}
+
+function nextAutomaticScanBatch() {
+  const size = cfg.scanBatchSize;
+  const batch = [];
+  const blocked = new Set();
+
+  const urgent = urgentScanBases();
+
+  if (urgent.length) {
+    const urgentPick =
+      takeRotating(
+        urgent,
+        scanUrgentCursor,
+        Math.min(2, size),
+        blocked
+      );
+
+    for (const base of urgentPick.values) {
+      batch.push(base);
+      blocked.add(base);
+    }
+
+    scanUrgentCursor =
+      urgentPick.nextCursor;
+  }
+
+  if (batch.length < size) {
+    let attempts = 0;
+
+    while (
+      attempts < FAST_CORE_BASES.length &&
+      batch.length < size
+    ) {
+      const base =
+        FAST_CORE_BASES[
+          scanCoreCursor %
+          FAST_CORE_BASES.length
+        ];
+
+      scanCoreCursor =
+        (
+          scanCoreCursor + 1
+        ) %
+        FAST_CORE_BASES.length;
+
+      attempts += 1;
+
+      if (!blocked.has(base)) {
+        batch.push(base);
+        blocked.add(base);
+        break;
+      }
+    }
+  }
+
+  if (batch.length < size) {
+    const rotationPick =
+      takeRotating(
+        ROTATION_SCAN_BASES,
+        scanRotationCursor,
+        size - batch.length,
+        blocked
+      );
+
+    for (const base of rotationPick.values) {
+      batch.push(base);
+      blocked.add(base);
+    }
+
+    scanRotationCursor =
+      rotationPick.nextCursor;
+  }
+
+  lastScanBatch = batch;
+  return batch;
+}
+
+function scanSchedulerText() {
+  const urgent = urgentScanBases();
+
+  return (
+    `⏱ <b>Scheduler 1 minuto</b>\n` +
+    `Lote: ${cfg.scanBatchSize} moedas por scan\n` +
+    `Cotação: USDT em todos os contratos\n` +
+    `Prioridade rápida: BTC / ETH / SOL\n` +
+    `WATCH/PAPER prioritários: ${urgent.length ? urgent.join(', ') : 'nenhum'}\n` +
+    `Último lote: ${lastScanBatch.length ? lastScanBatch.join(', ') : 'ainda não executado'}`
+  );
+}
 
 function aiDayKey(ts = Date.now()) {
   return new Date(ts).toISOString().slice(0, 10);
@@ -2302,7 +2501,11 @@ async function validateSignalsWithAI(signals) {
   };
 }
 
-async function doScan({ forceReply = false } = {}) {
+async function doScan({
+  forceReply = false,
+  marketBases = null,
+  automatic = false
+} = {}) {
   if (scanning) {
     if (forceReply && activeChatId) {
       await sendMessage(
@@ -2318,7 +2521,15 @@ async function doScan({ forceReply = false } = {}) {
   const startedAt = Date.now();
 
   try {
-    console.log(`[scan] iniciando ${new Date().toISOString()}`);
+    const selectedBases =
+      Array.isArray(marketBases) && marketBases.length
+        ? marketBases
+        : nextAutomaticScanBatch();
+
+    console.log(
+      `[scan] iniciando ${new Date().toISOString()} · ` +
+      `${automatic ? 'AUTO' : 'MANUAL'} · lote: ${selectedBases.join(', ')} / USDT`
+    );
 
     const {
       signals: mathSignals,
@@ -2327,6 +2538,7 @@ async function doScan({ forceReply = false } = {}) {
       debug
     } = await scanMarket({
       topMarkets: cfg.topMarkets,
+      marketBases: selectedBases,
       minQuoteVolume: cfg.minVolume,
       minScore: cfg.minScore,
       preCandidateMinScore: cfg.preCandidateMinScore,
@@ -2466,6 +2678,9 @@ async function doScan({ forceReply = false } = {}) {
 
     lastScanReport = {
       at: Date.now(),
+      automatic,
+      marketBases: selectedBases,
+      quoteAsset: 'USDT',
       durationMs: Date.now() - startedAt,
       math: debug,
       ai: aiResult.meta,
@@ -2502,6 +2717,12 @@ async function doScan({ forceReply = false } = {}) {
 
     lastScanReport = {
       at: Date.now(),
+      automatic,
+      marketBases:
+        Array.isArray(marketBases)
+          ? marketBases
+          : lastScanBatch,
+      quoteAsset: 'USDT',
       durationMs: Date.now() - startedAt,
       math: {
         selectedMarkets: 0,
@@ -2553,9 +2774,10 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.5.2 FREE</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.5.3 FREE</b>\n\n' +
       'Comandos:\n' +
-      '/scan — varrer o mercado agora\n' +
+      '/scan — varrer o próximo lote agora\n' +
+      '/scheduler — ver rotação automática de 1 minuto\n' +
       '/status — ver configuração\n' +
       '/top — mostrar os melhores sinais atuais\n' +
       '/ativos — sinais em acompanhamento\n' +
@@ -2578,13 +2800,21 @@ async function handleMessage(msg) {
       '/kill — pausar e desarmar executor Hyperliquid\n' +
       '/resume — reativar executor Hyperliquid (continua desarmado)'
     );
+  } else if (text.startsWith('/scheduler')) {
+    await sendMessage(
+      cfg.token,
+      activeChatId,
+      scanSchedulerText()
+    );
   } else if (text.startsWith('/status')) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.5.2 FREE\n` +
+      `✅ Online — V1.5.3 FREE\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
-      `🪙 Mercados por scan: ${cfg.topMarkets} · rotação de alts\n` +
+      `⏱ Scan automático: a cada ${cfg.intervalMin} min\n` +
+      `🪙 Lote automático: ${cfg.scanBatchSize} moedas · pares /USDT\n` +
+      `🔁 Universo: BTC/ETH/SOL prioritários + 21 moedas em rotação\n` +
       `⚡ Modo: SCALP 5m · alvo de duração 15min–3h\n` +
       `⭐ Score mínimo para sinal: ${cfg.minScore}\n` +
       `👀 Pré-candidato IA: ${cfg.preCandidateMinScore}–${cfg.minScore - 1}\n` +
@@ -2973,7 +3203,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.5.2-free',
+    version: '1.5.3-free',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -3015,7 +3245,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.5.2 FREE pronto ✅');
+console.log('Crypto Futures Scanner V1.5.3 FREE pronto ✅');
 
 // Em rolling deploy o processo antigo do Render pode permanecer vivo por
 // alguns segundos. Um pequeno atraso evita duas instâncias consumindo a
@@ -3030,12 +3260,16 @@ console.log(
 );
 
 setTimeout(
-  () => doScan().catch(console.error),
+  () =>
+    doScan({ automatic: true })
+      .catch(console.error),
   startupScanDelaySec * 1000
 );
 
 setInterval(
-  () => doScan().catch(console.error),
+  () =>
+    doScan({ automatic: true })
+      .catch(console.error),
   cfg.intervalMin * 60_000
 );
 pollingLoop();

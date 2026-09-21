@@ -1,50 +1,35 @@
-CRYPTO FUTURES SCANNER V1.5.2 FREE
-NULL-SAFE HOTFIX
+CRYPTO FUTURES SCANNER V1.5.3 FREE
 
-ERRO CORRIGIDO
-Cannot read properties of null (reading 'toFixed')
+SCAN AUTOMÁTICO A CADA 1 MINUTO EM LOTES
 
-CAUSA
-Na V1.5.0 removemos a consulta de funding para caber no rate limit
-da Coinalyze. Por isso fundingRate passou a ser null.
+PADRÃO
+SCAN_INTERVAL_MINUTES=1
+SCAN_BATCH_SIZE=4
 
-Alguns trechos de scanner.js ainda faziam:
-fundingRate.toFixed(...)
+CADA MINUTO
+- até 2 moedas urgentes: PAPER aberto e/ou WAIT/WATCH;
+- 1 entre BTC / ETH / SOL;
+- completa o lote com a rotação.
 
-Isso derrubava o scan logo depois de carregar os 12 mercados.
+ROTAÇÃO
+XRP, BNB, DOGE, ADA, LINK, AVAX, SUI, LTC, BCH, DOT, NEAR,
+UNI, AAVE, ETC, ATOM, INJ, HBAR, TRX, FIL, ARB, OP.
 
-CORREÇÃO
-- funding null agora é aceito em todo scanner;
-- btcContext envia fundingRatePct=null;
-- mensagem do sinal mostra "Funding: omitido no scalp";
-- RSI, volume e OI também ganharam formatação null-safe;
-- score 5m normaliza valores ausentes sem quebrar o scan.
+PAPER E WAIT/WATCH
+Uma moeda com posição paper ou observação IA ganha prioridade,
+para não depender da fila normal.
 
-MANTIDO
-- 12 mercados por scan
-- 6 core + 6 alts rotativas
-- timing 5m
-- confirmação 15m
-- tendência 1h
-- contexto 4h
-- primeiro scan 30s após deploy
-- backoff Telegram 409
-- paper scalp
-- até 3 posições
-- risco 0.75%
-- stale exit 60m
-- máximo 3h
+USDT
+Todos os contratos do scanner já são cotados em USDT:
+BTC/USDT, ETH/USDT, SOL/USDT etc.
 
-TESTE
-/status
-/scan
-/debug
-/paper
+Não criamos USDT/USDT porque não é um mercado útil de futuros.
+O /status e /scheduler deixam a cotação USDT explícita.
 
-No Render queremos ver:
-[scan] modo SCALP 5m · 12 mercados
-[scan] X sinais matemáticos >= 70
+NOVO COMANDO
+/scheduler
 
-E NÃO:
-t5 is not defined
-Cannot read properties of null (reading 'toFixed')
+IMPORTANTE
+O sinal técnico continua usando candle FECHADO de 5m.
+O scan de 1 minuto distribui os ativos em lotes e prioriza posições/observações,
+sem fazer 12 mercados completos todo minuto.

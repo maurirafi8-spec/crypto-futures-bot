@@ -436,14 +436,26 @@ function bestMarketForBase(
   };
 }
 
-function chooseMarkets(markets, exchangeNames, limit) {
+function chooseMarkets(
+  markets,
+  exchangeNames,
+  limit,
+  requestedBases = null
+) {
   const selected = [];
   const usedBases = new Set();
 
   const pushBase = base => {
+    const normalized =
+      String(base || '')
+        .toUpperCase()
+        .replace(/USDT$/, '');
+
     if (
+      !normalized ||
+      normalized === 'USDT' ||
       selected.length >= limit ||
-      usedBases.has(base)
+      usedBases.has(normalized)
     ) {
       return;
     }
@@ -452,21 +464,30 @@ function chooseMarkets(markets, exchangeNames, limit) {
       bestMarketForBase(
         markets,
         exchangeNames,
-        base
+        normalized
       );
 
     if (picked) {
       selected.push(picked);
-      usedBases.add(base);
+      usedBases.add(normalized);
     }
   };
 
-  // 6 principais sempre entram.
+  if (
+    Array.isArray(requestedBases) &&
+    requestedBases.length
+  ) {
+    for (const base of requestedBases) {
+      pushBase(base);
+    }
+
+    return selected;
+  }
+
   for (const base of CORE_BASES) {
     pushBase(base);
   }
 
-  // As demais vagas giram entre as alts.
   const altSlots =
     Math.max(0, limit - selected.length);
 
@@ -499,6 +520,7 @@ function chooseMarkets(markets, exchangeNames, limit) {
 
 export async function scanMarket({
   topMarkets = 12,
+  marketBases = null,
   minQuoteVolume = 20_000_000,
   minScore = 70,
   preCandidateMinScore = 60,
@@ -518,12 +540,16 @@ export async function scanMarket({
     exchangeList.map(e => [String(e.code), e.name])
   );
 
-  // 12 símbolos x 3 endpoints históricos = 36 unidades de cota.
-  // Mantém folga abaixo do limite de 40 chamadas/minuto da Coinalyze.
+  const effectiveLimit =
+    Array.isArray(marketBases) && marketBases.length
+      ? Math.min(marketBases.length, 12)
+      : Math.min(topMarkets, 12);
+
   const markets = chooseMarkets(
     marketList,
     exchangeNames,
-    Math.min(topMarkets, 12)
+    effectiveLimit,
+    marketBases
   );
 
   if (!markets.length) {
@@ -543,7 +569,8 @@ export async function scanMarket({
   );
 
   console.log(
-    `[scan] modo SCALP 5m · ${markets.length} mercados · funding omitido para preservar rate limit`
+    `[scan] modo SCALP 5m · lote ${markets.length} mercado(s) · ` +
+    `pares cotados em USDT · funding omitido para preservar rate limit`
   );
 
   const [candles5Raw, candles1hRaw, oiRaw] =
@@ -981,7 +1008,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.5.2: null-safe hotfix (funding omitido) + wide scan + scalp 5m. ` +
+    `<i>V1.5.3: scheduler 1min em lotes + prioridade WATCH/PAPER + scalp 5m. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }
