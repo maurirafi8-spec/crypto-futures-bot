@@ -1008,7 +1008,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.5.3: scheduler 1min em lotes + prioridade WATCH/PAPER + scalp 5m. ` +
+    `<i>V1.5.4: scheduler 1min + IA adaptativa SCALP_FORTE/SUPER_SCALP + paper scalp. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

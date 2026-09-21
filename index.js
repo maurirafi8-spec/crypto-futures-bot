@@ -73,16 +73,34 @@ const cfg = {
   // 30 min para candidatos normais.
   aiMinGapMin: Math.max(Number(process.env.AI_MIN_GAP_MINUTES || 20), 1),
 
-  // V1.3.7: setups muito fortes podem usar uma janela prioritária menor.
+  // V1.5.4: prioridade adaptativa para SCALP.
+  // NORMAL: usa o gap econômico de 20 min.
+  // SCALP_FORTE: score 85+ / vol 0.60x+ / OI +1.00%+ -> gap 5 min.
+  // SUPER_SCALP: score 90+ / vol 0.60x+ / OI +1.50%+ -> gap 2 min.
   aiPriorityEnabled:
     String(process.env.AI_PRIORITY_ENABLED || 'true').toLowerCase() !== 'false',
+
   aiPriorityScore: Number(process.env.AI_PRIORITY_SCORE || 85),
-  aiPriorityVolumeRatio: Number(process.env.AI_PRIORITY_VOLUME_RATIO || 1.00),
-  aiPriorityOiPct: Number(process.env.AI_PRIORITY_OI_PCT || 0.50),
+  aiPriorityVolumeRatio: Number(process.env.AI_PRIORITY_VOLUME_RATIO || 0.60),
+  aiPriorityOiPct: Number(process.env.AI_PRIORITY_OI_PCT || 1.00),
   aiPriorityGapMin: Math.max(
     Number(process.env.AI_PRIORITY_GAP_MINUTES || 5),
     1
   ),
+
+  aiSuperScalpScore:
+    Number(process.env.AI_SUPER_SCALP_SCORE || 90),
+  aiSuperScalpVolumeRatio:
+    Number(process.env.AI_SUPER_SCALP_VOLUME_RATIO || 0.60),
+  aiSuperScalpOiPct:
+    Number(process.env.AI_SUPER_SCALP_OI_PCT || 1.50),
+  aiSuperScalpGapMin: Math.max(
+    Number(process.env.AI_SUPER_SCALP_GAP_MINUTES || 2),
+    1
+  ),
+
+  // SCALP_FORTE + SUPER_SCALP compartilham este teto.
+  // O limite global de 45 requests/dia continua soberano.
   aiPriorityDailyLimit: Math.min(
     Math.max(Number(process.env.AI_PRIORITY_DAILY_LIMIT || 12), 0),
     20
@@ -91,10 +109,13 @@ const cfg = {
   // Cache normal.
   aiCacheMin: Math.max(Number(process.env.AI_CACHE_MINUTES || 30), 1),
 
-  // V1.3.8: setup prioritário usa cache menor para evitar reaproveitar
-  // uma decisão antiga em mercado rápido.
+  // Cache curto para mercado rápido.
   aiPriorityCacheMin: Math.max(
-    Number(process.env.AI_PRIORITY_CACHE_MINUTES || 10),
+    Number(process.env.AI_PRIORITY_CACHE_MINUTES || 5),
+    1
+  ),
+  aiSuperScalpCacheMin: Math.max(
+    Number(process.env.AI_SUPER_SCALP_CACHE_MINUTES || 2),
     1
   ),
 
@@ -434,6 +455,11 @@ function aiBudgetStats() {
     priorityVolumeRatio: cfg.aiPriorityVolumeRatio,
     priorityOiPct: cfg.aiPriorityOiPct,
     priorityCacheMin: cfg.aiPriorityCacheMin,
+    superScalpGapMin: cfg.aiSuperScalpGapMin,
+    superScalpScore: cfg.aiSuperScalpScore,
+    superScalpVolumeRatio: cfg.aiSuperScalpVolumeRatio,
+    superScalpOiPct: cfg.aiSuperScalpOiPct,
+    superScalpCacheMin: cfg.aiSuperScalpCacheMin,
     waitRecheckEnabled: cfg.aiWaitRecheckEnabled,
     waitRecheckUsed: aiWaitRecheckCallsToday,
     waitRecheckLimit: cfg.aiWaitRecheckDailyLimit,
@@ -448,8 +474,25 @@ function aiCacheKey(signal) {
 }
 
 function cacheTtlMin(signal, item = null) {
-  const priorityNow = isPriorityAICandidate(signal);
-  const priorityAtSave = Boolean(item?.priorityAtSave);
+  const modeNow = aiPriorityClass(signal);
+  const modeAtSave = String(item?.priorityClassAtSave || '');
+
+  if (
+    modeNow === 'SUPER_SCALP' ||
+    modeAtSave === 'SUPER_SCALP'
+  ) {
+    return Math.min(
+      cfg.aiCacheMin,
+      cfg.aiSuperScalpCacheMin
+    );
+  }
+
+  const priorityNow =
+    modeNow === 'SCALP_STRONG';
+
+  const priorityAtSave =
+    Boolean(item?.priorityAtSave) ||
+    modeAtSave === 'SCALP_STRONG';
 
   return (priorityNow || priorityAtSave)
     ? Math.min(cfg.aiCacheMin, cfg.aiPriorityCacheMin)
@@ -928,23 +971,55 @@ function saveCachedAI(signal, ai) {
   aiDecisionCache.set(aiCacheKey(signal), {
     at: Date.now(),
     priorityAtSave: isPriorityAICandidate(signal),
+    priorityClassAtSave: aiPriorityClass(signal),
     ai: { ...ai, cached: false }
   });
 }
 
-function isPriorityAICandidate(signal) {
-  if (!cfg.aiPriorityEnabled) return false;
-  if (!signal || signal.candidateTier !== 'STANDARD') return false;
+function adaptiveVolumeRatio(signal) {
+  return Math.max(
+    Number(signal?.t5?.volumeRatio || 0),
+    Number(signal?.t15?.volumeRatio || 0)
+  );
+}
+
+function aiPriorityClass(signal) {
+  if (!cfg.aiPriorityEnabled) return 'NORMAL';
+  if (!signal || signal.candidateTier !== 'STANDARD') return 'NORMAL';
 
   const score = Number(signal.score || 0);
-  const volumeRatio = Number(signal.t15?.volumeRatio || 0);
+  const volumeRatio = adaptiveVolumeRatio(signal);
   const oiPct = Number(signal.oiPct || 0);
 
-  return (
+  if (
+    score >= cfg.aiSuperScalpScore &&
+    volumeRatio >= cfg.aiSuperScalpVolumeRatio &&
+    oiPct >= cfg.aiSuperScalpOiPct
+  ) {
+    return 'SUPER_SCALP';
+  }
+
+  if (
     score >= cfg.aiPriorityScore &&
     volumeRatio >= cfg.aiPriorityVolumeRatio &&
     oiPct >= cfg.aiPriorityOiPct
-  );
+  ) {
+    return 'SCALP_STRONG';
+  }
+
+  return 'NORMAL';
+}
+
+function aiPriorityRank(signal) {
+  const mode = aiPriorityClass(signal);
+
+  if (mode === 'SUPER_SCALP') return 2;
+  if (mode === 'SCALP_STRONG') return 1;
+  return 0;
+}
+
+function isPriorityAICandidate(signal) {
+  return aiPriorityClass(signal) !== 'NORMAL';
 }
 
 function aiCallPermission(signal) {
@@ -1025,7 +1100,11 @@ function aiCallPermission(signal) {
     };
   }
 
-  const priorityEligible = isPriorityAICandidate(signal);
+  const priorityClass =
+    aiPriorityClass(signal);
+
+  const priorityEligible =
+    priorityClass !== 'NORMAL';
 
   if (priorityEligible) {
     if (aiPriorityCallsToday >= cfg.aiPriorityDailyLimit) {
@@ -1033,7 +1112,7 @@ function aiCallPermission(signal) {
       const mins = Math.max(1, Math.ceil(normalWaitMs / 60_000));
 
       lastAiSkipReason =
-        `cota prioritária diária atingida ` +
+        `cota rápida da IA atingida ` +
         `(${aiPriorityCallsToday}/${cfg.aiPriorityDailyLimit}); ` +
         `janela normal em ~${mins} min`;
 
@@ -1041,33 +1120,53 @@ function aiCallPermission(signal) {
         allowed: false,
         mode: 'BLOCKED',
         priorityEligible: true,
+        priorityClass,
         reason: lastAiSkipReason
       };
     }
 
-    const priorityGapMs = cfg.aiPriorityGapMin * 60_000;
+    const fastGapMin =
+      priorityClass === 'SUPER_SCALP'
+        ? cfg.aiSuperScalpGapMin
+        : cfg.aiPriorityGapMin;
 
-    if (elapsedMs >= priorityGapMs) {
+    const fastGapMs =
+      fastGapMin * 60_000;
+
+    if (elapsedMs >= fastGapMs) {
       lastAiSkipReason = '';
 
       return {
         allowed: true,
-        mode: 'PRIORITY',
+        mode: priorityClass,
         priorityEligible: true,
+        priorityClass,
         reason: ''
       };
     }
 
-    const priorityWaitMs = Math.max(0, priorityGapMs - elapsedMs);
-    const mins = Math.max(1, Math.ceil(priorityWaitMs / 60_000));
+    const priorityWaitMs =
+      Math.max(0, fastGapMs - elapsedMs);
+
+    const mins =
+      Math.max(
+        1,
+        Math.ceil(priorityWaitMs / 60_000)
+      );
+
+    const label =
+      priorityClass === 'SUPER_SCALP'
+        ? 'SUPER SCALP'
+        : 'SCALP FORTE';
 
     lastAiSkipReason =
-      `prioridade IA: próxima chamada em ~${mins} min`;
+      `${label}: próxima chamada IA em ~${mins} min`;
 
     return {
       allowed: false,
       mode: 'BLOCKED',
       priorityEligible: true,
+      priorityClass,
       reason: lastAiSkipReason
     };
   }
@@ -1093,7 +1192,11 @@ function registerAICall(mode = 'NORMAL') {
   aiLastCallAt = Date.now();
   lastAiCallMode = mode;
 
-  if (mode === 'PRIORITY') {
+  if (
+    mode === 'SCALP_STRONG' ||
+    mode === 'SUPER_SCALP' ||
+    mode === 'PRIORITY'
+  ) {
     aiPriorityCallsToday += 1;
   }
 
@@ -1141,22 +1244,36 @@ function aiWaitInfo(signal = null) {
     };
   }
 
+  const priorityClass =
+    signal
+      ? aiPriorityClass(signal)
+      : 'NORMAL';
+
   const priority =
-    signal &&
-    isPriorityAICandidate(signal) &&
+    priorityClass !== 'NORMAL' &&
     aiPriorityCallsToday < cfg.aiPriorityDailyLimit;
 
   if (priority) {
+    const fastGapMin =
+      priorityClass === 'SUPER_SCALP'
+        ? cfg.aiSuperScalpGapMin
+        : cfg.aiPriorityGapMin;
+
     const priorityWaitMs =
-      cfg.aiPriorityGapMin * 60_000 - elapsedMs;
+      fastGapMin * 60_000 - elapsedMs;
+
+    const label =
+      priorityClass === 'SUPER_SCALP'
+        ? '🚀 SUPER SCALP'
+        : '⚡ SCALP FORTE';
 
     if (priorityWaitMs <= 0) {
       return {
         blocked: false,
         minutes: 0,
-        mode: 'PRIORITY',
+        mode: priorityClass,
         priority: true,
-        text: '⚡ IA prioritária disponível agora'
+        text: `${label}: IA disponível agora`
       };
     }
 
@@ -1168,9 +1285,9 @@ function aiWaitInfo(signal = null) {
     return {
       blocked: true,
       minutes,
-      mode: 'PRIORITY',
+      mode: priorityClass,
       priority: true,
-      text: `⚡ janela prioritária em ~${minutes} min`
+      text: `${label}: janela IA em ~${minutes} min`
     };
   }
 
@@ -1202,7 +1319,7 @@ function setPendingAI(signal, reason = '') {
     tp1: signal.tp1,
     tp2: signal.tp2,
     tp3: signal.tp3,
-    volumeRatio: Number(signal.t15?.volumeRatio || 0),
+    volumeRatio: adaptiveVolumeRatio(signal),
     oiPct: Number(signal.oiPct || 0),
     fundingRate: Number(signal.fundingRate || 0),
     quoteVolume: Number(signal.quoteVolume || 0),
@@ -1832,6 +1949,7 @@ function aiHistoryText() {
         score: pendingAiCandidate.score,
         oiPct: pendingAiCandidate.oiPct,
         candidateTier: 'STANDARD',
+        t5: { volumeRatio: pendingAiCandidate.volumeRatio },
         t15: { volumeRatio: pendingAiCandidate.volumeRatio }
       }).text}`,
       '',
@@ -1869,9 +1987,11 @@ function aiHistoryText() {
     `🆓 Tentativas IA hoje: ${budget.used}/${budget.limit} (${budget.remaining} restantes)`,
     `✅ Análises concluídas: ${budget.completed} · ⚠️ Falhas: ${budget.failed}`,
     `🛟 Requests de rescue: ${budget.rescueCalls}`,
-    `⚡ Prioridade hoje: ${budget.priorityUsed}/${budget.priorityLimit} · gap ${budget.priorityGapMin} min`,
+    `⚡ Scalp rápido hoje: ${budget.priorityUsed}/${budget.priorityLimit}`,
+    `🚀 SUPER: score ${budget.superScalpScore}+ · vol ${budget.superScalpVolumeRatio.toFixed(2)}x+ · OI +${budget.superScalpOiPct.toFixed(2)}%+ · gap ${budget.superScalpGapMin} min`,
+    `⚡ FORTE: score ${budget.priorityScore}+ · vol ${budget.priorityVolumeRatio.toFixed(2)}x+ · OI +${budget.priorityOiPct.toFixed(2)}%+ · gap ${budget.priorityGapMin} min`,
     `⏳ Normal: ${budget.minGapMin} min`,
-    `♻️ Cache normal: ${budget.cacheMin} min | prioritário: ${budget.priorityCacheMin} min`,
+    `♻️ Cache: normal ${budget.cacheMin}m · forte ${budget.priorityCacheMin}m · super ${budget.superScalpCacheMin}m`,
     ''
   );
 
@@ -1882,9 +2002,12 @@ function aiHistoryText() {
         ? '🛟 <b>RESCUE OPENROUTER</b>'
         : r.callMode === 'RECHECK'
           ? '🔄 <b>RECHECK INTELIGENTE DE WAIT</b>'
-          : r.callMode === 'PRIORITY'
-            ? '⚡ <b>NOVA ANÁLISE PRIORITÁRIA</b>'
-            : '🧠 <b>NOVA ANÁLISE NORMAL</b>';
+          : r.callMode === 'SUPER_SCALP'
+            ? '🚀 <b>NOVA ANÁLISE SUPER SCALP</b>'
+            : r.callMode === 'SCALP_STRONG' ||
+              r.callMode === 'PRIORITY'
+              ? '⚡ <b>NOVA ANÁLISE SCALP FORTE</b>'
+              : '🧠 <b>NOVA ANÁLISE NORMAL</b>';
 
     lines.push(
       `${aiDecisionIcon(r.decision)} <b>${r.symbol} ${r.side}</b> — ` +
@@ -1915,6 +2038,7 @@ function pendingAIText(pending = pendingAiCandidate) {
     score: pending.score,
     oiPct: pending.oiPct,
     candidateTier: 'STANDARD',
+    t5: { volumeRatio: pending.volumeRatio },
     t15: { volumeRatio: pending.volumeRatio }
   };
 
@@ -1944,7 +2068,7 @@ function pendingAIText(pending = pendingAiCandidate) {
     `💵 Volume 24h: ${formatMillions(pending.quoteVolume)}\n` +
     `💰 Entrada técnica: ${entryText}\n` +
     (pending.priorityEligible
-      ? `⚡ <b>PRIORIDADE IA</b> — score/volume/OI fortes\n`
+      ? `⚡ <b>PRIORIDADE IA ADAPTATIVA</b> — score/volume/OI fortes\n`
       : '') +
     (pending.lastAttemptError
       ? `⚠️ Última tentativa: ${pending.lastAttemptError}\n`
@@ -2363,7 +2487,11 @@ async function validateSignalsWithAI(signals) {
       freshCallsUsed += 1;
       meta.apiCalls += 1;
 
-      if (permission.mode === 'PRIORITY') {
+      if (
+        permission.mode === 'SCALP_STRONG' ||
+        permission.mode === 'SUPER_SCALP' ||
+        permission.mode === 'PRIORITY'
+      ) {
         meta.priorityCalls += 1;
       }
 
@@ -2579,8 +2707,8 @@ async function doScan({
       }));
 
       standardSignals.sort((a, b) => {
-        const aPriority = isPriorityAICandidate(a) ? 1 : 0;
-        const bPriority = isPriorityAICandidate(b) ? 1 : 0;
+        const aPriority = aiPriorityRank(a);
+        const bPriority = aiPriorityRank(b);
 
         if (aPriority !== bPriority) {
           return bPriority - aPriority;
@@ -2610,13 +2738,21 @@ async function doScan({
 
     if (aiInput.length) {
       const first = aiInput[0];
-      const priority = isPriorityAICandidate(first);
+      const priorityClass =
+        aiPriorityClass(first);
+
+      const priorityLabel =
+        priorityClass === 'SUPER_SCALP'
+          ? '🚀 SUPER_SCALP'
+          : priorityClass === 'SCALP_STRONG'
+            ? '⚡ SCALP_FORTE'
+            : 'NORMAL';
 
       console.log(
         `[ai] candidato escolhido: ${first.symbol} ${first.side} · ` +
-        `score ${first.score} · vol ${Number(first.t15?.volumeRatio || 0).toFixed(2)}x · ` +
+        `score ${first.score} · vol ${adaptiveVolumeRatio(first).toFixed(2)}x · ` +
         `OI ${Number(first.oiPct || 0).toFixed(2)}% · ` +
-        `${priority ? 'PRIORIDADE' : 'NORMAL'}`
+        priorityLabel
       );
     }
 
@@ -2774,7 +2910,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.5.3 FREE</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.5.4 FREE</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o próximo lote agora\n' +
       '/scheduler — ver rotação automática de 1 minuto\n' +
@@ -2810,7 +2946,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.5.3 FREE\n` +
+      `✅ Online — V1.5.4 FREE\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `⏱ Scan automático: a cada ${cfg.intervalMin} min\n` +
       `🪙 Lote automático: ${cfg.scanBatchSize} moedas · pares /USDT\n` +
@@ -2839,11 +2975,12 @@ async function handleMessage(msg) {
       `🧠 Reasoning explícito: ${aiReasoningMode()}\n` +
       `🧯 Rescue: JSON object sem tool calling\n` +
       `📏 Saída máxima: ${aiPrimaryMaxTokens()} tokens · rescue ${aiRescueMaxTokens()}\n` +
-      `⚡ IA prioritária: ${cfg.aiPriorityEnabled ? 'ATIVA' : 'INATIVA'}\n` +
-      `⚡ Regra prioridade: score ${cfg.aiPriorityScore}+ · vol ${cfg.aiPriorityVolumeRatio.toFixed(2)}x+ · OI +${cfg.aiPriorityOiPct.toFixed(2)}%+\n` +
-      `⚡ Prioridade hoje: ${aiBudgetStats().priorityUsed}/${aiBudgetStats().priorityLimit} · gap ${aiBudgetStats().priorityGapMin} min\n` +
+      `⚡ IA adaptativa: ${cfg.aiPriorityEnabled ? 'ATIVA' : 'INATIVA'}\n` +
+      `🚀 SUPER SCALP: score ${cfg.aiSuperScalpScore}+ · vol ${cfg.aiSuperScalpVolumeRatio.toFixed(2)}x+ · OI +${cfg.aiSuperScalpOiPct.toFixed(2)}%+ · gap ${cfg.aiSuperScalpGapMin} min\n` +
+      `⚡ SCALP FORTE: score ${cfg.aiPriorityScore}+ · vol ${cfg.aiPriorityVolumeRatio.toFixed(2)}x+ · OI +${cfg.aiPriorityOiPct.toFixed(2)}%+ · gap ${cfg.aiPriorityGapMin} min\n` +
+      `⚡ Chamadas rápidas hoje: ${aiBudgetStats().priorityUsed}/${aiBudgetStats().priorityLimit}\n` +
       `⏳ IA normal: 1 chamada nova / mínimo ${cfg.aiMinGapMin} min\n` +
-      `♻️ Cache: normal ${cfg.aiCacheMin} min · prioritário ${cfg.aiPriorityCacheMin} min\n` +
+      `♻️ Cache: normal ${cfg.aiCacheMin}m · forte ${cfg.aiPriorityCacheMin}m · super ${cfg.aiSuperScalpCacheMin}m\n` +
       `🔄 Recheck WAIT: ${cfg.aiWaitRecheckEnabled ? 'ATIVO' : 'INATIVO'} · novo candle + melhora · gap ${cfg.aiWaitRecheckGapMin} min\n` +
       `🧷 WAIT padrão: ${cfg.aiWaitRecheckMinConfidence}%+\n` +
       `🧷 WAIT condicional: ${cfg.aiWaitConditionalMinConfidence}–${cfg.aiWaitRecheckMinConfidence - 1}% se score ${cfg.aiWaitConditionalScore}+ · vol ${cfg.aiWaitConditionalVolumeRatio.toFixed(2)}x+ · OI +${cfg.aiWaitConditionalOiPct.toFixed(2)}%+\n` +
@@ -3203,7 +3340,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.5.3-free',
+    version: '1.5.4-free',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -3245,7 +3382,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.5.3 FREE pronto ✅');
+console.log('Crypto Futures Scanner V1.5.4 FREE pronto ✅');
 
 // Em rolling deploy o processo antigo do Render pode permanecer vivo por
 // alguns segundos. Um pequeno atraso evita duas instâncias consumindo a
