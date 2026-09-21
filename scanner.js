@@ -780,7 +780,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.3.8.3: modelo financeiro + tool calling + mais tokens + rescue dedicado. ` +
+    `<i>V1.3.8.4: reasoning desligado + tool call direto + rescue JSON Gemma. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }
