@@ -778,7 +778,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.3.7: IA prioritária para setups fortes + candles fechados + estatísticas. ` +
+    `<i>V1.3.7.1: prioridade IA corrigida + candles fechados + estatísticas. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

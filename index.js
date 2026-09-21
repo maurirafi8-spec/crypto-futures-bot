@@ -1315,14 +1315,59 @@ async function doScan({ forceReply = false } = {}) {
       `${preCandidates.length} pré-candidato(s) >= ${cfg.preCandidateMinScore}`
     );
 
-    // Prioridade: sinal que já passou no filtro técnico.
-    // Se não houver, a IA analisa somente o melhor pré-candidato como WATCHLIST.
-    const aiInput = mathSignals.length
-      ? mathSignals.map(s => ({ ...s, candidateTier: 'STANDARD' }))
-      : preCandidates.slice(0, 1).map(s => ({
-          ...s,
-          candidateTier: 'PRE_CANDIDATE'
-        }));
+    // V1.3.7.1:
+    // Como o plano grátis avalia apenas 1 candidato por janela,
+    // primeiro colocamos qualquer setup PRIORITÁRIO no topo.
+    // Só depois vêm os candidatos normais, ordenados por score/volume/OI.
+    let aiInput;
+
+    if (mathSignals.length) {
+      const standardSignals = mathSignals.map(s => ({
+        ...s,
+        candidateTier: 'STANDARD'
+      }));
+
+      standardSignals.sort((a, b) => {
+        const aPriority = isPriorityAICandidate(a) ? 1 : 0;
+        const bPriority = isPriorityAICandidate(b) ? 1 : 0;
+
+        if (aPriority !== bPriority) {
+          return bPriority - aPriority;
+        }
+
+        if (b.score !== a.score) {
+          return b.score - a.score;
+        }
+
+        const bVol = Number(b.t15?.volumeRatio || 0);
+        const aVol = Number(a.t15?.volumeRatio || 0);
+
+        if (bVol !== aVol) {
+          return bVol - aVol;
+        }
+
+        return Number(b.oiPct || 0) - Number(a.oiPct || 0);
+      });
+
+      aiInput = standardSignals;
+    } else {
+      aiInput = preCandidates.slice(0, 1).map(s => ({
+        ...s,
+        candidateTier: 'PRE_CANDIDATE'
+      }));
+    }
+
+    if (aiInput.length) {
+      const first = aiInput[0];
+      const priority = isPriorityAICandidate(first);
+
+      console.log(
+        `[ai] candidato escolhido: ${first.symbol} ${first.side} · ` +
+        `score ${first.score} · vol ${Number(first.t15?.volumeRatio || 0).toFixed(2)}x · ` +
+        `OI ${Number(first.oiPct || 0).toFixed(2)}% · ` +
+        `${priority ? 'PRIORIDADE' : 'NORMAL'}`
+      );
+    }
 
     const aiResult = await validateSignalsWithAI(aiInput);
     const signals = aiResult.approved;
@@ -1447,7 +1492,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.3.7 FREE</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.3.7.1 FREE</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o mercado agora\n' +
       '/status — ver configuração\n' +
@@ -1461,7 +1506,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.3.7 FREE\n` +
+      `✅ Online — V1.3.7.1 FREE\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🪙 Top mercados: ${cfg.topMarkets}\n` +
       `⭐ Score mínimo para sinal: ${cfg.minScore}\n` +
@@ -1479,7 +1524,10 @@ async function handleMessage(msg) {
       `🧠 Modelo: ${aiEnabledNow() ? aiModel() : '—'}\n` +
       `✅ Confiança mínima IA: ${cfg.aiMinConfidence}%\n` +
       `🆓 IA grátis: ${aiBudgetStats().used}/${aiBudgetStats().limit} chamadas hoje\n` +
-      `⏳ Economia IA: 1 candidato / mínimo ${cfg.aiMinGapMin} min / cache ${cfg.aiCacheMin} min\n` +
+      `⚡ IA prioritária: ${cfg.aiPriorityEnabled ? 'ATIVA' : 'INATIVA'}\n` +
+      `⚡ Regra prioridade: score ${cfg.aiPriorityScore}+ · vol ${cfg.aiPriorityVolumeRatio.toFixed(2)}x+ · OI +${cfg.aiPriorityOiPct.toFixed(2)}%+\n` +
+      `⚡ Prioridade hoje: ${aiBudgetStats().priorityUsed}/${aiBudgetStats().priorityLimit} · gap ${aiBudgetStats().priorityGapMin} min\n` +
+      `⏳ IA normal: 1 candidato / mínimo ${cfg.aiMinGapMin} min / cache ${cfg.aiCacheMin} min\n` +
       `🟠 Pendente de IA: ${pendingAiCandidate ? `${pendingAiCandidate.symbol} ${pendingAiCandidate.side}` : 'nenhum'}\n` +
       `🎯 Acompanhando: ${activeSignals.size} sinal(is)\n` +
       `📚 Resultados registrados: ${resultHistory.length}`
@@ -1526,7 +1574,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.3.7-free',
+    version: '1.3.7.1-free',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -1542,7 +1590,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.3.7 FREE pronto ✅');
+console.log('Crypto Futures Scanner V1.3.7.1 FREE pronto ✅');
 
 setTimeout(() => doScan().catch(console.error), 5000);
 setInterval(() => doScan().catch(console.error), cfg.intervalMin * 60_000);

@@ -1,6 +1,6 @@
-CRYPTO FUTURES SCANNER V1.3.7 FREE — IA PRIORITÁRIA
+CRYPTO FUTURES SCANNER V1.3.7.1 FREE — PRIORITY FIX
 
-SUBSTITUA/ADICIONE NO GITHUB:
+SUBSTITUA NO GITHUB:
 - ai.js
 - binance.js
 - index.js
@@ -8,59 +8,49 @@ SUBSTITUA/ADICIONE NO GITHUB:
 - scanner.js
 - telegram.js
 
-NOVIDADE PRINCIPAL
-Setups MUITO fortes podem usar uma janela de IA menor do que os 30 min normais.
+CORREÇÕES DA V1.3.7.1
 
-REGRA PADRÃO DA PRIORIDADE
-O candidato precisa já ter passado no filtro técnico (STANDARD) e ter:
+1) /status AGORA MOSTRA A PRIORIDADE
+Deve aparecer:
+⚡ IA prioritária: ATIVA
+⚡ Regra prioridade: score 85+ · vol 1.00x+ · OI +0.50%+
+⚡ Prioridade hoje: X/12 · gap 5 min
+⏳ IA normal: 1 candidato / mínimo 30 min / cache 30 min
+
+2) CANDIDATO PRIORITÁRIO SEMPRE VEM PRIMEIRO
+Como o plano grátis usa AI_MAX_CANDIDATES=1, a ordem importa.
+
+Agora, quando vários ativos passam no filtro técnico:
+- primeiro procura qualquer setup que cumpra PRIORIDADE;
+- dentro dos prioritários, prefere maior score;
+- depois maior volume relativo;
+- depois maior OI;
+- só se não houver nenhum prioritário escolhe o melhor candidato normal.
+
+Exemplo:
+BNB score 80 / volume 0.72x / OI +1.65% -> NORMAL
+BTC score 90 / volume 1.61x / OI +0.55% -> PRIORIDADE
+
+Mesmo que BNB esteja primeiro na lista original, BTC será enviado para a IA.
+
+REGRAS DA PRIORIDADE
 - Score >= 85
 - Volume relativo >= 1.00x
-- Open Interest >= +0.50%
+- OI >= +0.50%
+- Gap prioritário: 5 min
+- Máximo prioritário: 12/dia
+- Máximo total interno: 45/dia
+- Cache: 30 min
 
-JANELAS
-- IA NORMAL: mínimo 30 min entre chamadas.
-- IA PRIORITÁRIA: mínimo 5 min entre chamadas.
-- Cache do mesmo ativo/lado: 30 min.
-- Limite diário total interno: 45 chamadas.
-- Limite diário PRIORITÁRIO: 12 chamadas.
-
-EXEMPLO
-BTCUSDT LONG
-Score 90
-Volume 1.61x
-OI +0.55%
-
-Esse setup entra na PRIORIDADE IA. Se a última chamada foi há pelo menos
-5 min, ele pode ser avaliado sem esperar os 30 min da janela normal.
-
-PROTEÇÕES
-- Prioridade NÃO ignora o limite diário total.
-- Prioridade tem teto próprio de 12 chamadas/dia.
-- Pré-candidatos 60–69 nunca usam prioridade.
-- Cache é consultado antes de gastar chamada.
-- O sinal ainda precisa de APPROVE + confiança mínima da IA.
-
-NO TELEGRAM
-/status mostra a regra e o uso da prioridade.
-/ia diferencia:
-- ⚡ NOVA ANÁLISE PRIORITÁRIA
-- 🧠 NOVA ANÁLISE NORMAL
-- ♻️ CACHE
-
-VARIÁVEIS OPCIONAIS NO RENDER
-AI_PRIORITY_ENABLED=true
-AI_PRIORITY_SCORE=85
-AI_PRIORITY_VOLUME_RATIO=1.00
-AI_PRIORITY_OI_PCT=0.50
-AI_PRIORITY_GAP_MINUTES=5
-AI_PRIORITY_DAILY_LIMIT=12
-
-Não precisa criar essas variáveis: os valores acima já são padrão.
+Nada foi afrouxado nos filtros técnicos.
 
 TESTE
 /status
 /scan
-/ia
 /debug
-/ativos
-/resultados
+/ia
+
+No Render Logs também aparecerá:
+[ai] candidato escolhido: ... · PRIORIDADE
+ou:
+[ai] candidato escolhido: ... · NORMAL
