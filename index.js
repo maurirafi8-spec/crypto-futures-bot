@@ -47,8 +47,15 @@ const cfg = {
     20
   ),
 
-  // Reaproveita a decisão recente do mesmo ativo/lado sem gastar nova chamada.
-  aiCacheMin: Math.max(Number(process.env.AI_CACHE_MINUTES || 30), 1)
+  // Cache normal.
+  aiCacheMin: Math.max(Number(process.env.AI_CACHE_MINUTES || 30), 1),
+
+  // V1.3.8: setup prioritário usa cache menor para evitar reaproveitar
+  // uma decisão antiga em mercado rápido.
+  aiPriorityCacheMin: Math.max(
+    Number(process.env.AI_PRIORITY_CACHE_MINUTES || 10),
+    1
+  )
 };
 
 if (!cfg.token) throw new Error('BOT_TOKEN não configurado');
@@ -112,7 +119,8 @@ function aiBudgetStats() {
     priorityGapMin: cfg.aiPriorityGapMin,
     priorityScore: cfg.aiPriorityScore,
     priorityVolumeRatio: cfg.aiPriorityVolumeRatio,
-    priorityOiPct: cfg.aiPriorityOiPct
+    priorityOiPct: cfg.aiPriorityOiPct,
+    priorityCacheMin: cfg.aiPriorityCacheMin
   };
 }
 
@@ -120,24 +128,41 @@ function aiCacheKey(signal) {
   return `${signal.symbol}:${signal.side}`;
 }
 
+function cacheTtlMin(signal, item = null) {
+  const priorityNow = isPriorityAICandidate(signal);
+  const priorityAtSave = Boolean(item?.priorityAtSave);
+
+  return (priorityNow || priorityAtSave)
+    ? Math.min(cfg.aiCacheMin, cfg.aiPriorityCacheMin)
+    : cfg.aiCacheMin;
+}
+
 function getCachedAI(signal) {
-  const item = aiDecisionCache.get(aiCacheKey(signal));
+  const key = aiCacheKey(signal);
+  const item = aiDecisionCache.get(key);
+
   if (!item) return null;
 
-  if (Date.now() - item.at > cfg.aiCacheMin * 60_000) {
-    aiDecisionCache.delete(aiCacheKey(signal));
+  const ttlMin = cacheTtlMin(signal, item);
+  const ageMs = Date.now() - item.at;
+
+  if (ageMs > ttlMin * 60_000) {
+    aiDecisionCache.delete(key);
     return null;
   }
 
   return {
     ...item.ai,
-    cached: true
+    cached: true,
+    cacheAgeMin: ageMs / 60_000,
+    cacheTtlMin: ttlMin
   };
 }
 
 function saveCachedAI(signal, ai) {
   aiDecisionCache.set(aiCacheKey(signal), {
     at: Date.now(),
+    priorityAtSave: isPriorityAICandidate(signal),
     ai: { ...ai, cached: false }
   });
 }
@@ -589,7 +614,13 @@ function activeSignalsText() {
     const s = state.signal;
     const ai = s.ai || null;
     const aiSource = ai
-      ? (ai.cached ? '♻️ CACHE' : '🧠 NOVA ANÁLISE')
+      ? (
+          ai.cached
+            ? `♻️ CACHE ${Number.isFinite(ai.cacheAgeMin) ? `${ai.cacheAgeMin.toFixed(0)}m` : ''}`.trim()
+            : ai.callMode === 'PRIORITY'
+              ? '⚡ NOVA ANÁLISE PRIORITÁRIA'
+              : '🧠 NOVA ANÁLISE NORMAL'
+        )
       : '—';
 
     lines.push(
@@ -828,7 +859,8 @@ function aiHistoryText() {
     `Modelo: <code>${aiModel()}</code>`,
     `🆓 Uso IA hoje: ${budget.used}/${budget.limit} (${budget.remaining} restantes)`,
     `⚡ Prioridade hoje: ${budget.priorityUsed}/${budget.priorityLimit} · gap ${budget.priorityGapMin} min`,
-    `⏳ Normal: ${budget.minGapMin} min | Cache: ${budget.cacheMin} min`,
+    `⏳ Normal: ${budget.minGapMin} min`,
+    `♻️ Cache normal: ${budget.cacheMin} min | prioritário: ${budget.priorityCacheMin} min`,
     ''
   );
 
@@ -956,6 +988,7 @@ function lastScanDebugText() {
     `📡 Chamadas novas à IA: ${a?.apiCalls ?? 0}`,
     `⚡ Chamadas prioritárias: ${a?.priorityCalls ?? 0}`,
     `♻️ Respostas vindas do cache: ${a?.cacheHits ?? 0}`,
+    `⏸ Sem vaga nova neste scan: ${a?.freshDeferred ?? 0}`,
     `🎯 Sinais liberados: ${lastScanReport.finalSignals ?? 0}`
   ];
 
@@ -1101,6 +1134,7 @@ async function validateSignalsWithAI(signals) {
     priorityCalls: 0,
     priorityEligible: 0,
     cacheHits: 0,
+    freshDeferred: 0,
     skipped: 0,
     approved: 0,
     watch: 0,
@@ -1126,12 +1160,18 @@ async function validateSignalsWithAI(signals) {
 
     meta.selected = signals.length;
     meta.approved = approved.length;
-    return { approved, meta };
+
+    return {
+      approved,
+      meta,
+      pending: null
+    };
   }
 
   if (!aiConfigured()) {
     if (cfg.aiFailOpen) {
       console.log('[ai] OPENROUTER_API_KEY ausente; fail-open ativo');
+
       const approved = signals.map(s => ({
         ...s,
         ai: {
@@ -1146,22 +1186,48 @@ async function validateSignalsWithAI(signals) {
 
       meta.selected = signals.length;
       meta.approved = approved.length;
-      return { approved, meta };
+
+      return {
+        approved,
+        meta,
+        pending: null
+      };
     }
 
     console.log('[ai] OPENROUTER_API_KEY ausente; sinais bloqueados');
-    meta.selected = Math.min(signals.length, cfg.aiMaxCandidates);
-    meta.skipped = meta.selected;
+
+    meta.selected = signals.length;
+    meta.skipped = signals.length;
     meta.skipReason = 'OPENROUTER_API_KEY ausente';
-    return { approved: [], meta };
+
+    const pendingSignal = signals.find(
+      s => s.candidateTier === 'STANDARD'
+    ) || null;
+
+    return {
+      approved: [],
+      meta,
+      pending: pendingSignal
+        ? {
+            signal: pendingSignal,
+            reason: meta.skipReason
+          }
+        : null
+    };
   }
 
-  const selected = signals.slice(0, cfg.aiMaxCandidates);
-  meta.selected = selected.length;
-  const approved = [];
+  // V1.3.8:
+  // Analisa toda a fila para aproveitar TODOS os caches válidos.
+  // Porém só permite UMA chamada nova por scan.
+  meta.selected = signals.length;
 
-  for (const s of selected) {
+  const approved = [];
+  let freshCallsUsed = 0;
+  let pending = null;
+
+  for (const s of signals) {
     const cached = getCachedAI(s);
+
     if (cached) {
       if (
         pendingAiCandidate &&
@@ -1172,7 +1238,13 @@ async function validateSignalsWithAI(signals) {
       }
 
       meta.cacheHits += 1;
-      console.log(`[ai] cache ${s.symbol}: ${cached.decision} ${Math.round(cached.confidence)}%`);
+
+      console.log(
+        `[ai] cache ${s.symbol}: ${cached.decision} ` +
+        `${Math.round(cached.confidence)}% · ` +
+        `${cached.cacheAgeMin.toFixed(1)}/${cached.cacheTtlMin} min`
+      );
+
       rememberAI(s, cached);
       countAiDecision(meta, cached);
 
@@ -1183,30 +1255,70 @@ async function validateSignalsWithAI(signals) {
       ) {
         approved.push({ ...s, ai: cached });
       }
+
+      // Cache não consome a vaga da chamada nova.
+      continue;
+    }
+
+    if (isPriorityAICandidate(s)) {
+      meta.priorityEligible += 1;
+    }
+
+    // Já usamos a única chamada nova permitida neste scan.
+    // Continuamos o loop apenas para aproveitar caches posteriores.
+    if (freshCallsUsed >= cfg.aiMaxCandidates) {
+      meta.freshDeferred += 1;
       continue;
     }
 
     const permission = aiCallPermission(s);
 
-    if (permission.priorityEligible) {
-      meta.priorityEligible += 1;
-    }
-
     if (!permission.allowed) {
       meta.skipped += 1;
-      meta.skipReason = permission.reason || lastAiSkipReason;
+
+      if (!meta.skipReason) {
+        meta.skipReason =
+          permission.reason ||
+          lastAiSkipReason;
+      }
+
+      // Guardamos o melhor STANDARD sem cache como pendente.
+      if (
+        !pending &&
+        s.candidateTier === 'STANDARD'
+      ) {
+        pending = {
+          signal: s,
+          reason:
+            permission.reason ||
+            lastAiSkipReason ||
+            'Aguardando janela da IA'
+        };
+      }
+
       lastAiEvent = {
         type: 'SKIP',
         at: Date.now(),
-        message: `${s.symbol}: ${meta.skipReason}`
+        message:
+          `${s.symbol}: ` +
+          `${permission.reason || lastAiSkipReason}`
       };
-      console.log(`[ai] ${s.symbol}: chamada pulada — ${meta.skipReason}`);
+
+      console.log(
+        `[ai] ${s.symbol}: chamada pulada — ` +
+        `${permission.reason || lastAiSkipReason}`
+      );
+
+      // Se a janela global bloqueou este candidato, não gastamos a vaga.
+      // Um candidato posterior prioritário ainda pode ser elegível,
+      // então seguimos percorrendo a fila.
       continue;
     }
 
     try {
       console.log(
-        `[ai] avaliando ${s.symbol} ${s.side} com ${aiModel()} [${permission.mode}]`
+        `[ai] avaliando ${s.symbol} ${s.side} ` +
+        `com ${aiModel()} [${permission.mode}]`
       );
 
       if (
@@ -1218,6 +1330,7 @@ async function validateSignalsWithAI(signals) {
       }
 
       registerAICall(permission.mode);
+      freshCallsUsed += 1;
       meta.apiCalls += 1;
 
       if (permission.mode === 'PRIORITY') {
@@ -1235,7 +1348,8 @@ async function validateSignalsWithAI(signals) {
       countAiDecision(meta, ai);
 
       console.log(
-        `[ai] ${s.symbol}: ${ai.decision} ${Math.round(ai.confidence)}% — ${ai.reason}`
+        `[ai] ${s.symbol}: ${ai.decision} ` +
+        `${Math.round(ai.confidence)}% — ${ai.reason}`
       );
 
       if (
@@ -1246,12 +1360,15 @@ async function validateSignalsWithAI(signals) {
         approved.push({ ...s, ai });
       }
     } catch (error) {
+      freshCallsUsed += 1;
       meta.errors += 1;
+
       lastAiEvent = {
         type: 'ERROR',
         at: Date.now(),
         message: `${s.symbol}: ${error.message}`.slice(0, 260)
       };
+
       console.error(`[ai] ${s.symbol}: ${error.message}`);
 
       if (cfg.aiFailOpen) {
@@ -1260,16 +1377,23 @@ async function validateSignalsWithAI(signals) {
           confidence: 0,
           risk: 'MEDIUM',
           style: 'NORMAL',
-          reason: `IA falhou; liberado pelo filtro matemático: ${error.message}`.slice(0, 220),
+          reason:
+            `IA falhou; liberado pelo filtro matemático: ` +
+            `${error.message}`.slice(0, 220),
           model: 'ERROR'
         };
+
         approved.push({ ...s, ai });
         meta.approved += 1;
       }
     }
   }
 
-  return { approved, meta };
+  return {
+    approved,
+    meta,
+    pending
+  };
 }
 
 async function doScan({ forceReply = false } = {}) {
@@ -1372,32 +1496,15 @@ async function doScan({ forceReply = false } = {}) {
     const aiResult = await validateSignalsWithAI(aiInput);
     const signals = aiResult.approved;
 
-    // V1.3.5:
-    // Se um STANDARD passou 100% pelo filtro técnico e a IA não pôde
-    // ser chamada por causa da janela/cota grátis, exibimos como PENDENTE.
-    // Continua bloqueado como entrada.
-    const standardCandidate = aiInput.find(
-      s => s.candidateTier === 'STANDARD'
-    );
-
-    const aiSkippedForBudget =
-      standardCandidate &&
-      aiResult.meta.skipped > 0 &&
-      aiResult.meta.apiCalls === 0 &&
-      aiResult.meta.cacheHits === 0 &&
-      aiResult.meta.skipReason;
-
-    if (aiSkippedForBudget) {
+    // V1.3.8:
+    // Um cache aprovado pode liberar um sinal e, ao mesmo tempo,
+    // outro candidato sem cache pode ficar pendente.
+    if (aiResult.pending?.signal) {
       setPendingAI(
-        standardCandidate,
-        aiResult.meta.skipReason
+        aiResult.pending.signal,
+        aiResult.pending.reason
       );
-    } else if (
-      !standardCandidate ||
-      aiResult.meta.apiCalls > 0 ||
-      aiResult.meta.cacheHits > 0
-    ) {
-      // O mercado mudou ou a IA já avaliou a oportunidade atual.
+    } else {
       clearPendingAI();
     }
 
@@ -1492,7 +1599,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.3.7.1 FREE</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.3.8 FREE</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o mercado agora\n' +
       '/status — ver configuração\n' +
@@ -1506,7 +1613,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.3.7.1 FREE\n` +
+      `✅ Online — V1.3.8 FREE\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🪙 Top mercados: ${cfg.topMarkets}\n` +
       `⭐ Score mínimo para sinal: ${cfg.minScore}\n` +
@@ -1527,7 +1634,8 @@ async function handleMessage(msg) {
       `⚡ IA prioritária: ${cfg.aiPriorityEnabled ? 'ATIVA' : 'INATIVA'}\n` +
       `⚡ Regra prioridade: score ${cfg.aiPriorityScore}+ · vol ${cfg.aiPriorityVolumeRatio.toFixed(2)}x+ · OI +${cfg.aiPriorityOiPct.toFixed(2)}%+\n` +
       `⚡ Prioridade hoje: ${aiBudgetStats().priorityUsed}/${aiBudgetStats().priorityLimit} · gap ${aiBudgetStats().priorityGapMin} min\n` +
-      `⏳ IA normal: 1 candidato / mínimo ${cfg.aiMinGapMin} min / cache ${cfg.aiCacheMin} min\n` +
+      `⏳ IA normal: 1 chamada nova / mínimo ${cfg.aiMinGapMin} min\n` +
+      `♻️ Cache: normal ${cfg.aiCacheMin} min · prioritário ${cfg.aiPriorityCacheMin} min\n` +
       `🟠 Pendente de IA: ${pendingAiCandidate ? `${pendingAiCandidate.symbol} ${pendingAiCandidate.side}` : 'nenhum'}\n` +
       `🎯 Acompanhando: ${activeSignals.size} sinal(is)\n` +
       `📚 Resultados registrados: ${resultHistory.length}`
@@ -1574,7 +1682,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.3.7.1-free',
+    version: '1.3.8-free',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -1590,7 +1698,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.3.7.1 FREE pronto ✅');
+console.log('Crypto Futures Scanner V1.3.8 FREE pronto ✅');
 
 setTimeout(() => doScan().catch(console.error), 5000);
 setInterval(() => doScan().catch(console.error), cfg.intervalMin * 60_000);

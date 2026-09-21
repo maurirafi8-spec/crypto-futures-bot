@@ -754,7 +754,7 @@ export function signalText(s) {
       ? `🤖 IA: <b>${s.ai.decision}</b> · Confiança ${Math.round(s.ai.confidence)}% · ` +
         `${s.ai.style} · Risco ${s.ai.risk}\n` +
         `${s.ai.cached
-          ? '♻️ Origem: CACHE'
+          ? `♻️ Origem: CACHE${Number.isFinite(s.ai.cacheAgeMin) ? ` · ${s.ai.cacheAgeMin.toFixed(0)} min` : ''}`
           : s.ai.callMode === 'PRIORITY'
             ? '⚡ Origem: NOVA ANÁLISE PRIORITÁRIA'
             : '🧠 Origem: NOVA ANÁLISE NORMAL'}\n` +
@@ -778,7 +778,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.3.7.1: prioridade IA corrigida + candles fechados + estatísticas. ` +
+    `<i>V1.3.8: cache inteligente + uma vaga nova de IA preservada + candles fechados. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

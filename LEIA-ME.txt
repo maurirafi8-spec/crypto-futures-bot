@@ -1,4 +1,4 @@
-CRYPTO FUTURES SCANNER V1.3.7.1 FREE — PRIORITY FIX
+CRYPTO FUTURES SCANNER V1.3.8 FREE — SMART CACHE
 
 SUBSTITUA NO GITHUB:
 - ai.js
@@ -8,49 +8,79 @@ SUBSTITUA NO GITHUB:
 - scanner.js
 - telegram.js
 
-CORREÇÕES DA V1.3.7.1
+NOVIDADES
 
-1) /status AGORA MOSTRA A PRIORIDADE
-Deve aparecer:
-⚡ IA prioritária: ATIVA
-⚡ Regra prioridade: score 85+ · vol 1.00x+ · OI +0.50%+
-⚡ Prioridade hoje: X/12 · gap 5 min
-⏳ IA normal: 1 candidato / mínimo 30 min / cache 30 min
+1) CACHE NÃO DESPERDIÇA MAIS A VAGA DA IA
+Antes:
+- BTC tinha APPROVE em cache.
+- O bot reaproveitava BTC e encerrava a única vaga.
+- Outro ativo sem cache ficava sem análise.
 
-2) CANDIDATO PRIORITÁRIO SEMPRE VEM PRIMEIRO
-Como o plano grátis usa AI_MAX_CANDIDATES=1, a ordem importa.
-
-Agora, quando vários ativos passam no filtro técnico:
-- primeiro procura qualquer setup que cumpra PRIORIDADE;
-- dentro dos prioritários, prefere maior score;
-- depois maior volume relativo;
-- depois maior OI;
-- só se não houver nenhum prioritário escolhe o melhor candidato normal.
+Agora:
+- O bot percorre todos os candidatos.
+- Reaproveita TODOS os caches válidos sem gastar chamada.
+- Depois ainda pode usar UMA chamada nova em outro candidato sem cache.
+- Continua gastando no máximo 1 chamada NOVA por scan.
 
 Exemplo:
-BNB score 80 / volume 0.72x / OI +1.65% -> NORMAL
-BTC score 90 / volume 1.61x / OI +0.55% -> PRIORIDADE
+BTC -> ♻️ cache APPROVE
+BNB -> sem cache
+Resultado:
+BTC pode ser liberado pelo cache
++
+BNB pode usar a única chamada nova disponível.
 
-Mesmo que BNB esteja primeiro na lista original, BTC será enviado para a IA.
+2) PRIORIDADE CONTINUA PASSANDO NA FRENTE
+A fila já vem ordenada:
+- prioritários primeiro;
+- depois score;
+- depois volume;
+- depois OI.
 
-REGRAS DA PRIORIDADE
-- Score >= 85
-- Volume relativo >= 1.00x
-- OI >= +0.50%
-- Gap prioritário: 5 min
-- Máximo prioritário: 12/dia
-- Máximo total interno: 45/dia
-- Cache: 30 min
+Então, entre os candidatos SEM CACHE, a vaga nova favorece o setup forte.
 
-Nada foi afrouxado nos filtros técnicos.
+3) CACHE INTELIGENTE
+Cache normal: 30 min
+Cache prioritário: 10 min
+
+Se o setup é prioritário agora OU foi salvo como prioritário,
+a decisão expira mais rápido.
+
+Isso evita usar por 30 minutos uma decisão antiga em setups de mercado rápido.
+
+4) /STATUS
+Mostra:
+♻️ Cache: normal 30 min · prioritário 10 min
+
+5) /DEBUG
+Mostra:
+♻️ Respostas vindas do cache: X
+📡 Chamadas novas à IA: X
+⏸ Sem vaga nova neste scan: X
+
+VARIÁVEL OPCIONAL
+AI_PRIORITY_CACHE_MINUTES=10
+
+Não precisa criar essa variável; 10 min já é o padrão.
+
+REGRAS MANTIDAS
+- 6 mercados
+- score 70+ para sinal
+- pré-candidato 60–69
+- candles somente fechados
+- prioridade: score 85+ / volume 1.00x+ / OI +0.50%+
+- gap prioritário 5 min
+- gap normal 30 min
+- limite total 45/dia
+- prioridade 12/dia
+- 1 chamada NOVA por scan
+- acompanhamento TP1/TP2/TP3/STOP
+- estatísticas score/confiança IA
 
 TESTE
 /status
 /scan
 /debug
 /ia
-
-No Render Logs também aparecerá:
-[ai] candidato escolhido: ... · PRIORIDADE
-ou:
-[ai] candidato escolhido: ... · NORMAL
+/ativos
+/resultados
