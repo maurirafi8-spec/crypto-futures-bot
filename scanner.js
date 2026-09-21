@@ -782,7 +782,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.3.9.1: WAIT >=60% entra na watchlist de recheck inteligente. ` +
+    `<i>V1.3.9.2: WAIT 55–59% entra condicionalmente quando o setup técnico é forte. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

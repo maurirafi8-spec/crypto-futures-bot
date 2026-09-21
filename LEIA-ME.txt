@@ -1,25 +1,62 @@
-CRYPTO FUTURES SCANNER V1.3.9.1 FREE
+CRYPTO FUTURES SCANNER V1.3.9.2 FREE
 
-ALTERAÇÃO DESTA VERSÃO
-- WAIT com confiança >= 60% agora entra na watchlist de recheck.
-- Antes o mínimo era 65%.
-- O score mínimo para liberar sinal continua 70.
-- A confiança mínima da IA para APPROVE continua 65%.
-- Nenhum filtro técnico de entrada foi afrouxado.
+WAIT CONDICIONAL 55–59%
+
+OBJETIVO
+Não baixar o filtro normal de WAIT para todo mundo.
+
+REGRA PADRÃO
+WAIT >= 60%
+→ entra na watchlist normalmente.
+
+REGRA CONDICIONAL
+WAIT entre 55% e 59%
+→ só entra se TODAS estas condições forem verdadeiras:
+
+- score técnico >= 80
+- volume relativo 15m >= 0.60x
+- Open Interest >= +1.00%
 
 EXEMPLO
 DOGEUSDT LONG
-Score técnico: 80
-IA: WAIT 62%
+Score 80
+Volume 0.60x
+OI +3.75%
+IA WAIT 55%
 
 Agora:
-WAIT 62% -> entra em observação
--> espera novo candle fechado de 15m
--> verifica melhora técnica
--> faz recheck da IA
--> só libera sinal se a IA aprovar pelas regras normais.
+✅ entra na watchlist CONDICIONAL
+→ aguarda novo candle fechado
+→ espera melhora técnica
+→ faz RECHECK
+→ só vira sinal se depois passar pelas regras normais de APPROVE.
 
-SUBSTITUA OS MESMOS 6 ARQUIVOS:
+O QUE NÃO MUDOU
+- score mínimo de entrada: 70
+- confiança mínima para liberar APPROVE: 65%
+- volume mínimo 24h
+- bloqueio de OI
+- candles fechados
+- prioridade IA
+- cache
+- limites de requests
+- TP / STOP
+- acompanhamento
+
+LINHAS NOVAS NO /status
+🧷 WAIT padrão: 60%+
+🧷 WAIT condicional: 55–59% se score 80+ · vol 0.60x+ · OI +1.00%+
+
+VARIÁVEIS OPCIONAIS
+AI_WAIT_CONDITIONAL_MIN_CONFIDENCE=55
+AI_WAIT_CONDITIONAL_SCORE=80
+AI_WAIT_CONDITIONAL_VOLUME_RATIO=0.60
+AI_WAIT_CONDITIONAL_OI_PCT=1.00
+
+Não precisa criar nenhuma delas no Render.
+Os valores acima já são os padrões.
+
+SUBSTITUA OS 6 ARQUIVOS:
 ai.js
 binance.js
 index.js
@@ -34,6 +71,3 @@ DEPOIS:
 4. /scan
 5. /ia
 6. /debug
-
-Não precisa criar variável nova no Render.
-O novo padrão já é 60%.
