@@ -757,9 +757,11 @@ export function signalText(s) {
           ? `♻️ Origem: CACHE${Number.isFinite(s.ai.cacheAgeMin) ? ` · ${s.ai.cacheAgeMin.toFixed(0)} min` : ''}`
           : s.ai.rescueUsed
             ? '🛟 Origem: OPENROUTER RESCUE'
-            : s.ai.callMode === 'PRIORITY'
-              ? '⚡ Origem: NOVA ANÁLISE PRIORITÁRIA'
-              : '🧠 Origem: NOVA ANÁLISE NORMAL'}\n` +
+            : s.ai.callMode === 'RECHECK'
+              ? '🔄 Origem: RECHECK INTELIGENTE DE WAIT'
+              : s.ai.callMode === 'PRIORITY'
+                ? '⚡ Origem: NOVA ANÁLISE PRIORITÁRIA'
+                : '🧠 Origem: NOVA ANÁLISE NORMAL'}\n` +
         `🧠 IA: ${s.ai.reason}\n`
       : '') +
     `\n` +
@@ -780,7 +782,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.3.8.5: roteamento flexível OpenRouter + tool call/JSON fallback + rescue Gemma. ` +
+    `<i>V1.3.9.0: WAIT com recheck inteligente em novo candle + IA + roteamento flexível. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

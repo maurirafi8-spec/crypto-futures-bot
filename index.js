@@ -65,6 +65,35 @@ const cfg = {
   aiPriorityCacheMin: Math.max(
     Number(process.env.AI_PRIORITY_CACHE_MINUTES || 10),
     1
+  ),
+
+  // V1.3.9: WAIT não é esquecido. O bot observa o próximo candle fechado
+  // e só gasta uma nova chamada quando houver mudança útil.
+  aiWaitRecheckEnabled:
+    String(process.env.AI_WAIT_RECHECK_ENABLED || 'true').toLowerCase() !== 'false',
+  aiWaitRecheckGapMin: Math.max(
+    Number(process.env.AI_WAIT_RECHECK_GAP_MINUTES || 15),
+    5
+  ),
+  aiWaitRecheckDailyLimit: Math.min(
+    Math.max(Number(process.env.AI_WAIT_RECHECK_DAILY_LIMIT || 8), 0),
+    20
+  ),
+  aiWaitRecheckMaxAttempts: Math.min(
+    Math.max(Number(process.env.AI_WAIT_RECHECK_MAX_ATTEMPTS || 3), 1),
+    6
+  ),
+  aiWaitRecheckMinConfidence: Math.max(
+    Number(process.env.AI_WAIT_RECHECK_MIN_CONFIDENCE || 65),
+    0
+  ),
+  aiWaitRecheckStaleMin: Math.max(
+    Number(process.env.AI_WAIT_RECHECK_STALE_MINUTES || 30),
+    15
+  ),
+  aiWaitWatchMaxAgeMin: Math.max(
+    Number(process.env.AI_WAIT_WATCH_MAX_AGE_MINUTES || 120),
+    30
   )
 };
 
@@ -96,10 +125,16 @@ let aiCompletedToday = 0;          // decisões válidas concluídas
 let aiFailedToday = 0;             // análises que terminaram em falha
 let aiRescueCallsToday = 0;        // requests extras feitos pelo rescue
 let aiPriorityCallsToday = 0;
+let aiWaitRecheckCallsToday = 0;
 let aiLastCallAt = 0;
 let lastAiSkipReason = '';
 let lastAiCallMode = 'NORMAL';
 const aiDecisionCache = new Map();
+
+// V1.3.9: sinais que receberam WAIT ficam numa watchlist técnica.
+// O registro guarda o estado do mercado na hora da decisão para comparar
+// com os próximos candles fechados.
+const aiWaitWatchlist = new Map();
 
 function aiDayKey(ts = Date.now()) {
   return new Date(ts).toISOString().slice(0, 10);
@@ -114,6 +149,7 @@ function refreshAIBudgetDay() {
     aiFailedToday = 0;
     aiRescueCallsToday = 0;
     aiPriorityCallsToday = 0;
+    aiWaitRecheckCallsToday = 0;
     aiLastCallAt = 0;
     lastAiSkipReason = '';
     lastAiCallMode = 'NORMAL';
@@ -139,7 +175,13 @@ function aiBudgetStats() {
     priorityScore: cfg.aiPriorityScore,
     priorityVolumeRatio: cfg.aiPriorityVolumeRatio,
     priorityOiPct: cfg.aiPriorityOiPct,
-    priorityCacheMin: cfg.aiPriorityCacheMin
+    priorityCacheMin: cfg.aiPriorityCacheMin,
+    waitRecheckEnabled: cfg.aiWaitRecheckEnabled,
+    waitRecheckUsed: aiWaitRecheckCallsToday,
+    waitRecheckLimit: cfg.aiWaitRecheckDailyLimit,
+    waitRecheckGapMin: cfg.aiWaitRecheckGapMin,
+    waitRecheckMaxAttempts: cfg.aiWaitRecheckMaxAttempts,
+    waitWatching: aiWaitWatchlist.size
   };
 }
 
@@ -156,6 +198,301 @@ function cacheTtlMin(signal, item = null) {
     : cfg.aiCacheMin;
 }
 
+
+function waitWatchKey(signal) {
+  return `${signal.symbol}:${signal.side}`;
+}
+
+function finiteNumber(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function directionalRsiHeat(signal) {
+  const values = [
+    signal?.t15?.rsi,
+    signal?.t1h?.rsi,
+    signal?.t4h?.rsi
+  ]
+    .map(Number)
+    .filter(Number.isFinite);
+
+  if (!values.length) return 50;
+
+  // Quanto maior, mais "esticado" na direção da operação.
+  if (signal.side === 'SHORT') {
+    return 100 - Math.min(...values);
+  }
+
+  return Math.max(...values);
+}
+
+function emaStretchPct(signal) {
+  const price = finiteNumber(signal?.t15?.price, NaN);
+  const ema20 = finiteNumber(signal?.t15?.ema20, NaN);
+
+  if (!Number.isFinite(price) || !Number.isFinite(ema20) || ema20 === 0) {
+    return 0;
+  }
+
+  return Math.abs((price - ema20) / ema20) * 100;
+}
+
+function waitSnapshot(signal) {
+  return {
+    score: finiteNumber(signal?.score),
+    volumeRatio: finiteNumber(signal?.t15?.volumeRatio),
+    oiPct: finiteNumber(signal?.oiPct),
+    rsiHeat: directionalRsiHeat(signal),
+    stretchPct: emaStretchPct(signal),
+    barTime: finiteNumber(signal?.t15?.openTime),
+    rsi15: finiteNumber(signal?.t15?.rsi, 50),
+    rsi1h: finiteNumber(signal?.t1h?.rsi, 50),
+    rsi4h: finiteNumber(signal?.t4h?.rsi, 50)
+  };
+}
+
+function clearWaitWatch(signalOrKey) {
+  const key = typeof signalOrKey === 'string'
+    ? signalOrKey
+    : waitWatchKey(signalOrKey);
+
+  aiWaitWatchlist.delete(key);
+}
+
+function registerWaitDecision(signal, ai) {
+  if (!cfg.aiWaitRecheckEnabled) return;
+
+  const key = waitWatchKey(signal);
+
+  if (
+    ai.decision !== 'WAIT' ||
+    signal.candidateTier === 'PRE_CANDIDATE' ||
+    Number(ai.confidence || 0) < cfg.aiWaitRecheckMinConfidence
+  ) {
+    clearWaitWatch(key);
+    return;
+  }
+
+  const previous = aiWaitWatchlist.get(key);
+  const wasRecheck = ai.callMode === 'RECHECK';
+
+  aiWaitWatchlist.set(key, {
+    symbol: signal.symbol,
+    side: signal.side,
+    createdAt: previous?.createdAt || Date.now(),
+    lastDecisionAt: Date.now(),
+    lastBarTime: finiteNumber(signal?.t15?.openTime),
+    attempts: wasRecheck
+      ? Math.min((previous?.attempts || 0) + 1, cfg.aiWaitRecheckMaxAttempts)
+      : (previous?.attempts || 0),
+    confidence: Number(ai.confidence || 0),
+    reason: String(ai.reason || '').slice(0, 260),
+    baseline: waitSnapshot(signal)
+  });
+}
+
+function waitRecheckAssessment(signal) {
+  if (!cfg.aiWaitRecheckEnabled) {
+    return { ready: false, reason: 'recheck WAIT desativado' };
+  }
+
+  const key = waitWatchKey(signal);
+  const watch = aiWaitWatchlist.get(key);
+
+  if (!watch) {
+    return { ready: false, reason: 'não está na watchlist WAIT' };
+  }
+
+  const ageMin = (Date.now() - watch.createdAt) / 60_000;
+
+  if (ageMin > cfg.aiWaitWatchMaxAgeMin) {
+    aiWaitWatchlist.delete(key);
+    aiDecisionCache.delete(key);
+
+    return {
+      ready: false,
+      expired: true,
+      reason: `WAIT expirou após ${Math.round(ageMin)} min`
+    };
+  }
+
+  if ((watch.attempts || 0) >= cfg.aiWaitRecheckMaxAttempts) {
+    return {
+      ready: false,
+      exhausted: true,
+      reason:
+        `máximo de ${cfg.aiWaitRecheckMaxAttempts} rechecks atingido`
+    };
+  }
+
+  if (aiWaitRecheckCallsToday >= cfg.aiWaitRecheckDailyLimit) {
+    return {
+      ready: false,
+      quota: true,
+      reason:
+        `cota diária de recheck WAIT atingida ` +
+        `(${aiWaitRecheckCallsToday}/${cfg.aiWaitRecheckDailyLimit})`
+    };
+  }
+
+  const nowSnap = waitSnapshot(signal);
+  const base = watch.baseline || {};
+
+  if (
+    !nowSnap.barTime ||
+    !watch.lastBarTime ||
+    nowSnap.barTime <= watch.lastBarTime
+  ) {
+    return {
+      ready: false,
+      reason: 'aguardando novo candle fechado de 15m'
+    };
+  }
+
+  const sinceDecisionMin =
+    (Date.now() - watch.lastDecisionAt) / 60_000;
+
+  if (sinceDecisionMin < cfg.aiWaitRecheckGapMin) {
+    return {
+      ready: false,
+      reason:
+        `novo candle detectado; janela de recheck em ~` +
+        `${Math.max(1, Math.ceil(cfg.aiWaitRecheckGapMin - sinceDecisionMin))} min`
+    };
+  }
+
+  const scoreDelta = nowSnap.score - finiteNumber(base.score);
+  const volumeDelta =
+    nowSnap.volumeRatio - finiteNumber(base.volumeRatio);
+  const oiDelta = nowSnap.oiPct - finiteNumber(base.oiPct);
+  const heatReduction =
+    finiteNumber(base.rsiHeat, 50) - nowSnap.rsiHeat;
+  const stretchReduction =
+    finiteNumber(base.stretchPct) - nowSnap.stretchPct;
+
+  const wasHot = finiteNumber(base.rsiHeat, 50) >= 70;
+  const cooledBelow70 =
+    wasHot && nowSnap.rsiHeat < 70;
+
+  const meaningfulReasons = [];
+
+  if (cooledBelow70) {
+    meaningfulReasons.push('RSI saiu da zona esticada');
+  } else if (heatReduction >= 2) {
+    meaningfulReasons.push(`RSI esfriou ${heatReduction.toFixed(1)} pts`);
+  }
+
+  if (scoreDelta >= 5) {
+    meaningfulReasons.push(`score melhorou +${scoreDelta.toFixed(0)}`);
+  }
+
+  if (volumeDelta >= 0.20) {
+    meaningfulReasons.push(`volume melhorou +${volumeDelta.toFixed(2)}x`);
+  }
+
+  if (oiDelta >= 0.25) {
+    meaningfulReasons.push(`OI melhorou +${oiDelta.toFixed(2)} p.p.`);
+  }
+
+  if (stretchReduction >= 0.25) {
+    meaningfulReasons.push(
+      `distância da EMA20 reduziu ${stretchReduction.toFixed(2)} p.p.`
+    );
+  }
+
+  // Mesmo sem melhora numérica clara, não deixamos WAIT "preso" para sempre:
+  // após 30 min e com novo candle fechado, a IA pode revisar o contexto.
+  if (
+    !meaningfulReasons.length &&
+    sinceDecisionMin >= cfg.aiWaitRecheckStaleMin
+  ) {
+    meaningfulReasons.push(
+      `WAIT com ${Math.round(sinceDecisionMin)} min e novo candle fechado`
+    );
+  }
+
+  if (!meaningfulReasons.length) {
+    return {
+      ready: false,
+      reason: 'novo candle fechado, mas ainda sem melhora suficiente',
+      scoreDelta,
+      volumeDelta,
+      oiDelta,
+      heatReduction,
+      stretchReduction
+    };
+  }
+
+  return {
+    ready: true,
+    reason: meaningfulReasons.join(' · '),
+    scoreDelta,
+    volumeDelta,
+    oiDelta,
+    heatReduction,
+    stretchReduction,
+    previousConfidence: watch.confidence,
+    previousReason: watch.reason,
+    attempts: watch.attempts || 0
+  };
+}
+
+function reconcileWaitWatchlist(snapshots) {
+  const bySymbol = new Map(
+    (snapshots || []).map(s => [s.symbol, s])
+  );
+
+  for (const [key, watch] of [...aiWaitWatchlist.entries()]) {
+    const current = bySymbol.get(watch.symbol);
+
+    if (!current) continue;
+
+    // Se a direção mudou ou o filtro técnico deixou de aprovar,
+    // aquele WAIT perdeu validade.
+    if (
+      current.side !== watch.side ||
+      !current.gates?.mathApproved
+    ) {
+      aiWaitWatchlist.delete(key);
+      aiDecisionCache.delete(key);
+
+      console.log(
+        `[wait-recheck] ${watch.symbol}: removido da watchlist — ` +
+        `${current.side !== watch.side ? 'direção mudou' : 'filtro técnico perdeu confirmação'}`
+      );
+    }
+  }
+}
+
+function waitWatchlistText() {
+  if (!aiWaitWatchlist.size) {
+    return '⏳ Nenhum WAIT está em observação para recheck.';
+  }
+
+  const lines = [
+    '🔄 <b>WAIT em observação</b>',
+    ''
+  ];
+
+  for (const watch of [...aiWaitWatchlist.values()].slice(0, 5)) {
+    const ageMin = Math.max(
+      0,
+      Math.floor((Date.now() - watch.lastDecisionAt) / 60_000)
+    );
+
+    lines.push(
+      `⏳ <b>${watch.symbol} ${watch.side}</b> — ` +
+      `${Math.round(watch.confidence)}%\n` +
+      `🕯 Aguardando melhora em candle fechado · ${ageMin} min desde a decisão\n` +
+      `🔁 Rechecks: ${watch.attempts}/${cfg.aiWaitRecheckMaxAttempts}\n` +
+      `${watch.reason}`
+    );
+  }
+
+  return lines.join('\n');
+}
+
 function getCachedAI(signal) {
   const key = aiCacheKey(signal);
   const item = aiDecisionCache.get(key);
@@ -164,6 +501,37 @@ function getCachedAI(signal) {
 
   const ttlMin = cacheTtlMin(signal, item);
   const ageMs = Date.now() - item.at;
+
+  // WAIT usa uma política especial: ele permanece em cache até surgir
+  // um gatilho real de recheck. Assim evitamos gastar chamadas apenas
+  // porque o cache prioritário de 10 min venceu antes de fechar um candle.
+  if (item.ai?.decision === 'WAIT') {
+    const assessment = waitRecheckAssessment(signal);
+
+    if (assessment.ready) {
+      aiDecisionCache.delete(key);
+      signal._aiWaitRecheck = assessment;
+
+      console.log(
+        `[wait-recheck] ${signal.symbol}: gatilho — ${assessment.reason}`
+      );
+
+      return null;
+    }
+
+    const watch = aiWaitWatchlist.get(key);
+
+    if (watch) {
+      return {
+        ...item.ai,
+        cached: true,
+        cacheAgeMin: ageMs / 60_000,
+        cacheTtlMin: cfg.aiWaitWatchMaxAgeMin,
+        waitWatching: true,
+        waitRecheckReason: assessment.reason
+      };
+    }
+  }
 
   if (ageMs > ttlMin * 60_000) {
     aiDecisionCache.delete(key);
@@ -220,6 +588,51 @@ function aiCallPermission(signal) {
   const elapsedMs = aiLastCallAt
     ? now - aiLastCallAt
     : Number.POSITIVE_INFINITY;
+
+  // V1.3.9: um WAIT com novo candle/melhora pode usar uma janela própria.
+  if (signal?._aiWaitRecheck?.ready) {
+    if (aiWaitRecheckCallsToday >= cfg.aiWaitRecheckDailyLimit) {
+      lastAiSkipReason =
+        `cota de recheck WAIT atingida ` +
+        `(${aiWaitRecheckCallsToday}/${cfg.aiWaitRecheckDailyLimit})`;
+
+      return {
+        allowed: false,
+        mode: 'BLOCKED',
+        priorityEligible: isPriorityAICandidate(signal),
+        recheckEligible: true,
+        reason: lastAiSkipReason
+      };
+    }
+
+    const recheckGapMs = cfg.aiWaitRecheckGapMin * 60_000;
+
+    if (!aiLastCallAt || elapsedMs >= recheckGapMs) {
+      lastAiSkipReason = '';
+
+      return {
+        allowed: true,
+        mode: 'RECHECK',
+        priorityEligible: isPriorityAICandidate(signal),
+        recheckEligible: true,
+        reason: signal._aiWaitRecheck.reason
+      };
+    }
+
+    const waitMs = Math.max(0, recheckGapMs - elapsedMs);
+    const mins = Math.max(1, Math.ceil(waitMs / 60_000));
+
+    lastAiSkipReason =
+      `recheck WAIT em ~${mins} min`;
+
+    return {
+      allowed: false,
+      mode: 'BLOCKED',
+      priorityEligible: isPriorityAICandidate(signal),
+      recheckEligible: true,
+      reason: lastAiSkipReason
+    };
+  }
 
   const normalGapMs = cfg.aiMinGapMin * 60_000;
 
@@ -304,6 +717,10 @@ function registerAICall(mode = 'NORMAL') {
 
   if (mode === 'PRIORITY') {
     aiPriorityCallsToday += 1;
+  }
+
+  if (mode === 'RECHECK') {
+    aiWaitRecheckCallsToday += 1;
   }
 
   lastAiSkipReason = '';
@@ -640,9 +1057,11 @@ function activeSignalsText() {
             ? `♻️ CACHE ${Number.isFinite(ai.cacheAgeMin) ? `${ai.cacheAgeMin.toFixed(0)}m` : ''}`.trim()
             : ai.rescueUsed
               ? '🛟 RESCUE OPENROUTER'
-              : ai.callMode === 'PRIORITY'
-                ? '⚡ NOVA ANÁLISE PRIORITÁRIA'
-                : '🧠 NOVA ANÁLISE NORMAL'
+              : ai.callMode === 'RECHECK'
+                ? '🔄 RECHECK INTELIGENTE'
+                : ai.callMode === 'PRIORITY'
+                  ? '⚡ NOVA ANÁLISE PRIORITÁRIA'
+                  : '🧠 NOVA ANÁLISE NORMAL'
         )
       : '—';
 
@@ -866,6 +1285,13 @@ function aiHistoryText() {
     );
   }
 
+  if (aiWaitWatchlist.size) {
+    lines.push(
+      ...(lines.length ? ['', '────────────'] : []),
+      waitWatchlistText()
+    );
+  }
+
   if (!aiHistory.length) {
     const extra = lastAiEvent?.message
       ? `Último evento: ${lastAiEvent.message}`
@@ -900,9 +1326,11 @@ function aiHistoryText() {
       ? '♻️ <b>CACHE</b>'
       : r.rescueUsed
         ? '🛟 <b>RESCUE OPENROUTER</b>'
-        : r.callMode === 'PRIORITY'
-          ? '⚡ <b>NOVA ANÁLISE PRIORITÁRIA</b>'
-          : '🧠 <b>NOVA ANÁLISE NORMAL</b>';
+        : r.callMode === 'RECHECK'
+          ? '🔄 <b>RECHECK INTELIGENTE DE WAIT</b>'
+          : r.callMode === 'PRIORITY'
+            ? '⚡ <b>NOVA ANÁLISE PRIORITÁRIA</b>'
+            : '🧠 <b>NOVA ANÁLISE NORMAL</b>';
 
     lines.push(
       `${aiDecisionIcon(r.decision)} <b>${r.symbol} ${r.side}</b> — ` +
@@ -1026,6 +1454,7 @@ function lastScanDebugText() {
     `✅ Análises concluídas: ${a?.completed ?? 0}`,
     `⚠️ Falhas/timeout/parser: ${a?.errors ?? 0}`,
     `⚡ Candidatos prioritários chamados: ${a?.priorityCalls ?? 0}`,
+    `🔄 Rechecks inteligentes de WAIT: ${a?.waitRecheckCalls ?? 0}`,
     `♻️ Respostas vindas do cache: ${a?.cacheHits ?? 0}`,
     `⏸ Sem vaga nova neste scan: ${a?.freshDeferred ?? 0}`,
     `🎯 Sinais liberados: ${lastScanReport.finalSignals ?? 0}`
@@ -1120,6 +1549,9 @@ function scanNoSignalText(report) {
     ...(a?.priorityCalls
       ? [`⚡ ${a.priorityCalls} chamada(s) prioritária(s)`]
       : []),
+    ...(a?.waitRecheckCalls
+      ? [`🔄 ${a.waitRecheckCalls} recheck(s) inteligente(s) de WAIT`]
+      : []),
     `🎯 0 sinais liberados`
   ];
 
@@ -1179,6 +1611,7 @@ async function validateSignalsWithAI(signals) {
     apiCalls: 0,
     rescueCalls: 0,
     priorityCalls: 0,
+    waitRecheckCalls: 0,
     priorityEligible: 0,
     cacheHits: 0,
     freshDeferred: 0,
@@ -1366,7 +1799,10 @@ async function validateSignalsWithAI(signals) {
     try {
       console.log(
         `[ai] avaliando ${s.symbol} ${s.side} ` +
-        `com ${aiModel()} [${permission.mode}]`
+        `com ${aiModel()} [${permission.mode}]` +
+        (permission.mode === 'RECHECK'
+          ? ` · ${s._aiWaitRecheck?.reason || 'recheck WAIT'}`
+          : '')
       );
 
       registerAICall(permission.mode);
@@ -1375,6 +1811,10 @@ async function validateSignalsWithAI(signals) {
 
       if (permission.mode === 'PRIORITY') {
         meta.priorityCalls += 1;
+      }
+
+      if (permission.mode === 'RECHECK') {
+        meta.waitRecheckCalls += 1;
       }
 
       // O primeiro request já foi contabilizado por registerAICall().
@@ -1404,6 +1844,7 @@ async function validateSignalsWithAI(signals) {
 
       saveCachedAI(s, ai);
       rememberAI(s, ai);
+      registerWaitDecision(s, ai);
       countAiDecision(meta, ai);
       aiCompletedToday += 1;
       meta.completed += 1;
@@ -1543,6 +1984,7 @@ async function doScan({ forceReply = false } = {}) {
     });
 
     await updateTrackedSignals(snapshots);
+    reconcileWaitWatchlist(snapshots);
 
     console.log(
       `[scan] ${mathSignals.length} sinais matemáticos >= ${cfg.minScore}; ` +
@@ -1685,6 +2127,7 @@ async function doScan({ forceReply = false } = {}) {
         selected: 0,
         apiCalls: 0,
         cacheHits: 0,
+        waitRecheckCalls: 0,
         approved: 0,
         watch: 0,
         wait: 0,
@@ -1724,7 +2167,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.3.8.5 FREE</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.3.9.0 FREE</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o mercado agora\n' +
       '/status — ver configuração\n' +
@@ -1738,7 +2181,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.3.8.5 FREE\n` +
+      `✅ Online — V1.3.9.0 FREE\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🪙 Top mercados: ${cfg.topMarkets}\n` +
       `⭐ Score mínimo para sinal: ${cfg.minScore}\n` +
@@ -1769,6 +2212,9 @@ async function handleMessage(msg) {
       `⚡ Prioridade hoje: ${aiBudgetStats().priorityUsed}/${aiBudgetStats().priorityLimit} · gap ${aiBudgetStats().priorityGapMin} min\n` +
       `⏳ IA normal: 1 chamada nova / mínimo ${cfg.aiMinGapMin} min\n` +
       `♻️ Cache: normal ${cfg.aiCacheMin} min · prioritário ${cfg.aiPriorityCacheMin} min\n` +
+      `🔄 Recheck WAIT: ${cfg.aiWaitRecheckEnabled ? 'ATIVO' : 'INATIVO'} · novo candle + melhora · gap ${cfg.aiWaitRecheckGapMin} min\n` +
+      `🔄 Rechecks hoje: ${aiBudgetStats().waitRecheckUsed}/${aiBudgetStats().waitRecheckLimit} · máx ${cfg.aiWaitRecheckMaxAttempts} por setup\n` +
+      `⏳ WAIT em observação: ${aiWaitWatchlist.size}\n` +
       `🟠 Pendente de IA: ${pendingAiCandidate ? `${pendingAiCandidate.symbol} ${pendingAiCandidate.side}` : 'nenhum'}\n` +
       `🎯 Acompanhando: ${activeSignals.size} sinal(is)\n` +
       `📚 Resultados registrados: ${resultHistory.length}`
@@ -1815,7 +2261,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.3.8.5-free',
+    version: '1.3.9.0-free',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -1831,6 +2277,9 @@ http.createServer((req, res) => {
     aiReasoningMode: aiReasoningMode(),
     aiPrimaryMaxTokens: aiPrimaryMaxTokens(),
     aiRescueMaxTokens: aiRescueMaxTokens(),
+    aiWaitRecheckEnabled: cfg.aiWaitRecheckEnabled,
+    aiWaitRecheckToday: aiWaitRecheckCallsToday,
+    aiWaitWatching: aiWaitWatchlist.size,
     pendingAI: pendingAiCandidate
       ? `${pendingAiCandidate.symbol}:${pendingAiCandidate.side}`
       : null,
@@ -1840,7 +2289,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.3.8.5 FREE pronto ✅');
+console.log('Crypto Futures Scanner V1.3.9.0 FREE pronto ✅');
 
 setTimeout(() => doScan().catch(console.error), 5000);
 setInterval(() => doScan().catch(console.error), cfg.intervalMin * 60_000);
