@@ -1,76 +1,23 @@
-CRYPTO FUTURES SCANNER V1.3.9.0 FREE
-SMART WAIT RECHECK
+CRYPTO FUTURES SCANNER V1.3.9.1 FREE
 
-NOVIDADE PRINCIPAL
-Quando a IA retorna WAIT, o sinal NÃO é esquecido.
+ALTERAÇÃO DESTA VERSÃO
+- WAIT com confiança >= 60% agora entra na watchlist de recheck.
+- Antes o mínimo era 65%.
+- O score mínimo para liberar sinal continua 70.
+- A confiança mínima da IA para APPROVE continua 65%.
+- Nenhum filtro técnico de entrada foi afrouxado.
 
-O bot passa a guardar uma fotografia técnica do setup:
-- score
-- volume relativo
-- Open Interest
-- RSI 15m / 1h / 4h
-- distância do preço para EMA20
-- candle fechado de 15m
-- confiança e motivo do WAIT
+EXEMPLO
+DOGEUSDT LONG
+Score técnico: 80
+IA: WAIT 62%
 
-A cada scan:
-1. espera um NOVO candle fechado de 15m;
-2. confirma que o setup ainda passa no filtro técnico;
-3. procura melhora real;
-4. somente então invalida o WAIT antigo e chama a IA outra vez.
-
-GATILHOS DE RECHECK
-- RSI esfriou pelo menos 2 pontos;
-- RSI saiu da zona esticada;
-- score aumentou 5+;
-- volume relativo melhorou 0.20x+;
-- OI melhorou 0.25 ponto percentual+;
-- preço aproximou da EMA20 em 0.25 p.p.+;
-- ou WAIT ficou 30 min e existe novo candle fechado.
-
-PROTEÇÕES DE COTA
-- gap padrão do recheck: 15 min
-- limite padrão: 8 rechecks por dia
-- máximo padrão: 3 rechecks por setup
-- respeita o limite global de 45 requests/dia
-- não reconsulta IA a cada scan de 5 min
-
-SE O SETUP PIORAR
-Se a direção mudar ou o filtro técnico deixar de confirmar,
-o WAIT é removido automaticamente da watchlist.
-
-FLUXO
-Filtro técnico
-→ IA
-→ WAIT
-→ watchlist
-→ novo candle fechado
-→ melhora técnica
-→ RECHECK IA
-→ APPROVE / WAIT / WATCH / REJECT
-
-SE APPROVE >= confiança mínima
-→ sinal é liberado normalmente
-→ entra no acompanhamento TP/STOP
-
-NOVAS LINHAS EM /status
-🔄 Recheck WAIT: ATIVO
-🔄 Rechecks hoje
-⏳ WAIT em observação
-
-/ia também mostra os WAITs em observação.
-
-VARIÁVEIS OPCIONAIS
-AI_WAIT_RECHECK_ENABLED=true
-AI_WAIT_RECHECK_GAP_MINUTES=15
-AI_WAIT_RECHECK_DAILY_LIMIT=8
-AI_WAIT_RECHECK_MAX_ATTEMPTS=3
-AI_WAIT_RECHECK_MIN_CONFIDENCE=65
-AI_WAIT_RECHECK_STALE_MINUTES=30
-AI_WAIT_WATCH_MAX_AGE_MINUTES=120
-
-Não é obrigatório criar nenhuma delas no Render.
-Os valores acima já são os padrões.
+Agora:
+WAIT 62% -> entra em observação
+-> espera novo candle fechado de 15m
+-> verifica melhora técnica
+-> faz recheck da IA
+-> só libera sinal se a IA aprovar pelas regras normais.
 
 SUBSTITUA OS MESMOS 6 ARQUIVOS:
 ai.js
@@ -88,6 +35,5 @@ DEPOIS:
 5. /ia
 6. /debug
 
-OBSERVAÇÃO
-Futuros envolvem risco elevado e liquidação.
-O recheck evita repetir uma decisão antiga, mas não garante acerto.
+Não precisa criar variável nova no Render.
+O novo padrão já é 60%.

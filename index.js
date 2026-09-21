@@ -84,7 +84,7 @@ const cfg = {
     6
   ),
   aiWaitRecheckMinConfidence: Math.max(
-    Number(process.env.AI_WAIT_RECHECK_MIN_CONFIDENCE || 65),
+    Number(process.env.AI_WAIT_RECHECK_MIN_CONFIDENCE || 60),
     0
   ),
   aiWaitRecheckStaleMin: Math.max(
@@ -2167,7 +2167,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.3.9.0 FREE</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.3.9.1 FREE</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o mercado agora\n' +
       '/status — ver configuração\n' +
@@ -2181,7 +2181,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.3.9.0 FREE\n` +
+      `✅ Online — V1.3.9.1 FREE\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🪙 Top mercados: ${cfg.topMarkets}\n` +
       `⭐ Score mínimo para sinal: ${cfg.minScore}\n` +
@@ -2261,7 +2261,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.3.9.0-free',
+    version: '1.3.9.1-free',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -2289,7 +2289,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.3.9.0 FREE pronto ✅');
+console.log('Crypto Futures Scanner V1.3.9.1 FREE pronto ✅');
 
 setTimeout(() => doScan().catch(console.error), 5000);
 setInterval(() => doScan().catch(console.error), cfg.intervalMin * 60_000);

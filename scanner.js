@@ -782,7 +782,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.3.9.0: WAIT com recheck inteligente em novo candle + IA + roteamento flexível. ` +
+    `<i>V1.3.9.1: WAIT >=60% entra na watchlist de recheck inteligente. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }
