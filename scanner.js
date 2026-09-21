@@ -755,9 +755,11 @@ export function signalText(s) {
         `${s.ai.style} · Risco ${s.ai.risk}\n` +
         `${s.ai.cached
           ? `♻️ Origem: CACHE${Number.isFinite(s.ai.cacheAgeMin) ? ` · ${s.ai.cacheAgeMin.toFixed(0)} min` : ''}`
-          : s.ai.callMode === 'PRIORITY'
-            ? '⚡ Origem: NOVA ANÁLISE PRIORITÁRIA'
-            : '🧠 Origem: NOVA ANÁLISE NORMAL'}\n` +
+          : s.ai.rescueUsed
+            ? '🛟 Origem: OPENROUTER RESCUE'
+            : s.ai.callMode === 'PRIORITY'
+              ? '⚡ Origem: NOVA ANÁLISE PRIORITÁRIA'
+              : '🧠 Origem: NOVA ANÁLISE NORMAL'}\n` +
         `🧠 IA: ${s.ai.reason}\n`
       : '') +
     `\n` +
@@ -778,7 +780,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.3.8.1: IA resiliente + pendência preservada em erro + cache inteligente. ` +
+    `<i>V1.3.8.2: OpenRouter Rescue + JSON estruturado + cache inteligente. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

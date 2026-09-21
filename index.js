@@ -1,7 +1,14 @@
 import http from 'node:http';
 import { scanMarket, signalText } from './scanner.js';
 import { sendMessage, getUpdates } from './telegram.js';
-import { analyzeSignalWithAI, aiConfigured, aiModel } from './ai.js';
+import {
+  analyzeSignalWithAI,
+  aiConfigured,
+  aiModel,
+  aiRescueEnabled,
+  aiRescueModel,
+  aiStructuredOutputEnabled
+} from './ai.js';
 
 const cfg = {
   token: process.env.BOT_TOKEN,
@@ -83,7 +90,8 @@ let lastScanReport = null;
 let aiUsageDay = '';
 let aiCallsToday = 0;              // tentativas/chamadas consumidas
 let aiCompletedToday = 0;          // decisões válidas concluídas
-let aiFailedToday = 0;             // erros/timeout/parser
+let aiFailedToday = 0;             // análises que terminaram em falha
+let aiRescueCallsToday = 0;        // requests extras feitos pelo rescue
 let aiPriorityCallsToday = 0;
 let aiLastCallAt = 0;
 let lastAiSkipReason = '';
@@ -101,6 +109,7 @@ function refreshAIBudgetDay() {
     aiCallsToday = 0;
     aiCompletedToday = 0;
     aiFailedToday = 0;
+    aiRescueCallsToday = 0;
     aiPriorityCallsToday = 0;
     aiLastCallAt = 0;
     lastAiSkipReason = '';
@@ -115,6 +124,7 @@ function aiBudgetStats() {
     used: aiCallsToday,
     completed: aiCompletedToday,
     failed: aiFailedToday,
+    rescueCalls: aiRescueCallsToday,
     limit: cfg.aiDailyLimit,
     remaining: Math.max(0, cfg.aiDailyLimit - aiCallsToday),
     minGapMin: cfg.aiMinGapMin,
@@ -625,9 +635,11 @@ function activeSignalsText() {
       ? (
           ai.cached
             ? `♻️ CACHE ${Number.isFinite(ai.cacheAgeMin) ? `${ai.cacheAgeMin.toFixed(0)}m` : ''}`.trim()
-            : ai.callMode === 'PRIORITY'
-              ? '⚡ NOVA ANÁLISE PRIORITÁRIA'
-              : '🧠 NOVA ANÁLISE NORMAL'
+            : ai.rescueUsed
+              ? '🛟 RESCUE OPENROUTER'
+              : ai.callMode === 'PRIORITY'
+                ? '⚡ NOVA ANÁLISE PRIORITÁRIA'
+                : '🧠 NOVA ANÁLISE NORMAL'
         )
       : '—';
 
@@ -779,9 +791,12 @@ function rememberAI(signal, ai) {
     confidence: ai.confidence,
     reason: ai.reason,
     model: ai.model,
+    provider: ai.provider || null,
     cached: Boolean(ai.cached),
     source: ai.cached ? 'CACHE' : 'NEW',
     callMode: ai.callMode || 'NORMAL',
+    rescueUsed: Boolean(ai.rescueUsed),
+    responseMode: ai.responseMode || null,
     at: Date.now()
   };
 
@@ -857,7 +872,8 @@ function aiHistoryText() {
       ...(lines.length ? ['', '────────────'] : []),
       '🤖 <b>Histórico da IA</b>',
       extra,
-      `🆓 Uso IA hoje: ${budget.used}/${budget.limit}`
+      `🆓 Tentativas IA hoje: ${budget.used}/${budget.limit}`,
+      `✅ Concluídas: ${budget.completed} · ⚠️ Falhas: ${budget.failed} · 🛟 Rescue: ${budget.rescueCalls}`
     );
 
     return lines.join('\n');
@@ -869,6 +885,7 @@ function aiHistoryText() {
     `Modelo: <code>${aiModel()}</code>`,
     `🆓 Tentativas IA hoje: ${budget.used}/${budget.limit} (${budget.remaining} restantes)`,
     `✅ Análises concluídas: ${budget.completed} · ⚠️ Falhas: ${budget.failed}`,
+    `🛟 Requests de rescue: ${budget.rescueCalls}`,
     `⚡ Prioridade hoje: ${budget.priorityUsed}/${budget.priorityLimit} · gap ${budget.priorityGapMin} min`,
     `⏳ Normal: ${budget.minGapMin} min`,
     `♻️ Cache normal: ${budget.cacheMin} min | prioritário: ${budget.priorityCacheMin} min`,
@@ -878,9 +895,11 @@ function aiHistoryText() {
   for (const r of aiHistory.slice(0, 10)) {
     const source = r.cached
       ? '♻️ <b>CACHE</b>'
-      : r.callMode === 'PRIORITY'
-        ? '⚡ <b>NOVA ANÁLISE PRIORITÁRIA</b>'
-        : '🧠 <b>NOVA ANÁLISE NORMAL</b>';
+      : r.rescueUsed
+        ? '🛟 <b>RESCUE OPENROUTER</b>'
+        : r.callMode === 'PRIORITY'
+          ? '⚡ <b>NOVA ANÁLISE PRIORITÁRIA</b>'
+          : '🧠 <b>NOVA ANÁLISE NORMAL</b>';
 
     lines.push(
       `${aiDecisionIcon(r.decision)} <b>${r.symbol} ${r.side}</b> — ` +
@@ -999,10 +1018,11 @@ function lastScanDebugText() {
     `🟡 Quase aprovados: ${m?.nearApproved?.length ?? 0}`,
     `👀 Pré-candidatos ${m?.preCandidateMinScore ?? cfg.preCandidateMinScore}–${cfg.minScore - 1}: ${m?.preCandidates?.length ?? 0}`,
     `🤖 Candidatos selecionados para IA: ${a?.selected ?? 0}`,
-    `📡 Tentativas novas à IA: ${a?.apiCalls ?? 0}`,
+    `📡 Requests novos à IA: ${a?.apiCalls ?? 0}`,
+    `🛟 Requests de rescue: ${a?.rescueCalls ?? 0}`,
     `✅ Análises concluídas: ${a?.completed ?? 0}`,
     `⚠️ Falhas/timeout/parser: ${a?.errors ?? 0}`,
-    `⚡ Chamadas prioritárias: ${a?.priorityCalls ?? 0}`,
+    `⚡ Candidatos prioritários chamados: ${a?.priorityCalls ?? 0}`,
     `♻️ Respostas vindas do cache: ${a?.cacheHits ?? 0}`,
     `⏸ Sem vaga nova neste scan: ${a?.freshDeferred ?? 0}`,
     `🎯 Sinais liberados: ${lastScanReport.finalSignals ?? 0}`
@@ -1086,7 +1106,10 @@ function scanNoSignalText(report) {
     `🕯 Volume/indicadores: candles fechados`,
     `🟡 ${m?.nearApproved?.length ?? 0} quase aprovado(s)`,
     `👀 ${m?.preCandidates?.length ?? 0} pré-candidato(s) ${m?.preCandidateMinScore ?? cfg.preCandidateMinScore}–${cfg.minScore - 1}`,
-    `📡 ${a?.apiCalls ?? 0} tentativa(s) nova(s) à IA`,
+    `📡 ${a?.apiCalls ?? 0} request(s) novo(s) à IA`,
+    ...(a?.rescueCalls
+      ? [`🛟 ${a.rescueCalls} request(s) de rescue`]
+      : []),
     `✅ ${a?.completed ?? 0} análise(s) concluída(s)`,
     ...(a?.errors
       ? [`⚠️ ${a.errors} falha(s) de IA`]
@@ -1151,6 +1174,7 @@ async function validateSignalsWithAI(signals) {
     input: signals.length,
     selected: 0,
     apiCalls: 0,
+    rescueCalls: 0,
     priorityCalls: 0,
     priorityEligible: 0,
     cacheHits: 0,
@@ -1350,7 +1374,26 @@ async function validateSignalsWithAI(signals) {
         meta.priorityCalls += 1;
       }
 
-      const aiRaw = await analyzeSignalWithAI(s);
+      // O primeiro request já foi contabilizado por registerAICall().
+      // Rescue só é permitido se ainda houver pelo menos 1 vaga na cota diária.
+      const allowRescue = aiCallsToday < cfg.aiDailyLimit;
+
+      const aiRaw = await analyzeSignalWithAI(s, {
+        allowRescue
+      });
+
+      const extraRequests = Math.max(
+        0,
+        Number(aiRaw.apiRequestCount || 1) - 1
+      );
+
+      if (extraRequests > 0) {
+        aiCallsToday += extraRequests;
+        aiRescueCallsToday += extraRequests;
+        meta.apiCalls += extraRequests;
+        meta.rescueCalls += extraRequests;
+      }
+
       const ai = {
         ...aiRaw,
         callMode: permission.mode
@@ -1386,6 +1429,18 @@ async function validateSignalsWithAI(signals) {
       freshCallsUsed += 1;
       meta.errors += 1;
       aiFailedToday += 1;
+
+      const extraRequests = Math.max(
+        0,
+        Number(error?.apiRequestCount || 1) - 1
+      );
+
+      if (extraRequests > 0) {
+        aiCallsToday += extraRequests;
+        aiRescueCallsToday += extraRequests;
+        meta.apiCalls += extraRequests;
+        meta.rescueCalls += extraRequests;
+      }
 
       const errMsg = String(error?.message || error || 'erro desconhecido')
         .replace(/\s+/g, ' ')
@@ -1666,7 +1721,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.3.8.1 FREE</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.3.8.2 FREE</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o mercado agora\n' +
       '/status — ver configuração\n' +
@@ -1680,7 +1735,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.3.8.1 FREE\n` +
+      `✅ Online — V1.3.8.2 FREE\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🪙 Top mercados: ${cfg.topMarkets}\n` +
       `⭐ Score mínimo para sinal: ${cfg.minScore}\n` +
@@ -1697,8 +1752,11 @@ async function handleMessage(msg) {
       `🤖 IA: ${aiEnabledNow() ? 'ATIVA' : 'INATIVA'}\n` +
       `🧠 Modelo: ${aiEnabledNow() ? aiModel() : '—'}\n` +
       `✅ Confiança mínima IA: ${cfg.aiMinConfidence}%\n` +
-      `🆓 IA grátis: ${aiBudgetStats().used}/${aiBudgetStats().limit} tentativas hoje\n` +
+      `🆓 IA grátis: ${aiBudgetStats().used}/${aiBudgetStats().limit} requests hoje\n` +
       `✅ IA concluídas: ${aiBudgetStats().completed} · ⚠️ falhas: ${aiBudgetStats().failed}\n` +
+      `🛟 Rescue IA: ${aiRescueEnabled() ? 'ATIVO' : 'INATIVO'} · requests extras ${aiBudgetStats().rescueCalls}\n` +
+      `🧩 JSON estruturado: ${aiStructuredOutputEnabled() ? 'ATIVO' : 'INATIVO'}\n` +
+      `🛟 Modelo rescue: ${aiRescueEnabled() ? aiRescueModel() : '—'}\n` +
       `⚡ IA prioritária: ${cfg.aiPriorityEnabled ? 'ATIVA' : 'INATIVA'}\n` +
       `⚡ Regra prioridade: score ${cfg.aiPriorityScore}+ · vol ${cfg.aiPriorityVolumeRatio.toFixed(2)}x+ · OI +${cfg.aiPriorityOiPct.toFixed(2)}%+\n` +
       `⚡ Prioridade hoje: ${aiBudgetStats().priorityUsed}/${aiBudgetStats().priorityLimit} · gap ${aiBudgetStats().priorityGapMin} min\n` +
@@ -1750,7 +1808,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.3.8.1-free',
+    version: '1.3.8.2-free',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -1760,6 +1818,9 @@ http.createServer((req, res) => {
     aiAttemptedToday: aiCallsToday,
     aiCompletedToday,
     aiFailedToday,
+    aiRescueCallsToday,
+    aiRescueEnabled: aiRescueEnabled(),
+    aiStructuredOutput: aiStructuredOutputEnabled(),
     pendingAI: pendingAiCandidate
       ? `${pendingAiCandidate.symbol}:${pendingAiCandidate.side}`
       : null,
@@ -1769,7 +1830,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.3.8.1 FREE pronto ✅');
+console.log('Crypto Futures Scanner V1.3.8.2 FREE pronto ✅');
 
 setTimeout(() => doScan().catch(console.error), 5000);
 setInterval(() => doScan().catch(console.error), cfg.intervalMin * 60_000);

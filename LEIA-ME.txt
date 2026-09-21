@@ -1,4 +1,4 @@
-CRYPTO FUTURES SCANNER V1.3.8.1 FREE — AI RELIABILITY FIX
+CRYPTO FUTURES SCANNER V1.3.8.2 FREE — OPENROUTER RESCUE
 
 SUBSTITUA NO GITHUB:
 - ai.js
@@ -8,50 +8,102 @@ SUBSTITUA NO GITHUB:
 - scanner.js
 - telegram.js
 
-CORREÇÕES IMPORTANTES
+O QUE FOI CORRIGIDO
 
-1) CANDIDATO PENDENTE NÃO SOME EM ERRO
-Antes:
-- a chamada à IA podia consumir 1 uso;
-- se desse timeout, parser inválido ou outro erro,
-  o candidato podia ficar com estado confuso.
+1) JSON ESTRUTURADO
+A chamada agora pede uma resposta com schema fixo:
+- decision
+- confidence
+- risk
+- style
+- reason
+- warnings
 
-Agora:
-- o candidato só deixa de ser pendente depois de uma decisão válida;
-- se a IA falhar, ele continua aguardando;
-- /ia mostra:
-  ⚠️ Última tentativa: <erro resumido>
+O request usa provider.require_parameters=true para evitar provedores
+que ignorem o parâmetro de formato estruturado.
 
-2) CONTAGEM SEPARADA
-/status e /ia agora diferenciam:
-- tentativas consumidas;
-- análises concluídas com decisão válida;
-- falhas/timeout/parser.
+2) EXTRAÇÃO MAIS RESISTENTE
+Antes o bot só lia:
+choices[0].message.content
 
-Exemplo:
-/status
-🆓 IA grátis: 2/45 tentativas hoje
-✅ IA concluídas: 1 · ⚠️ falhas: 1
+Agora tenta, com segurança:
+- message.content string
+- message.content em partes/array
+- choice.text
+- output_text
+- function_call.arguments
+- tool_calls.function.arguments
 
-3) /DEBUG MAIS CLARO
-Mostra:
-📡 Tentativas novas à IA
+Ele NÃO usa reasoning interno como decisão.
+
+3) RESUMO SEGURO DE DIAGNÓSTICO
+Quando a resposta vem vazia ou inválida, o erro registra somente metadados:
+- modelo servido
+- provider
+- finish_reason
+- quantidade de choices
+- tipo/tamanho de content
+- existência de reasoning
+- quantidade de tool calls
+- tamanho do corpo HTTP
+
+O conteúdo bruto da resposta NÃO é despejado no Telegram.
+
+4) OPENROUTER RESCUE AUTOMÁTICO
+Se a primeira resposta vier vazia ou com JSON inválido:
+- o bot pode fazer UMA segunda tentativa independente;
+- por padrão usa openrouter/free novamente;
+- como o Free Router escolhe modelos gratuitos compatíveis, a segunda
+  tentativa pode ser servida por outro modelo;
+- o rescue usa prompt mais curto e temperature 0.
+
+IMPORTANTE:
+1 candidato novo por scan continua valendo.
+Porém esse candidato pode consumir:
+- 1 request se funcionar de primeira;
+- até 2 requests se precisar de rescue.
+
+AMBOS contam no limite diário de 45.
+
+5) NÃO RETENTA ERROS QUE NORMALMENTE NÃO MELHORAM COM RESCUE
+Não faz segunda chamada para:
+- HTTP 400
+- 401
+- 402
+- 403
+- 429
+
+Isso evita desperdiçar cota com chave inválida, permissão, crédito,
+rate limit ou parâmetros rejeitados.
+
+6) /STATUS
+Agora mostra:
+🛟 Rescue IA: ATIVO
+🧩 JSON estruturado: ATIVO
+🛟 Modelo rescue: openrouter/free
+🛟 requests extras usados hoje
+
+7) /DEBUG
+Diferencia:
+📡 Requests novos à IA
+🛟 Requests de rescue
 ✅ Análises concluídas
-⚠️ Falhas/timeout/parser
-⚡ Chamadas prioritárias
+⚠️ Falhas
+⚡ Candidatos prioritários chamados
 ♻️ Cache
 
-4) CONTAGEM DE TEMPO NÃO FICA CONGELADA
-O "Motivo: próxima chamada em ~5 min" não é mais usado como relógio visual.
-O bot calcula o tempo restante ao vivo quando você usa /ia ou /debug.
+VARIÁVEIS OPCIONAIS NO RENDER
+Não precisa criar nenhuma. Defaults:
 
-5) ÚLTIMO ERRO FICA VISÍVEL
-Se OpenRouter retornar erro, timeout ou JSON inválido:
-- último evento da IA registra o erro;
-- candidato técnico permanece pendente;
-- nova tentativa só acontece quando a janela permitir.
+AI_RESCUE_ENABLED=true
+AI_RESCUE_MODEL=openrouter/free
+AI_STRUCTURED_OUTPUT=true
+AI_TIMEOUT_MS=25000
 
-NÃO MUDOU
+Se quiser desligar o rescue:
+AI_RESCUE_ENABLED=false
+
+REGRAS TÉCNICAS NÃO FORAM AFROUXADAS
 - score mínimo 70
 - pré-candidato 60–69
 - candles fechados
@@ -60,8 +112,7 @@ NÃO MUDOU
 - gap normal 30 min
 - cache normal 30 min
 - cache prioritário 10 min
-- 1 chamada nova por scan
-- limite interno 45/dia
+- limite interno 45 requests/dia
 
 TESTE APÓS DEPLOY
 /status
@@ -69,7 +120,8 @@ TESTE APÓS DEPLOY
 /ia
 /debug
 
-SE HOUVER FALHA DA IA
-/ia deve mostrar:
-⚠️ Última tentativa: ...
-e o ativo continua como PENDENTE DE IA.
+SE A PRIMEIRA RESPOSTA VIER VAZIA E O RESCUE FUNCIONAR,
+o sinal mostrará:
+🛟 Origem: OPENROUTER RESCUE
+
+Se as duas tentativas falharem, o ativo continua PENDENTE DE IA.
