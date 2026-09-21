@@ -782,7 +782,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.3.9.3: WATCH >=60% vira observação ativa e participa do recheck inteligente. ` +
+    `<i>V1.4.0: scanner + IA + watchlist + executor Binance DRY_RUN. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

@@ -1,86 +1,106 @@
-CRYPTO FUTURES SCANNER V1.3.9.3 FREE
-WATCH OBSERVATION
-
-NOVIDADE
-A decisão WATCH agora pode virar uma observação ativa.
-
-REGRAS DA WATCHLIST
-
-WAIT PADRÃO
-- WAIT >= 60%
-→ entra na watchlist.
-
-WAIT CONDICIONAL
-- WAIT 55–59%
-- score >= 80
-- volume 15m >= 0.60x
-- OI >= +1.00%
-→ entra na watchlist.
-
-WATCH ATIVO
-- WATCH >= 60%
-→ entra na watchlist de observação.
+CRYPTO FUTURES SCANNER V1.4.0 FREE
+BINANCE FUTURES EXECUTOR — DRY RUN
 
 IMPORTANTE
-WATCH NÃO É SINAL.
-WATCH não é convertido automaticamente em entrada.
+Esta versão NÃO envia ordens reais.
+Mesmo se BINANCE_EXECUTION_MODE=LIVE for colocado por engano,
+a V1.4.0 bloqueia live trading.
 
-O fluxo é:
-WATCH 60%+
-→ observar
-→ esperar novo candle fechado de 15m
-→ exigir melhora técnica
-→ RECHECK da IA
-→ APPROVE / WAIT / WATCH / REJECT
+POR QUE COMEÇAR ASSIM
+Antes de ligar dinheiro real precisamos confirmar duas coisas:
+1) o Render consegue alcançar a API USD-M Futures da Binance;
+2) uma API Key de Futures autentica corretamente nesse host.
 
-Somente APPROVE que cumprir as regras normais do bot pode liberar sinal.
+COMANDOS NOVOS
 
-GATILHOS DE RECHECK
-- RSI esfriou 2+ pontos
-- RSI saiu da região esticada
-- score +5
-- volume relativo +0.20x
-- OI +0.25 p.p.
-- aproximação da EMA20 em 0.25 p.p.
-- ou observação antiga + novo candle fechado
+/binance
+- testa GET /fapi/v1/time
+- se BINANCE_API_KEY e BINANCE_API_SECRET existirem,
+  também testa GET /fapi/v3/account
+- NÃO envia ordem
 
-PROTEÇÕES
-- gap recheck: 15 min
-- máximo 8 rechecks/dia
-- máximo 3 por setup
-- limite global de IA continua 45 requests/dia
-- se direção mudar, sai da watchlist
-- se filtro matemático perder confirmação, sai da watchlist
+/exec
+- mostra status/riscos do executor
 
-NOVO NO /status
-👀 WATCH ativo: 60%+
-⏳ WAIT/WATCH em observação
+/execs
+- mostra últimas execuções simuladas
 
-NOVO NO /ia
-Mostra:
-- decisão original WAIT ou WATCH
-- confiança
-- regra que colocou na watchlist
-- número de rechecks
+/kill
+- pausa novas execuções simuladas
 
-VARIÁVEL OPCIONAL
-AI_WATCH_RECHECK_MIN_CONFIDENCE=60
+/resume
+- reativa o executor DRY_RUN
 
-Não precisa criar no Render.
-60% já é o padrão.
+EXECUÇÃO AUTOMÁTICA
+Quando um sinal for realmente LIBERADO pelo scanner/IA:
+- decisão precisa ser APPROVE;
+- confiança IA padrão >= 70%;
+- score padrão >= 75;
+- o bot cria automaticamente um plano DRY_RUN;
+- calcula margem/notional/quantidade;
+- registra STOP, TP1, TP2 e TP3;
+- avisa no Telegram.
 
-SUBSTITUA OS 6 ARQUIVOS:
-ai.js
-binance.js
-index.js
-indicators.js
-scanner.js
-telegram.js
+PADRÕES
+BINANCE_EXECUTION_ENABLED=true
+BINANCE_EXECUTION_MODE=DRY_RUN
+BINANCE_MARGIN_USDT=5
+BINANCE_LEVERAGE=2
+BINANCE_AUTO_MIN_AI_CONFIDENCE=70
+BINANCE_AUTO_MIN_SCORE=75
+BINANCE_MAX_OPEN_POSITIONS=1
 
-DEPOIS:
-1. Commit
+Com 5 USDT de margem e 2x:
+notional aproximado = 10 USDT por operação simulada.
+
+VARIÁVEIS OPCIONAIS PARA TESTAR AUTENTICAÇÃO
+BINANCE_API_KEY=...
+BINANCE_API_SECRET=...
+
+SEGURANÇA DA CHAVE
+- use uma API Key dedicada ao bot;
+- ative somente Futures/Trading quando chegarmos à fase real;
+- não habilite saque;
+- nunca envie a secret pelo Telegram/chat;
+- salve a secret somente no Environment do Render.
+
+ARQUIVOS
+Agora são 7 arquivos:
+- ai.js
+- binance.js
+- binance-executor.js   <-- NOVO
+- index.js
+- indicators.js
+- scanner.js
+- telegram.js
+
+TESTE
+1. Suba os 7 arquivos
 2. Deploy
 3. /status
-4. /scan
-5. /ia
-6. /debug
+4. /binance
+5. /exec
+6. /scan
+
+SE /binance RETORNAR 451/403
+Não vamos tentar contornar restrição da Binance.
+Será preciso executar o serviço em uma região/host em que a API esteja
+oficialmente disponível para a sua conta e uso.
+
+PRÓXIMA FASE
+Somente depois de:
+- conectividade OK;
+- auth OK;
+- alguns DRY_RUNs corretos;
+
+a próxima versão poderá implementar envio de ordem real com:
+- MARKET entry
+- leverage
+- tamanho por risco
+- STOP obrigatório
+- TAKE PROFIT
+- 1 posição por vez
+- limite de perda diária
+- kill switch
+
+Futuros têm risco elevado, alavancagem e liquidação.
