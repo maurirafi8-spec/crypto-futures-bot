@@ -1,97 +1,84 @@
-CRYPTO FUTURES SCANNER V1.5.4 FREE
-IA ADAPTATIVA PARA SCALP
+CRYPTO FUTURES SCANNER V1.5.5 FREE
+HOTFIX IA SUPER SCALP + RELIABILITY
 
-MANTIDO
-- scan automático a cada 1 minuto;
-- lotes de até 4 moedas;
-- prioridade para PAPER / WAIT / WATCH;
-- BTC / ETH / SOL frequentes;
-- rotação das demais moedas;
-- candle fechado de 5m;
-- paper trading scalp.
+O LOG DA V1.5.4 MOSTROU:
+candidato: DOGE score 100 / vol 1.80x / OI +2.75% / SUPER_SCALP
+mas depois:
+avaliando ... [NORMAL]
 
-NOVO: FILA IA ADAPTATIVA
+CAUSA
+aiCallPermission liberava primeiro a janela NORMAL quando ela já estava
+aberta e só depois verificava a classe SUPER_SCALP.
+
+CORRIGIDO
+Agora a classe real sempre é preservada:
+SUPER_SCALP -> [SUPER_SCALP]
+SCALP_FORTE -> [SCALP_STRONG]
+NORMAL -> [NORMAL]
+
+SEGUNDO PROBLEMA DO LOG
+Ling retornou finish=length antes de entregar o tool call.
+
+V1.5.5 USA DOIS CAMINHOS
 
 NORMAL
-- abaixo das regras rápidas;
-- gap padrão: 20 minutos.
+- continua usando Ling finance como principal;
+- se falhar, usa Gemma JSON como rescue.
 
-SCALP FORTE
-- score >= 85
-- volume relativo >= 0.60x
-- OI >= +1.00%
-- gap IA: 5 minutos
+SCALP_FORTE / SUPER_SCALP
+- primeira tentativa: Gemma 4 31B free;
+- JSON direto;
+- reasoning desativado;
+- sem tool call;
+- saída curta;
+- se falhar: openrouter/free como fallback.
 
-SUPER SCALP
-- score >= 90
-- volume relativo >= 0.60x
-- OI >= +1.50%
-- gap IA: 2 minutos
+Isso é proposital para scalp: a decisão precisa ser curta e rápida.
 
-VOLUME PARA CLASSIFICAÇÃO
-O bot usa o MAIOR volume relativo entre 5m e 15m para decidir
-SCALP FORTE / SUPER SCALP.
+MODELOS PADRÃO
+Normal:
+inclusionai/ling-3.0-flash-fin:free
 
-EXEMPLO DO LINK DO LOG
-LINKUSDT LONG
-score 90
-vol 0.62x
-OI +1.93%
+Fast:
+google/gemma-4-31b-it:free
 
-Na V1.5.4 esse setup entra como:
-SUPER_SCALP
+Fallback rápido:
+openrouter/free
 
-Assim, se a última chamada da IA ocorreu há pelo menos 2 minutos,
-ele pode ser analisado sem esperar os 20 minutos da fila NORMAL.
-
-PROTEÇÕES
-- limite global da IA: 45 requests/dia;
-- SCALP FORTE + SUPER SCALP compartilham limite rápido de 12/dia;
-- continua no máximo 1 nova chamada IA por scan;
-- classificação rápida NÃO aprova trade sozinha;
-- paper trade continua exigindo APPROVE e confiança mínima.
-
-CACHE
-- NORMAL: 30 min
-- SCALP FORTE: 5 min
-- SUPER SCALP: 2 min
-
-ORDEM DA FILA
-SUPER_SCALP
->
-SCALP_FORTE
->
-NORMAL
+Rescue normal:
+google/gemma-4-31b-it:free
 
 VARIÁVEIS OPCIONAIS
-AI_MIN_GAP_MINUTES=20
+AI_FAST_MODEL=google/gemma-4-31b-it:free
+AI_FREE_FALLBACK_MODEL=openrouter/free
+AI_JSON_RESCUE_MODEL=google/gemma-4-31b-it:free
 
-AI_PRIORITY_SCORE=85
-AI_PRIORITY_VOLUME_RATIO=0.60
-AI_PRIORITY_OI_PCT=1.00
-AI_PRIORITY_GAP_MINUTES=5
+AI_FAST_OUTPUT_TOKENS=768
+AI_JSON_RESCUE_OUTPUT_TOKENS=1024
 
-AI_SUPER_SCALP_SCORE=90
-AI_SUPER_SCALP_VOLUME_RATIO=0.60
-AI_SUPER_SCALP_OI_PCT=1.50
-AI_SUPER_SCALP_GAP_MINUTES=2
+REGRAS DE FILA MANTIDAS
+NORMAL:
+20 min
 
-AI_PRIORITY_DAILY_LIMIT=12
+SCALP_FORTE:
+score >=85
+vol >=0.60x
+OI >=+1.00%
+gap 5 min
 
-AI_CACHE_MINUTES=30
-AI_PRIORITY_CACHE_MINUTES=5
-AI_SUPER_SCALP_CACHE_MINUTES=2
+SUPER_SCALP:
+score >=90
+vol >=0.60x
+OI >=+1.50%
+gap 2 min
 
-COMANDOS
-/status
-/ia
-/scheduler
-/scan
-/paper
+LIMITES MANTIDOS
+45 requests/dia global
+12 chamadas rápidas/dia
 
-LOG ESPERADO PARA SETUP MUITO FORTE
-[ai] candidato escolhido: LINKUSDT LONG · score 90 · vol 0.62x · OI 1.93% · 🚀 SUPER_SCALP
-[ai] avaliando LINKUSDT LONG ... [SUPER_SCALP]
+LOG ESPERADO NO DOGE DO EXEMPLO
+[ai] candidato escolhido: DOGEUSDT LONG · score 100 · vol 1.80x · OI 2.75% · 🚀 SUPER_SCALP
+[ai] avaliando DOGEUSDT LONG com ... [SUPER_SCALP]
 
-SE AINDA NÃO PASSARAM 2 MINUTOS
-[ai] LINKUSDT: chamada pulada — SUPER SCALP: próxima chamada IA em ~X min
+Depois deve vir APPROVE / WATCH / WAIT / REJECT,
+em vez do finish=length ser o comportamento normal.

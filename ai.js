@@ -370,7 +370,11 @@ function primaryMaxTokens() {
 }
 
 function rescueMaxTokens() {
-  return intEnv('AI_JSON_RESCUE_OUTPUT_TOKENS', 768, 128, 4096);
+  return intEnv('AI_JSON_RESCUE_OUTPUT_TOKENS', 1024, 128, 4096);
+}
+
+function fastMaxTokens() {
+  return intEnv('AI_FAST_OUTPUT_TOKENS', 768, 128, 4096);
 }
 
 async function fetchOpenRouter({ apiKey, body, timeoutMs }) {
@@ -386,7 +390,7 @@ async function fetchOpenRouter({ apiKey, body, timeoutMs }) {
         'HTTP-Referer':
           process.env.OPENROUTER_SITE_URL ||
           'https://crypto-futures-bot.onrender.com',
-        'X-Title': 'Crypto Futures Scanner V1.5.0 Free'
+        'X-Title': 'Crypto Futures Scanner V1.5.5 Free'
       },
       body: JSON.stringify(body),
       signal: controller.signal
@@ -518,17 +522,19 @@ async function requestRescue({
   apiKey,
   model,
   payload,
-  timeoutMs
+  timeoutMs,
+  maxTokens = rescueMaxTokens(),
+  disableReasoning = false,
+  label = 'rescue'
 }) {
-  // Caminho totalmente diferente do principal:
-  // - outro modelo
-  // - sem tool calling
-  // - JSON object simples
-  // - sem reasoning
+  // Caminho JSON sem tool calling.
+  // Gemma aceita structured JSON e thinking configurável.
+  // Para o router openrouter/free não forçamos reasoning=none,
+  // porque o router pode escolher um modelo cujo reasoning seja obrigatório.
   const body = {
     model,
     temperature: 0,
-    max_completion_tokens: rescueMaxTokens(),
+    max_tokens: maxTokens,
     response_format: {
       type: 'json_object'
     },
@@ -537,7 +543,8 @@ async function requestRescue({
         role: 'system',
         content:
           systemPrompt() +
-          ' Esta é uma tentativa de rescue. Responda somente JSON válido.'
+          ` Esta é uma tentativa ${label}. ` +
+          'Responda somente JSON válido e seja extremamente conciso.'
       },
       {
         role: 'user',
@@ -548,6 +555,12 @@ async function requestRescue({
       allow_fallbacks: true
     }
   };
+
+  if (disableReasoning) {
+    body.reasoning = {
+      effort: 'none'
+    };
+  }
 
   const { data, rawBody } = await fetchOpenRouter({
     apiKey,
@@ -560,7 +573,7 @@ async function requestRescue({
 
   if (finish === 'length') {
     throw makeAiError(
-      'Rescue atingiu o limite de saída',
+      `${label} atingiu o limite de saída`,
       {
         status: 200,
         diagnostic: summary
@@ -595,12 +608,26 @@ export function aiModel() {
   );
 }
 
+export function aiFastModel() {
+  // Modelo rápido para SCALP_FORTE / SUPER_SCALP.
+  // Usa JSON estruturado em vez de tool call.
+  return (
+    process.env.AI_FAST_MODEL ||
+    'google/gemma-4-31b-it:free'
+  );
+}
+
 export function aiRescueModel() {
-  // Usa um nome novo de variável para não herdar automaticamente
-  // o Nemotron configurado na versão anterior.
   return (
     process.env.AI_JSON_RESCUE_MODEL ||
-    'google/gemma-4-31b-it-20260402:free'
+    'google/gemma-4-31b-it:free'
+  );
+}
+
+export function aiFreeFallbackModel() {
+  return (
+    process.env.AI_FREE_FALLBACK_MODEL ||
+    'openrouter/free'
   );
 }
 
@@ -624,11 +651,16 @@ export function aiRescueMaxTokens() {
   return rescueMaxTokens();
 }
 
+export function aiFastMaxTokens() {
+  return fastMaxTokens();
+}
+
 export async function analyzeSignalWithAI(signal, {
   apiKey = process.env.OPENROUTER_API_KEY,
   model = aiModel(),
   timeoutMs = Number(process.env.AI_TIMEOUT_MS || 35000),
-  allowRescue = true
+  allowRescue = true,
+  callMode = 'NORMAL'
 } = {}) {
   if (!apiKey) {
     throw new Error('OPENROUTER_API_KEY não configurada');
@@ -637,6 +669,157 @@ export async function analyzeSignalWithAI(signal, {
   const payload = buildPayload(signal);
   let apiRequestCount = 0;
   let primaryError = null;
+
+  const fastMode =
+    callMode === 'SUPER_SCALP' ||
+    callMode === 'SCALP_STRONG';
+
+  // V1.5.5:
+  // Setups rápidos não passam pelo tool call do Ling como primeira opção.
+  // Eles usam Gemma em JSON direto, com reasoning desligado, para reduzir
+  // o risco de consumir todo o orçamento antes de devolver a decisão.
+  if (fastMode) {
+    try {
+      apiRequestCount += 1;
+
+      const fastModel =
+        aiFastModel();
+
+      const fast = await requestRescue({
+        apiKey,
+        model: fastModel,
+        payload,
+        timeoutMs,
+        maxTokens: fastMaxTokens(),
+        disableReasoning: true,
+        label: callMode
+      });
+
+      let parsed = fast.parsed;
+
+      if (
+        signal.candidateTier === 'PRE_CANDIDATE' &&
+        parsed.decision === 'APPROVE'
+      ) {
+        parsed = {
+          ...parsed,
+          decision: 'WATCH',
+          reason: `Pré-candidato: ${parsed.reason}`.slice(0, 240)
+        };
+      }
+
+      return {
+        ...parsed,
+        model: fast.data?.model || fastModel,
+        provider: fast.data?.provider || null,
+        checkedAt: Date.now(),
+        apiRequestCount,
+        rescueUsed: false,
+        responseMode: `${callMode}_FAST_JSON`,
+        extractedFrom: fast.extractedFrom,
+        diagnosticSummary: fast.summary
+      };
+    } catch (error) {
+      primaryError = error;
+
+      const status =
+        Number(error?.status || 0);
+
+      const nonRetryable =
+        status === 401 ||
+        status === 402 ||
+        status === 403 ||
+        status === 429;
+
+      if (
+        !allowRescue ||
+        !aiRescueEnabled() ||
+        nonRetryable
+      ) {
+        throw makeAiError(
+          error?.message || 'Falha na IA rápida',
+          {
+            apiRequestCount,
+            rescueUsed: false,
+            diagnostic: error?.diagnostic || '',
+            status: error?.status
+          }
+        );
+      }
+
+      try {
+        apiRequestCount += 1;
+
+        const fallbackModel =
+          aiFreeFallbackModel();
+
+        const fallback =
+          await requestRescue({
+            apiKey,
+            model: fallbackModel,
+            payload,
+            timeoutMs,
+            maxTokens: rescueMaxTokens(),
+            disableReasoning: false,
+            label: `${callMode} fallback`
+          });
+
+        let parsed =
+          fallback.parsed;
+
+        if (
+          signal.candidateTier === 'PRE_CANDIDATE' &&
+          parsed.decision === 'APPROVE'
+        ) {
+          parsed = {
+            ...parsed,
+            decision: 'WATCH',
+            reason: `Pré-candidato: ${parsed.reason}`.slice(0, 240)
+          };
+        }
+
+        return {
+          ...parsed,
+          model:
+            fallback.data?.model ||
+            fallbackModel,
+          provider:
+            fallback.data?.provider || null,
+          checkedAt: Date.now(),
+          apiRequestCount,
+          rescueUsed: true,
+          responseMode:
+            `${callMode}_FREE_ROUTER_FALLBACK`,
+          extractedFrom:
+            fallback.extractedFrom,
+          diagnosticSummary:
+            fallback.summary,
+          primaryFailure:
+            String(
+              primaryError?.message ||
+              'falha rápida primária'
+            )
+              .replace(/\s+/g, ' ')
+              .slice(0, 190)
+        };
+      } catch (fallbackError) {
+        const diagnostic = [
+          `fast=${String(primaryError?.message || 'erro').replace(/\s+/g, ' ').slice(0, 190)}`,
+          `fallback=${String(fallbackError?.message || 'erro').replace(/\s+/g, ' ').slice(0, 190)}`
+        ].join(' | ');
+
+        throw makeAiError(
+          'IA rápida falhou na tentativa principal e no fallback',
+          {
+            apiRequestCount,
+            rescueUsed: true,
+            diagnostic,
+            status: fallbackError?.status
+          }
+        );
+      }
+    }
+  }
 
   try {
     apiRequestCount += 1;
@@ -716,7 +899,10 @@ export async function analyzeSignalWithAI(signal, {
       apiKey,
       model: rescueModel,
       payload,
-      timeoutMs
+      timeoutMs,
+      maxTokens: rescueMaxTokens(),
+      disableReasoning: true,
+      label: 'rescue normal'
     });
 
     let parsed = rescued.parsed;

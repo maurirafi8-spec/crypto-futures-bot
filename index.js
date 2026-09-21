@@ -1089,22 +1089,29 @@ function aiCallPermission(signal) {
 
   const normalGapMs = cfg.aiMinGapMin * 60_000;
 
-  if (!aiLastCallAt || elapsedMs >= normalGapMs) {
-    lastAiSkipReason = '';
-
-    return {
-      allowed: true,
-      mode: 'NORMAL',
-      priorityEligible: isPriorityAICandidate(signal),
-      reason: ''
-    };
-  }
-
   const priorityClass =
     aiPriorityClass(signal);
 
   const priorityEligible =
     priorityClass !== 'NORMAL';
+
+  // V1.5.5:
+  // Mesmo quando a janela NORMAL também está aberta, preservamos a
+  // classificação real do candidato. Assim um SUPER_SCALP aparece e é
+  // contabilizado como SUPER_SCALP, e não como NORMAL.
+  if (!aiLastCallAt || elapsedMs >= normalGapMs) {
+    lastAiSkipReason = '';
+
+    return {
+      allowed: true,
+      mode: priorityEligible
+        ? priorityClass
+        : 'NORMAL',
+      priorityEligible,
+      priorityClass,
+      reason: ''
+    };
+  }
 
   if (priorityEligible) {
     if (aiPriorityCallsToday >= cfg.aiPriorityDailyLimit) {
@@ -2504,7 +2511,8 @@ async function validateSignalsWithAI(signals) {
       const allowRescue = aiCallsToday < cfg.aiDailyLimit;
 
       const aiRaw = await analyzeSignalWithAI(s, {
-        allowRescue
+        allowRescue,
+        callMode: permission.mode
       });
 
       const extraRequests = Math.max(
@@ -2910,7 +2918,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.5.4 FREE</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.5.5 FREE</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o próximo lote agora\n' +
       '/scheduler — ver rotação automática de 1 minuto\n' +
@@ -2946,7 +2954,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.5.4 FREE\n` +
+      `✅ Online — V1.5.5 FREE\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `⏱ Scan automático: a cada ${cfg.intervalMin} min\n` +
       `🪙 Lote automático: ${cfg.scanBatchSize} moedas · pares /USDT\n` +
@@ -3340,7 +3348,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.5.4-free',
+    version: '1.5.5-free',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -3382,7 +3390,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.5.4 FREE pronto ✅');
+console.log('Crypto Futures Scanner V1.5.5 FREE pronto ✅');
 
 // Em rolling deploy o processo antigo do Render pode permanecer vivo por
 // alguns segundos. Um pequeno atraso evita duas instâncias consumindo a
