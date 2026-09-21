@@ -178,7 +178,23 @@ function analyzeTf(candles) {
   };
 }
 
+function finiteNumber(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function fmt(value, digits = 2, fallback = '—') {
+  const n = Number(value);
+  return Number.isFinite(n)
+    ? n.toFixed(digits)
+    : fallback;
+}
+
 function scoreSignal(t5, t15, t1h, t4h, oiPct) {
+  const rsi5 = finiteNumber(t5?.rsi, 50);
+  const vol5 = finiteNumber(t5?.volumeRatio, 0);
+  const oi = finiteNumber(oiPct, 0);
+
   let long = 0;
   let short = 0;
 
@@ -229,12 +245,12 @@ function scoreSignal(t5, t15, t1h, t4h, oiPct) {
     add('SHORT', 14, '5m abaixo das EMAs');
   }
 
-  if (t5.rsi >= 51 && t5.rsi <= 69) {
-    add('LONG', 10, `RSI 5m ${t5.rsi.toFixed(1)}`);
+  if (rsi5 >= 51 && rsi5 <= 69) {
+    add('LONG', 10, `RSI 5m ${rsi5.toFixed(1)}`);
   }
 
-  if (t5.rsi <= 49 && t5.rsi >= 31) {
-    add('SHORT', 10, `RSI 5m ${t5.rsi.toFixed(1)}`);
+  if (rsi5 <= 49 && rsi5 >= 31) {
+    add('SHORT', 10, `RSI 5m ${rsi5.toFixed(1)}`);
   }
 
   if (t5.macdHist > 0) {
@@ -245,23 +261,23 @@ function scoreSignal(t5, t15, t1h, t4h, oiPct) {
     add('SHORT', 10, 'MACD 5m vendedor');
   }
 
-  if (t5.volumeRatio >= 1.10) {
+  if (vol5 >= 1.10) {
     if (t5.price > t5.ema20) {
-      add('LONG', 10, `Volume 5m ${t5.volumeRatio.toFixed(2)}x`);
+      add('LONG', 10, `Volume 5m ${vol5.toFixed(2)}x`);
     }
 
     if (t5.price < t5.ema20) {
-      add('SHORT', 10, `Volume 5m ${t5.volumeRatio.toFixed(2)}x`);
+      add('SHORT', 10, `Volume 5m ${vol5.toFixed(2)}x`);
     }
   }
 
-  if (oiPct >= 0.50) {
+  if (oi >= 0.50) {
     if (t5.price > t5.ema20) {
-      add('LONG', 10, `OI +${oiPct.toFixed(2)}%`);
+      add('LONG', 10, `OI +${oi.toFixed(2)}%`);
     }
 
     if (t5.price < t5.ema20) {
-      add('SHORT', 10, `OI +${oiPct.toFixed(2)}%`);
+      add('SHORT', 10, `OI +${oi.toFixed(2)}%`);
     }
   }
 
@@ -720,13 +736,13 @@ export async function scanMarket({
 
       if (!confirmation.volumeFloorOk) {
         rejectionReasons.push(
-          `Volume relativo ${t5.volumeRatio.toFixed(2)}x abaixo do piso ${hardMinVolumeRatio.toFixed(2)}x`
+          `Volume relativo ${fmt(t5?.volumeRatio, 2, '0.00')}x abaixo do piso ${hardMinVolumeRatio.toFixed(2)}x`
         );
       }
 
       if (confirmation.oiDivergence && !confirmation.divergenceException) {
         rejectionReasons.push(
-          `OI ${oiPct.toFixed(2)}% abaixo do bloqueio ${oiRejectPct.toFixed(2)}%`
+          `OI ${fmt(oiPct, 2, '0.00')}% abaixo do bloqueio ${oiRejectPct.toFixed(2)}%`
         );
       }
 
@@ -736,7 +752,7 @@ export async function scanMarket({
         !confirmation.confirmed
       ) {
         rejectionReasons.push(
-          `Sem confirmação: volume ${t5.volumeRatio.toFixed(2)}x (alvo ${minVolumeRatio.toFixed(2)}x) e OI ${oiPct >= 0 ? '+' : ''}${oiPct.toFixed(2)}% (alvo +${minOiPct.toFixed(2)}%)`
+          `Sem confirmação: volume ${fmt(t5?.volumeRatio, 2, '0.00')}x (alvo ${minVolumeRatio.toFixed(2)}x) e OI ${finiteNumber(oiPct, 0) >= 0 ? '+' : ''}${fmt(oiPct, 2, '0.00')}% (alvo +${minOiPct.toFixed(2)}%)`
         );
       }
 
@@ -808,14 +824,19 @@ export async function scanMarket({
     ? {
         side: btc.side,
         score: btc.score,
-        change24hPct: Number(btc.change24h.toFixed(3)),
-        trend15m: btc.t15.bullish ? 'BULLISH' : btc.t15.bearish ? 'BEARISH' : 'MIXED',
-        trend1h: btc.t1h.bullish ? 'BULLISH' : btc.t1h.bearish ? 'BEARISH' : 'MIXED',
-        trend4h: btc.t4h.bullish ? 'BULLISH' : btc.t4h.bearish ? 'BEARISH' : 'MIXED',
-        rsi15m: Number(btc.t15.rsi.toFixed(2)),
-        volumeRatio15m: Number(btc.t5.volumeRatio.toFixed(3)),
-        openInterestChangePct: Number(btc.oiPct.toFixed(3)),
-        fundingRatePct: Number(btc.fundingRate.toFixed(5))
+        change24hPct: Number(fmt(btc.change24h, 3, '0')),
+        trend5m: btc.t5?.bullish ? 'BULLISH' : btc.t5?.bearish ? 'BEARISH' : 'MIXED',
+        trend15m: btc.t15?.bullish ? 'BULLISH' : btc.t15?.bearish ? 'BEARISH' : 'MIXED',
+        trend1h: btc.t1h?.bullish ? 'BULLISH' : btc.t1h?.bearish ? 'BEARISH' : 'MIXED',
+        trend4h: btc.t4h?.bullish ? 'BULLISH' : btc.t4h?.bearish ? 'BEARISH' : 'MIXED',
+        rsi5m: finiteNumber(btc.t5?.rsi, null),
+        rsi15m: finiteNumber(btc.t15?.rsi, null),
+        volumeRatio5m: finiteNumber(btc.t5?.volumeRatio, null),
+        openInterestChangePct: finiteNumber(btc.oiPct, 0),
+        fundingRatePct:
+          btc.fundingRate == null
+            ? null
+            : finiteNumber(btc.fundingRate, null)
       }
     : null;
 
@@ -952,15 +973,15 @@ export function signalText(s) {
     `🎯 TP2: ${n(s.tp2)} — 1:${rr2.toFixed(1)}\n` +
     `🎯 TP3: ${n(s.tp3)} — 1:${rr3.toFixed(1)}\n\n` +
 
-    `📊 RSI 15m: ${s.t15.rsi.toFixed(1)} | ` +
-    `Vol: ${s.t5.volumeRatio.toFixed(2)}x\n` +
+    `📊 RSI 5m: ${fmt(s.t5?.rsi, 1)} | RSI 15m: ${fmt(s.t15?.rsi, 1)} | ` +
+    `Vol 5m: ${fmt(s.t5?.volumeRatio, 2)}x\n` +
 
-    `📈 OI: ${s.oiPct >= 0 ? '+' : ''}${s.oiPct.toFixed(2)}% | ` +
-    `Funding: ${s.fundingRate.toFixed(4)}%\n\n` +
+    `📈 OI: ${finiteNumber(s.oiPct, 0) >= 0 ? '+' : ''}${fmt(s.oiPct, 2)}% | ` +
+    `Funding: ${s.fundingRate == null ? 'omitido no scalp' : `${fmt(s.fundingRate, 4)}%`}\n\n` +
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.5.1: hotfix t5 + wide scan rotativo + scalp 5m. ` +
+    `<i>V1.5.2: null-safe hotfix (funding omitido) + wide scan + scalp 5m. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

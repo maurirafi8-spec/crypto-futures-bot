@@ -2553,7 +2553,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.5.1 FREE</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.5.2 FREE</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o mercado agora\n' +
       '/status — ver configuração\n' +
@@ -2582,7 +2582,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.5.1 FREE\n` +
+      `✅ Online — V1.5.2 FREE\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🪙 Mercados por scan: ${cfg.topMarkets} · rotação de alts\n` +
       `⚡ Modo: SCALP 5m · alvo de duração 15min–3h\n` +
@@ -2973,7 +2973,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.5.1-free',
+    version: '1.5.2-free',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -3015,7 +3015,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.5.1 FREE pronto ✅');
+console.log('Crypto Futures Scanner V1.5.2 FREE pronto ✅');
 
 // Em rolling deploy o processo antigo do Render pode permanecer vivo por
 // alguns segundos. Um pequeno atraso evita duas instâncias consumindo a

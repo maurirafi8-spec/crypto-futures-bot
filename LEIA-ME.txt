@@ -1,57 +1,50 @@
-CRYPTO FUTURES SCANNER V1.5.1 FREE
-HOTFIX DO WIDE SCAN + SCALP
+CRYPTO FUTURES SCANNER V1.5.2 FREE
+NULL-SAFE HOTFIX
 
-CORREÇÃO PRINCIPAL
-O log da V1.5.0 mostrava:
-t5 is not defined
+ERRO CORRIGIDO
+Cannot read properties of null (reading 'toFixed')
 
-Causa:
-confirmationStatus recebia o candle rápido como parâmetro antigo "t15",
-mas a lógica interna já usava "t5".
+CAUSA
+Na V1.5.0 removemos a consulta de funding para caber no rate limit
+da Coinalyze. Por isso fundingRate passou a ser null.
 
-Correção:
-confirmationStatus agora recebe t5 corretamente.
+Alguns trechos de scanner.js ainda faziam:
+fundingRate.toFixed(...)
 
-NÃO ALTERADO
+Isso derrubava o scan logo depois de carregar os 12 mercados.
+
+CORREÇÃO
+- funding null agora é aceito em todo scanner;
+- btcContext envia fundingRatePct=null;
+- mensagem do sinal mostra "Funding: omitido no scalp";
+- RSI, volume e OI também ganharam formatação null-safe;
+- score 5m normaliza valores ausentes sem quebrar o scan.
+
+MANTIDO
 - 12 mercados por scan
 - 6 core + 6 alts rotativas
 - timing 5m
 - confirmação 15m
 - tendência 1h
 - contexto 4h
-- paper trading scalp
+- primeiro scan 30s após deploy
+- backoff Telegram 409
+- paper scalp
 - até 3 posições
 - risco 0.75%
-- TP 0.70R / 1.10R / 1.60R
+- stale exit 60m
+- máximo 3h
 
-MELHORIA DE DEPLOY
-Agora o primeiro scan automático espera 30 segundos após o processo iniciar.
-
-Motivo:
-durante rolling deploy do Render, a instância antiga pode continuar viva
-por alguns segundos. Se as duas varrerem 12 moedas ao mesmo tempo,
-a cota da Coinalyze pode ser atingida.
-
-Variável opcional:
-SCAN_START_DELAY_SECONDS=30
-
-TELEGRAM 409
-Se aparecer:
-Conflict: terminated by other getUpdates request
-
-o bot agora espera 30 segundos antes de tentar polling novamente.
-Isso ajuda durante a troca entre a instância antiga e a nova no Render.
-
-Se o 409 continuar aparecendo por vários minutos, então existe outra
-instância/serviço usando o mesmo BOT_TOKEN e ela precisa ser desligada.
-
-TESTE APÓS DEPLOY
+TESTE
 /status
 /scan
 /debug
 /paper
 
-No log queremos ver:
+No Render queremos ver:
 [scan] modo SCALP 5m · 12 mercados
-e NÃO queremos mais:
+[scan] X sinais matemáticos >= 70
+
+E NÃO:
 t5 is not defined
+Cannot read properties of null (reading 'toFixed')
