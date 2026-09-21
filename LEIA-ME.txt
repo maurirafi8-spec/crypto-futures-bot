@@ -1,4 +1,5 @@
-CRYPTO FUTURES SCANNER V1.3.8.2 FREE — OPENROUTER RESCUE
+CRYPTO FUTURES SCANNER V1.3.8.3 FREE
+FINANCE MODEL + TOOL CALLING + TOKEN FIX
 
 SUBSTITUA NO GITHUB:
 - ai.js
@@ -8,110 +9,89 @@ SUBSTITUA NO GITHUB:
 - scanner.js
 - telegram.js
 
-O QUE FOI CORRIGIDO
+POR QUE ESTA VERSÃO EXISTE
+O diagnóstico mostrou respostas com:
+finish=length
+content=null
 
-1) JSON ESTRUTURADO
-A chamada agora pede uma resposta com schema fixo:
-- decision
-- confidence
-- risk
-- style
-- reason
-- warnings
+Isso indica que alguns modelos de raciocínio gastavam o limite antes de
+entregar a decisão final.
 
-O request usa provider.require_parameters=true para evitar provedores
-que ignorem o parâmetro de formato estruturado.
+MUDANÇAS
 
-2) EXTRAÇÃO MAIS RESISTENTE
-Antes o bot só lia:
-choices[0].message.content
+1) MODELO PRINCIPAL FINANCEIRO
+Padrão:
+inclusionai/ling-3.0-flash-fin:free
 
-Agora tenta, com segurança:
-- message.content string
-- message.content em partes/array
-- choice.text
-- output_text
-- function_call.arguments
-- tool_calls.function.arguments
+Ele é usado primeiro para a validação de mercado.
 
-Ele NÃO usa reasoning interno como decisão.
+2) RESCUE DEDICADO
+Padrão:
+nvidia/nemotron-3-ultra-550b-a55b-20260604:free
 
-3) RESUMO SEGURO DE DIAGNÓSTICO
-Quando a resposta vem vazia ou inválida, o erro registra somente metadados:
-- modelo servido
-- provider
-- finish_reason
-- quantidade de choices
-- tipo/tamanho de content
-- existência de reasoning
-- quantidade de tool calls
-- tamanho do corpo HTTP
+O rescue não depende mais do mesmo openrouter/free que podia selecionar
+novamente um modelo problemático.
 
-O conteúdo bruto da resposta NÃO é despejado no Telegram.
+3) TOOL/FUNCTION CALLING
+A decisão final agora deve vir pela função:
+submit_signal_validation
 
-4) OPENROUTER RESCUE AUTOMÁTICO
-Se a primeira resposta vier vazia ou com JSON inválido:
-- o bot pode fazer UMA segunda tentativa independente;
-- por padrão usa openrouter/free novamente;
-- como o Free Router escolhe modelos gratuitos compatíveis, a segunda
-  tentativa pode ser servida por outro modelo;
-- o rescue usa prompt mais curto e temperature 0.
+Campos obrigatórios:
+decision
+confidence
+risk
+style
+reason
+warnings
 
-IMPORTANTE:
-1 candidato novo por scan continua valendo.
-Porém esse candidato pode consumir:
-- 1 request se funcionar de primeira;
-- até 2 requests se precisar de rescue.
+O parser ainda aceita JSON em texto como fallback se algum provider ignorar
+tool_choice.
 
-AMBOS contam no limite diário de 45.
+4) MAIS ESPAÇO PARA A RESPOSTA
+Agora usa:
+max_completion_tokens
 
-5) NÃO RETENTA ERROS QUE NORMALMENTE NÃO MELHORAM COM RESCUE
-Não faz segunda chamada para:
-- HTTP 400
-- 401
-- 402
-- 403
-- 429
+Padrões:
+AI_MAX_COMPLETION_TOKENS=1500
+AI_RESCUE_MAX_COMPLETION_TOKENS=1200
 
-Isso evita desperdiçar cota com chave inválida, permissão, crédito,
-rate limit ou parâmetros rejeitados.
+5) RACIOCÍNIO BAIXO
+Padrão:
+AI_REASONING_EFFORT=low
 
-6) /STATUS
-Agora mostra:
-🛟 Rescue IA: ATIVO
-🧩 JSON estruturado: ATIVO
-🛟 Modelo rescue: openrouter/free
-🛟 requests extras usados hoje
+A tarefa precisa de decisão curta e estruturada; não queremos gastar a maior
+parte da saída em raciocínio interno.
 
-7) /DEBUG
-Diferencia:
-📡 Requests novos à IA
-🛟 Requests de rescue
-✅ Análises concluídas
-⚠️ Falhas
-⚡ Candidatos prioritários chamados
-♻️ Cache
+6) TIMEOUT
+Padrão:
+AI_TIMEOUT_MS=35000
 
-VARIÁVEIS OPCIONAIS NO RENDER
-Não precisa criar nenhuma. Defaults:
+7) CONTAGEM CONTINUA CORRETA
+Se a tentativa principal falhar e o rescue for usado:
+- 2 requests são contabilizados;
+- continua sendo apenas 1 candidato novo naquele scan.
 
+VARIÁVEIS OPCIONAIS
+Não precisa criar nada. Defaults:
+
+AI_MODEL=inclusionai/ling-3.0-flash-fin:free
+AI_RESCUE_MODEL=nvidia/nemotron-3-ultra-550b-a55b-20260604:free
 AI_RESCUE_ENABLED=true
-AI_RESCUE_MODEL=openrouter/free
-AI_STRUCTURED_OUTPUT=true
-AI_TIMEOUT_MS=25000
+AI_REASONING_EFFORT=low
+AI_MAX_COMPLETION_TOKENS=1500
+AI_RESCUE_MAX_COMPLETION_TOKENS=1200
+AI_TIMEOUT_MS=35000
 
-Se quiser desligar o rescue:
-AI_RESCUE_ENABLED=false
-
-REGRAS TÉCNICAS NÃO FORAM AFROUXADAS
+REGRAS TÉCNICAS NÃO MUDARAM
 - score mínimo 70
 - pré-candidato 60–69
 - candles fechados
-- prioridade score 85+ / volume 1.00x+ / OI +0.50%+
+- prioridade: score 85+ / volume 1.00x+ / OI +0.50%+
 - gap prioritário 5 min
 - gap normal 30 min
 - cache normal 30 min
 - cache prioritário 10 min
+- bloqueio OI abaixo de -1.00%
 - limite interno 45 requests/dia
 
 TESTE APÓS DEPLOY
@@ -120,8 +100,20 @@ TESTE APÓS DEPLOY
 /ia
 /debug
 
-SE A PRIMEIRA RESPOSTA VIER VAZIA E O RESCUE FUNCIONAR,
-o sinal mostrará:
+NO /status DEVE APARECER
+🧠 Modelo principal: inclusionai/ling-3.0-flash-fin:free
+🛟 Modelo rescue: nvidia/nemotron-3-ultra-550b-a55b-20260604:free
+🧰 Tool calling: ATIVO
+🧠 Reasoning: low
+📏 Saída máxima: 1500 tokens · rescue 1200
+
+SE FUNCIONAR DE PRIMEIRA
+A análise será concluída com 1 request.
+
+SE O PRINCIPAL FALHAR
+O rescue tenta o Nemotron e, se conseguir, o sinal aparece como:
 🛟 Origem: OPENROUTER RESCUE
 
-Se as duas tentativas falharem, o ativo continua PENDENTE DE IA.
+IMPORTANTE
+Futuros continuam envolvendo risco elevado, alavancagem e liquidação.
+A camada IA é um filtro adicional, não garantia de acerto.

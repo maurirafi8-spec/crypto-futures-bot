@@ -40,6 +40,16 @@ const SIGNAL_SCHEMA = {
   ]
 };
 
+const VALIDATION_TOOL = {
+  type: 'function',
+  function: {
+    name: 'submit_signal_validation',
+    description:
+      'Envia a decisão final da segunda camada de validação do sinal técnico.',
+    parameters: SIGNAL_SCHEMA
+  }
+};
+
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
 }
@@ -59,6 +69,12 @@ function boolEnv(name, fallback = true) {
   const raw = process.env[name];
   if (raw == null || raw === '') return fallback;
   return String(raw).toLowerCase() !== 'false';
+}
+
+function intEnv(name, fallback, min = 16, max = 32768) {
+  const value = Number(process.env[name] || fallback);
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(min, Math.min(max, Math.trunc(value)));
 }
 
 function buildPayload(signal) {
@@ -115,31 +131,19 @@ function buildPayload(signal) {
 
 function systemPrompt() {
   return [
-    'Você é a segunda camada de validação de um scanner de futuros de criptomoedas.',
-    'Sua função é FILTRAR sinais e watchlists; não invente dados ausentes e não tente maximizar quantidade de operações.',
-    'Avalie confluência multi-timeframe, volume, Open Interest, funding, RSI, MACD, distância do stop e contexto do BTC.',
-    'Existem dois tiers: STANDARD e PRE_CANDIDATE.',
+    'Você é a segunda camada conservadora de validação de um scanner de futuros de criptomoedas.',
+    'Use SOMENTE os dados enviados.',
+    'Não invente notícias, preço, indicadores ou contexto ausente.',
+    'Analise confluência multi-timeframe, volume relativo, Open Interest, funding, RSI, MACD, stop e contexto do BTC.',
     'STANDARD já passou pelo filtro técnico e pode receber APPROVE, WATCH, WAIT ou REJECT.',
-    'PRE_CANDIDATE tem score abaixo do mínimo de entrada e NUNCA pode receber APPROVE.',
-    'Para PRE_CANDIDATE use WATCH se vale acompanhar porque está perto de confirmar; WAIT se ainda falta confirmação clara; REJECT se está fraco ou contraditório.',
-    'WATCH significa apenas observação, nunca entrada.',
-    'APPROVE somente quando um STANDARD estiver coerente com o conjunto dos dados.',
-    'WAIT quando a ideia for plausível, mas faltarem confirmação/participação ou houver sinais mistos.',
-    'REJECT quando houver contradição relevante, risco assimétrico ruim ou contexto oposto.',
-    'Não altere o lado candidato. Se você preferir a direção oposta, use REJECT.',
-    'Responda exclusivamente no formato estruturado solicitado.'
+    'PRE_CANDIDATE tem score abaixo do mínimo e NUNCA pode receber APPROVE.',
+    'WATCH é apenas observação, nunca entrada.',
+    'APPROVE somente quando o conjunto estiver coerente e sem contradição relevante.',
+    'WAIT quando faltar confirmação ou o movimento parecer esticado.',
+    'REJECT quando houver contradição importante, assimetria ruim ou contexto contrário.',
+    'Não mude o lado do candidato. Se preferir o lado oposto, use REJECT.',
+    'Finalize obrigatoriamente chamando a ferramenta submit_signal_validation.'
   ].join(' ');
-}
-
-function structuredResponseFormat() {
-  return {
-    type: 'json_schema',
-    json_schema: {
-      name: 'crypto_futures_signal_validation',
-      strict: true,
-      schema: SIGNAL_SCHEMA
-    }
-  };
 }
 
 function parseJson(content) {
@@ -159,19 +163,17 @@ function parseJson(content) {
     .replace(/\s*```$/i, '')
     .trim();
 
-  // 1ª tentativa: JSON puro.
   try {
     return normalizeParsed(JSON.parse(raw));
   } catch {
-    // 2ª extração: pega somente o primeiro objeto JSON completo aparente.
+    // fallback abaixo
   }
 
   const first = raw.indexOf('{');
   const last = raw.lastIndexOf('}');
 
   if (first !== -1 && last !== -1 && last > first) {
-    const extracted = raw.slice(first, last + 1);
-    return normalizeParsed(JSON.parse(extracted));
+    return normalizeParsed(JSON.parse(raw.slice(first, last + 1)));
   }
 
   throw new Error('Resposta da IA sem objeto JSON válido');
@@ -200,24 +202,17 @@ function normalizeParsed(obj) {
 }
 
 function contentPartsToText(content) {
-  if (typeof content === 'string') {
-    return content.trim();
-  }
-
-  if (!Array.isArray(content)) {
-    return '';
-  }
+  if (typeof content === 'string') return content.trim();
+  if (!Array.isArray(content)) return '';
 
   return content
     .map(part => {
       if (typeof part === 'string') return part;
       if (!part || typeof part !== 'object') return '';
-
       if (typeof part.text === 'string') return part.text;
       if (typeof part.content === 'string') return part.content;
       if (typeof part.value === 'string') return part.value;
       if (typeof part?.text?.value === 'string') return part.text.value;
-
       return '';
     })
     .filter(Boolean)
@@ -225,8 +220,40 @@ function contentPartsToText(content) {
     .trim();
 }
 
+function extractToolArguments(data) {
+  const message = data?.choices?.[0]?.message || {};
+
+  for (const tool of message?.tool_calls || []) {
+    if (
+      tool?.function?.name === 'submit_signal_validation' &&
+      tool?.function?.arguments
+    ) {
+      return {
+        value: tool.function.arguments,
+        extractedFrom: 'tool_calls.submit_signal_validation'
+      };
+    }
+  }
+
+  if (
+    message?.function_call?.name === 'submit_signal_validation' &&
+    message?.function_call?.arguments
+  ) {
+    return {
+      value: message.function_call.arguments,
+      extractedFrom: 'function_call.submit_signal_validation'
+    };
+  }
+
+  return null;
+}
+
 function extractResponseCandidates(data) {
   const out = [];
+  const tool = extractToolArguments(data);
+
+  if (tool) out.push(tool);
+
   const choice = data?.choices?.[0];
   const message = choice?.message || {};
 
@@ -242,20 +269,13 @@ function extractResponseCandidates(data) {
     if (text) out.push({ label, value: text });
   };
 
+  // Fallbacks caso algum provider ignore tool_choice.
   push('message.content', contentPartsToText(message.content));
   push('choice.text', choice?.text);
   push('data.output_text', data?.output_text);
 
-  // Compatibilidade defensiva se algum provedor devolver argumentos estruturados
-  // em uma chamada/função em vez de content.
-  push('message.function_call.arguments', message?.function_call?.arguments);
-
-  for (const tool of message?.tool_calls || []) {
-    push('message.tool_calls.function.arguments', tool?.function?.arguments);
-  }
-
-  // Remove candidatos idênticos.
   const seen = new Set();
+
   return out.filter(item => {
     const key =
       typeof item.value === 'string'
@@ -281,15 +301,17 @@ function parseResponseData(data) {
     try {
       return {
         parsed: parseJson(candidate.value),
-        extractedFrom: candidate.label
+        extractedFrom: candidate.extractedFrom || candidate.label
       };
     } catch (error) {
-      errors.push(`${candidate.label}: ${error.message}`);
+      errors.push(
+        `${candidate.extractedFrom || candidate.label}: ${error.message}`
+      );
     }
   }
 
   throw new Error(
-    `Resposta sem JSON válido (${errors.slice(0, 3).join(' | ')})`
+    `Resposta sem decisão válida (${errors.slice(0, 3).join(' | ')})`
   );
 }
 
@@ -321,14 +343,17 @@ function safeResponseSummary(data, bodyText = '') {
     ? message.tool_calls.length
     : 0;
 
+  const usage = data?.usage || {};
+
   return [
-    `model=${String(data?.model || '—').slice(0, 80)}`,
+    `model=${String(data?.model || '—').slice(0, 90)}`,
     `provider=${String(data?.provider || '—').slice(0, 60)}`,
     `finish=${String(choice?.finish_reason || '—').slice(0, 40)}`,
     `choices=${Array.isArray(data?.choices) ? data.choices.length : 0}`,
     `content=${contentKind}:${contentSize}`,
-    `reasoning=${reasoningCount}`,
     `tools=${toolCount}`,
+    `reasoning=${reasoningCount}`,
+    `completion_tokens=${Number(usage?.completion_tokens || 0)}`,
     `body=${bodyText ? bodyText.length : 0} chars`
   ].join(', ');
 }
@@ -355,6 +380,21 @@ function makeAiError(message, {
   return error;
 }
 
+function reasoningEffort() {
+  return String(process.env.AI_REASONING_EFFORT || 'low').toLowerCase();
+}
+
+function maxCompletionTokens(rescue = false) {
+  return intEnv(
+    rescue
+      ? 'AI_RESCUE_MAX_COMPLETION_TOKENS'
+      : 'AI_MAX_COMPLETION_TOKENS',
+    rescue ? 1200 : 1500,
+    128,
+    8192
+  );
+}
+
 async function requestOnce({
   apiKey,
   model,
@@ -365,13 +405,21 @@ async function requestOnce({
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  const structured = boolEnv('AI_STRUCTURED_OUTPUT', true);
-
   try {
     const body = {
       model,
-      temperature: rescue ? 0 : 0.1,
-      max_tokens: rescue ? 260 : 350,
+      temperature: 0,
+      max_completion_tokens: maxCompletionTokens(rescue),
+      reasoning: {
+        effort: reasoningEffort()
+      },
+      tools: [VALIDATION_TOOL],
+      tool_choice: {
+        type: 'function',
+        function: {
+          name: 'submit_signal_validation'
+        }
+      },
       messages: [
         {
           role: 'system',
@@ -381,20 +429,15 @@ async function requestOnce({
           role: 'user',
           content:
             (rescue
-              ? 'TENTATIVA DE RESGATE. Retorne uma única decisão válida no schema pedido, sem texto extra. Use somente estes dados:\n'
-              : 'Valide este candidato. Seja conservador e use apenas os dados fornecidos:\n') +
+              ? 'RESCUE: conclua agora a validação e chame a ferramenta obrigatória. Dados:\n'
+              : 'Valide o candidato e chame a ferramenta obrigatória. Dados:\n') +
             JSON.stringify(payload)
         }
-      ]
+      ],
+      provider: {
+        allow_fallbacks: true
+      }
     };
-
-    if (structured) {
-      body.response_format = structuredResponseFormat();
-      body.provider = {
-        allow_fallbacks: true,
-        require_parameters: true
-      };
-    }
 
     const res = await fetch(OPENROUTER_URL, {
       method: 'POST',
@@ -404,7 +447,7 @@ async function requestOnce({
         'HTTP-Referer':
           process.env.OPENROUTER_SITE_URL ||
           'https://crypto-futures-bot.onrender.com',
-        'X-Title': 'Crypto Futures Scanner V1.3.8.2 Free'
+        'X-Title': 'Crypto Futures Scanner V1.3.8.3 Free'
       },
       body: JSON.stringify(body),
       signal: controller.signal
@@ -413,6 +456,7 @@ async function requestOnce({
     const rawBody = await res.text();
 
     let data = null;
+
     try {
       data = rawBody ? JSON.parse(rawBody) : null;
     } catch {
@@ -445,6 +489,7 @@ async function requestOnce({
 
     try {
       const extracted = parseResponseData(data);
+
       return {
         ...extracted,
         data,
@@ -460,7 +505,9 @@ async function requestOnce({
     if (error?.name === 'AbortError') {
       throw makeAiError(
         `IA excedeu ${Math.round(timeoutMs / 1000)}s`,
-        { diagnostic: rescue ? 'fase=rescue' : 'fase=primary' }
+        {
+          diagnostic: rescue ? 'fase=rescue' : 'fase=primary'
+        }
       );
     }
 
@@ -478,14 +525,14 @@ export function aiModel() {
   return (
     process.env.AI_MODEL ||
     process.env.OPENROUTER_MODEL ||
-    'openrouter/free'
+    'inclusionai/ling-3.0-flash-fin:free'
   );
 }
 
 export function aiRescueModel() {
   return (
     process.env.AI_RESCUE_MODEL ||
-    'openrouter/free'
+    'nvidia/nemotron-3-ultra-550b-a55b-20260604:free'
   );
 }
 
@@ -494,13 +541,31 @@ export function aiRescueEnabled() {
 }
 
 export function aiStructuredOutputEnabled() {
-  return boolEnv('AI_STRUCTURED_OUTPUT', true);
+  // Mantido por compatibilidade com index.js antigo.
+  // Nesta versão a saída estruturada é feita via tool/function calling.
+  return false;
+}
+
+export function aiToolCallingEnabled() {
+  return true;
+}
+
+export function aiReasoningEffort() {
+  return reasoningEffort();
+}
+
+export function aiMaxCompletionTokens() {
+  return maxCompletionTokens(false);
+}
+
+export function aiRescueMaxCompletionTokens() {
+  return maxCompletionTokens(true);
 }
 
 export async function analyzeSignalWithAI(signal, {
   apiKey = process.env.OPENROUTER_API_KEY,
   model = aiModel(),
-  timeoutMs = Number(process.env.AI_TIMEOUT_MS || 25000),
+  timeoutMs = Number(process.env.AI_TIMEOUT_MS || 35000),
   allowRescue = true
 } = {}) {
   if (!apiKey) {
@@ -542,9 +607,7 @@ export async function analyzeSignalWithAI(signal, {
       checkedAt: Date.now(),
       apiRequestCount,
       rescueUsed: false,
-      responseMode: aiStructuredOutputEnabled()
-        ? 'JSON_SCHEMA'
-        : 'PROMPT_JSON',
+      responseMode: 'TOOL_CALL',
       extractedFrom: primary.extractedFrom,
       diagnosticSummary: primary.summary
     };
@@ -565,7 +628,7 @@ export async function analyzeSignalWithAI(signal, {
       !nonRetryable;
 
     if (!rescueAllowed) {
-      const out = makeAiError(
+      throw makeAiError(
         error?.message || 'Falha na IA',
         {
           apiRequestCount,
@@ -574,12 +637,9 @@ export async function analyzeSignalWithAI(signal, {
           status: error?.status
         }
       );
-      throw out;
     }
   }
 
-  // Segunda tentativa independente. Com openrouter/free, o roteador pode
-  // selecionar outro modelo gratuito compatível com structured outputs.
   try {
     apiRequestCount += 1;
 
@@ -613,9 +673,7 @@ export async function analyzeSignalWithAI(signal, {
       checkedAt: Date.now(),
       apiRequestCount,
       rescueUsed: true,
-      responseMode: aiStructuredOutputEnabled()
-        ? 'JSON_SCHEMA_RESCUE'
-        : 'PROMPT_JSON_RESCUE',
+      responseMode: 'TOOL_CALL_RESCUE',
       extractedFrom: rescued.extractedFrom,
       diagnosticSummary: rescued.summary,
       primaryFailure:
@@ -625,8 +683,8 @@ export async function analyzeSignalWithAI(signal, {
     };
   } catch (rescueError) {
     const diagnostic = [
-      `primary=${String(primaryError?.message || 'erro').replace(/\s+/g, ' ').slice(0, 130)}`,
-      `rescue=${String(rescueError?.message || 'erro').replace(/\s+/g, ' ').slice(0, 130)}`
+      `primary=${String(primaryError?.message || 'erro').replace(/\s+/g, ' ').slice(0, 180)}`,
+      `rescue=${String(rescueError?.message || 'erro').replace(/\s+/g, ' ').slice(0, 180)}`
     ].join(' | ');
 
     throw makeAiError(

@@ -7,7 +7,10 @@ import {
   aiModel,
   aiRescueEnabled,
   aiRescueModel,
-  aiStructuredOutputEnabled
+  aiToolCallingEnabled,
+  aiReasoningEffort,
+  aiMaxCompletionTokens,
+  aiRescueMaxCompletionTokens
 } from './ai.js';
 
 const cfg = {
@@ -1721,7 +1724,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.3.8.2 FREE</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.3.8.3 FREE</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o mercado agora\n' +
       '/status — ver configuração\n' +
@@ -1735,7 +1738,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.3.8.2 FREE\n` +
+      `✅ Online — V1.3.8.3 FREE\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🪙 Top mercados: ${cfg.topMarkets}\n` +
       `⭐ Score mínimo para sinal: ${cfg.minScore}\n` +
@@ -1754,9 +1757,12 @@ async function handleMessage(msg) {
       `✅ Confiança mínima IA: ${cfg.aiMinConfidence}%\n` +
       `🆓 IA grátis: ${aiBudgetStats().used}/${aiBudgetStats().limit} requests hoje\n` +
       `✅ IA concluídas: ${aiBudgetStats().completed} · ⚠️ falhas: ${aiBudgetStats().failed}\n` +
+      `🧠 Modelo principal: ${aiModel()}\n` +
       `🛟 Rescue IA: ${aiRescueEnabled() ? 'ATIVO' : 'INATIVO'} · requests extras ${aiBudgetStats().rescueCalls}\n` +
-      `🧩 JSON estruturado: ${aiStructuredOutputEnabled() ? 'ATIVO' : 'INATIVO'}\n` +
       `🛟 Modelo rescue: ${aiRescueEnabled() ? aiRescueModel() : '—'}\n` +
+      `🧰 Tool calling: ${aiToolCallingEnabled() ? 'ATIVO' : 'INATIVO'}\n` +
+      `🧠 Reasoning: ${aiReasoningEffort()}\n` +
+      `📏 Saída máxima: ${aiMaxCompletionTokens()} tokens · rescue ${aiRescueMaxCompletionTokens()}\n` +
       `⚡ IA prioritária: ${cfg.aiPriorityEnabled ? 'ATIVA' : 'INATIVA'}\n` +
       `⚡ Regra prioridade: score ${cfg.aiPriorityScore}+ · vol ${cfg.aiPriorityVolumeRatio.toFixed(2)}x+ · OI +${cfg.aiPriorityOiPct.toFixed(2)}%+\n` +
       `⚡ Prioridade hoje: ${aiBudgetStats().priorityUsed}/${aiBudgetStats().priorityLimit} · gap ${aiBudgetStats().priorityGapMin} min\n` +
@@ -1808,7 +1814,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.3.8.2-free',
+    version: '1.3.8.3-free',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -1820,7 +1826,10 @@ http.createServer((req, res) => {
     aiFailedToday,
     aiRescueCallsToday,
     aiRescueEnabled: aiRescueEnabled(),
-    aiStructuredOutput: aiStructuredOutputEnabled(),
+    aiToolCalling: aiToolCallingEnabled(),
+    aiReasoningEffort: aiReasoningEffort(),
+    aiMaxCompletionTokens: aiMaxCompletionTokens(),
+    aiRescueMaxCompletionTokens: aiRescueMaxCompletionTokens(),
     pendingAI: pendingAiCandidate
       ? `${pendingAiCandidate.symbol}:${pendingAiCandidate.side}`
       : null,
@@ -1830,7 +1839,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.3.8.2 FREE pronto ✅');
+console.log('Crypto Futures Scanner V1.3.8.3 FREE pronto ✅');
 
 setTimeout(() => doScan().catch(console.error), 5000);
 setInterval(() => doScan().catch(console.error), cfg.intervalMin * 60_000);
