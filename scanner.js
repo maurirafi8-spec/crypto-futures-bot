@@ -782,7 +782,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.4.1: scanner + IA + watchlist + Hyperliquid Testnet DRY_RUN. ` +
+    `<i>V1.4.3: paper trading automático com banca, risco, TP parcial, drawdown e estatísticas. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

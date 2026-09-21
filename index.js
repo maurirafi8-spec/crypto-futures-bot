@@ -13,13 +13,28 @@ import {
   aiRescueMaxTokens
 } from './ai.js';
 import {
-  buildHyperPlan,
+  buildHyperDryRunPlan,
   hyperExecutionEligibility,
   hyperConfig,
   hyperStatusText,
   testHyperliquidConnectivity,
-  testHyperliquidAccount
+  testHyperliquidAccount,
+  getHyperAgentStatus,
+  placeSignalSignedTestnet,
+  placeManualSignedTestnet
 } from './hyperliquid-executor.js';
+import {
+  paperConfig,
+  maybeOpenPaperPosition,
+  updatePaperTrading,
+  paperStatusText,
+  paperPositionsText,
+  paperTradesText,
+  paperPause,
+  paperResume,
+  paperReset,
+  paperStateInfo
+} from './paper-trader.js';
 
 const cfg = {
   token: process.env.BOT_TOKEN,
@@ -148,6 +163,10 @@ const aiHistory = [];
 const hyperExecutionHistory = [];
 const hyperExecutionKeys = new Set();
 let hyperExecutionPaused = false;
+
+// Segurança: sempre inicia desarmado após deploy/restart.
+// /harm arma somente TESTNET e somente se agent estiver aprovada.
+let hyperSignedArmed = false;
 let lastAiEvent = null;
 
 // Último candidato que passou 100% pelo filtro técnico,
@@ -1206,22 +1225,30 @@ function hyperExecutionKey(signal) {
 
 function hyperExecutionHistoryText() {
   if (!hyperExecutionHistory.length) {
-    return '🧪 Nenhum DRY-RUN Hyperliquid registrado desde o último deploy.';
+    return '🧪 Nenhuma execução Hyperliquid registrada desde o último deploy.';
   }
 
   const lines = [
-    '🧪 <b>Hyperliquid Testnet — DRY-RUNs</b>',
+    '🟣 <b>Hyperliquid Testnet — execuções</b>',
     ''
   ];
 
   for (const e of hyperExecutionHistory.slice(0, 10)) {
+    const icon =
+      e.mode === 'SIGNED_TESTNET'
+        ? '🧾'
+        : '🧪';
+
     lines.push(
-      `${e.side === 'LONG' ? '🟢' : '🔴'} <b>${e.coin}-PERP ${e.side}</b>\n` +
-      `🤖 IA ${Math.round(e.aiConfidence)}% · ⭐ Score ${e.score}\n` +
-      `💵 Margem ${Number(e.marginUsdc).toFixed(2)} USDC · ` +
-      `${e.leverage}x · Notional ~${Number(e.notionalUsdc).toFixed(2)} USDC\n` +
-      `📦 Qty simulada: ${e.quantity}\n` +
-      `Entrada ${e.entry} | STOP ${e.stop} | TP3 ${e.tp3}`
+      `${icon} <b>${e.coin || e.symbol} ${e.side}</b>\n` +
+      `Modo: ${e.mode}\n` +
+      `🤖 IA ${Math.round(e.aiConfidence || 0)}% · ⭐ Score ${e.score || 0}\n` +
+      `📦 Notional ~${Number(e.notionalUsdc || 0).toFixed(2)} USDC\n` +
+      `${e.quantity ? `Qty: ${e.quantity}\n` : ''}` +
+      `${e.entryLimit ? `Entrada IOC: ${e.entryLimit}\n` : `Entrada ref.: ${e.entry ?? '—'}\n`}` +
+      `${e.stop ? `STOP: ${e.stop}\n` : ''}` +
+      `${e.tp ? `TP: ${e.tp}\n` : ''}` +
+      `${e.resultSummary?.oid ? `OID: ${e.resultSummary.oid}` : ''}`
     );
   }
 
@@ -1229,6 +1256,15 @@ function hyperExecutionHistoryText() {
 }
 
 async function maybeExecuteHyper(signal) {
+  // V1.4.3: paper trading é o executor padrão.
+  // Hyperliquid só participa se o usuário habilitar explicitamente no ENV.
+  if (
+    String(process.env.HYPERLIQUID_EXECUTION_ENABLED || 'false')
+      .toLowerCase() !== 'true'
+  ) {
+    return null;
+  }
+
   const key = hyperExecutionKey(signal);
 
   if (hyperExecutionPaused) {
@@ -1240,7 +1276,7 @@ async function maybeExecuteHyper(signal) {
 
   if (hyperExecutionKeys.has(key)) {
     console.log(
-      `[hyper] ${signal.symbol}: DRY_RUN já criado neste candle`
+      `[hyper] ${signal.symbol}: execução já registrada neste candle`
     );
     return null;
   }
@@ -1255,60 +1291,108 @@ async function maybeExecuteHyper(signal) {
     return null;
   }
 
-  const cfgHyper = hyperConfig();
+  const cfgHyper =
+    hyperConfig();
 
-  const openCount =
-    hyperExecutionHistory.filter(
-      e => e.status === 'OPEN'
-    ).length;
+  try {
+    // Se estiver explicitamente habilitado no ENV + armado via Telegram,
+    // executa ordem REAL apenas na TESTNET.
+    if (
+      cfgHyper.signedTestnetEnabled &&
+      hyperSignedArmed
+    ) {
+      const result =
+        await placeSignalSignedTestnet(signal);
 
-  if (
-    cfgHyper.maxOpenPositions > 0 &&
-    openCount >= cfgHyper.maxOpenPositions
-  ) {
+      const record = {
+        ...result,
+        mode: 'SIGNED_TESTNET',
+        symbol: signal.symbol,
+        aiConfidence:
+          Number(signal.ai?.confidence || 0),
+        score:
+          Number(signal.score || 0)
+      };
+
+      hyperExecutionKeys.add(key);
+      hyperExecutionHistory.unshift(record);
+
+      if (hyperExecutionHistory.length > 50) {
+        hyperExecutionHistory.length = 50;
+      }
+
+      console.log(
+        `[hyper][SIGNED_TESTNET] ${record.coin} ${record.side} · ` +
+        `notional ${record.notionalUsdc} USDC · qty ${record.quantity} · ` +
+        `status ${record.resultSummary?.status || '—'}`
+      );
+
+      await notify(
+        `🧾 <b>HYPERLIQUID TESTNET — ORDEM ASSINADA</b>\n` +
+        `${record.side === 'LONG' ? '🟢' : '🔴'} ` +
+        `<b>${record.coin}-PERP ${record.side}</b>\n` +
+        `🤖 IA ${Math.round(record.aiConfidence)}% · ⭐ Score ${record.score}\n` +
+        `📦 Notional: ${Number(record.notionalUsdc).toFixed(2)} USDC\n` +
+        `⚙️ Alavancagem: ${record.leverage}x\n` +
+        `📐 Qty: ${record.quantity}\n` +
+        `💰 Entrada IOC: ${record.entryLimit}\n` +
+        `🛑 STOP: ${record.stop} (${record.stopPct}%)\n` +
+        `🎯 TP: ${record.tp} (${record.tpPct}%)\n` +
+        `${record.resultSummary?.oid ? `🆔 OID: ${record.resultSummary.oid}\n` : ''}` +
+        `✅ Resposta: ${record.resultSummary?.status || 'ok'}\n\n` +
+        `<i>TESTNET — sem dinheiro real.</i>`
+      );
+
+      return record;
+    }
+
+    // Caso ainda não esteja armado, continua registrando DRY-RUN.
+    const plan = {
+      ...buildHyperDryRunPlan(signal),
+      mode: 'TESTNET_DRY_RUN'
+    };
+
+    hyperExecutionKeys.add(key);
+    hyperExecutionHistory.unshift(plan);
+
+    if (hyperExecutionHistory.length > 50) {
+      hyperExecutionHistory.length = 50;
+    }
+
     console.log(
-      `[hyper] ${signal.symbol}: não executado — ` +
-      `limite de posições simuladas`
+      `[hyper][TESTNET_DRY_RUN] ${plan.coin}-PERP ${plan.side} · ` +
+      `notional ${plan.notionalUsdc} USDC`
     );
+
+    await notify(
+      `🧪 <b>HYPERLIQUID TESTNET — DRY-RUN</b>\n` +
+      `${plan.side === 'LONG' ? '🟢' : '🔴'} ` +
+      `<b>${plan.coin}-PERP ${plan.side}</b>\n` +
+      `🤖 IA ${Math.round(plan.aiConfidence)}% · ⭐ Score ${plan.score}\n` +
+      `📦 Notional simulado: ${Number(plan.notionalUsdc).toFixed(2)} USDC\n` +
+      `💰 Entrada ref.: ${plan.entry}\n` +
+      `🛑 STOP ref.: ${plan.stop}\n` +
+      `🎯 TP1 ref.: ${plan.tp1}\n\n` +
+      `<i>Assinatura testnet não está armada.</i>`
+    );
+
+    return plan;
+  } catch (error) {
+    console.error(
+      `[hyper] falha em ${signal.symbol}:`,
+      error
+    );
+
+    await notify(
+      `⚠️ <b>Falha no executor Hyperliquid Testnet</b>\n` +
+      `${signal.symbol} ${signal.side}\n` +
+      `${String(error.message || error).slice(0, 700)}`
+    );
+
     return null;
   }
-
-  const plan = {
-    ...buildHyperPlan(signal),
-    status: 'OPEN'
-  };
-
-  hyperExecutionKeys.add(key);
-  hyperExecutionHistory.unshift(plan);
-
-  if (hyperExecutionHistory.length > 50) {
-    hyperExecutionHistory.length = 50;
-  }
-
-  console.log(
-    `[hyper][TESTNET_DRY_RUN] ${plan.coin}-PERP ${plan.side} · ` +
-    `qty ${plan.quantity} · margem ${plan.marginUsdc} USDC · ` +
-    `${plan.leverage}x`
-  );
-
-  await notify(
-    `🧪 <b>HYPERLIQUID TESTNET — DRY-RUN</b>\n` +
-    `${plan.side === 'LONG' ? '🟢' : '🔴'} ` +
-    `<b>${plan.coin}-PERP ${plan.side}</b>\n` +
-    `🤖 IA ${Math.round(plan.aiConfidence)}% · ⭐ Score ${plan.score}\n` +
-    `💵 Margem simulada: ${Number(plan.marginUsdc).toFixed(2)} USDC\n` +
-    `⚙️ Alavancagem: ${plan.leverage}x\n` +
-    `📦 Quantidade simulada: ${plan.quantity}\n` +
-    `💰 Entrada: ${plan.entry}\n` +
-    `🛑 STOP: ${plan.stop}\n` +
-    `🎯 TP1: ${plan.tp1}\n` +
-    `🎯 TP2: ${plan.tp2}\n` +
-    `🏆 TP3: ${plan.tp3}\n\n` +
-    `<i>Nenhuma ordem foi enviada. Estamos testando o executor primeiro.</i>`
-  );
-
-  return plan;
 }
+
 
 function activeSignalsText() {
   if (!activeSignals.size) {
@@ -2252,6 +2336,14 @@ async function doScan({ forceReply = false } = {}) {
       exceptionVolumeRatio: cfg.exceptionVolumeRatio
     });
 
+    // Atualiza primeiro as posições paper usando somente candle fechado.
+    const paperUpdate =
+      updatePaperTrading(snapshots);
+
+    for (const event of paperUpdate.events || []) {
+      await notify(event);
+    }
+
     await updateTrackedSignals(snapshots);
     reconcileWaitWatchlist(snapshots);
 
@@ -2348,6 +2440,28 @@ async function doScan({ forceReply = false } = {}) {
       `[scan] ${signals.length} sinais liberados após camada IA`
     );
 
+    // Paper trading automático é independente do Telegram.
+    // O próprio módulo aplica score/confiança/cooldown/máx posições.
+    for (const signal of signals) {
+      const paperOpen =
+        maybeOpenPaperPosition(signal);
+
+      if (paperOpen.opened) {
+        console.log(
+          `[paper] aberto ${signal.symbol} ${signal.side} · ` +
+          `IA ${Math.round(signal.ai?.confidence || 0)}% · score ${signal.score}`
+        );
+
+        await notify(
+          paperOpen.message
+        );
+      } else {
+        console.log(
+          `[paper] ${signal.symbol}: ${paperOpen.reason}`
+        );
+      }
+    }
+
     lastScanReport = {
       at: Date.now(),
       durationMs: Date.now() - startedAt,
@@ -2437,7 +2551,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.4.1 FREE</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.4.3 FREE</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o mercado agora\n' +
       '/status — ver configuração\n' +
@@ -2447,16 +2561,26 @@ async function handleMessage(msg) {
       '/ia — últimas decisões do Analista IA\n' +
       '/debug — diagnóstico do último scan\n' +
       '/hyper — testar Hyperliquid Testnet\n' +
+      '/hagent — verificar Agent/API Wallet\n' +
+      '/harm — armar ordens assinadas TESTNET\n' +
+      '/hdisarm — desarmar ordens assinadas\n' +
+      '/htest BTC LONG — enviar teste assinado TESTNET\n' +
       '/hexec — status do executor Hyperliquid\n' +
-      '/hexecs — DRY-RUNs Hyperliquid\n' +
-      '/kill — pausar executor\n' +
-      '/resume — reativar executor'
+      '/hexecs — histórico Hyperliquid\n' +
+      '/paper — dashboard paper trading\n' +
+      '/paperpos — posições paper abertas\n' +
+      '/papertrades — últimos trades paper\n' +
+      '/paperpause — pausar novas entradas paper\n' +
+      '/paperresume — reativar paper trading\n' +
+      '/paperreset CONFIRM — zerar histórico/banca virtual\n' +
+      '/kill — pausar e desarmar executor Hyperliquid\n' +
+      '/resume — reativar executor Hyperliquid (continua desarmado)'
     );
   } else if (text.startsWith('/status')) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.4.1 FREE\n` +
+      `✅ Online — V1.4.3 FREE\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🪙 Top mercados: ${cfg.topMarkets}\n` +
       `⭐ Score mínimo para sinal: ${cfg.minScore}\n` +
@@ -2496,9 +2620,13 @@ async function handleMessage(msg) {
       `🟠 Pendente de IA: ${pendingAiCandidate ? `${pendingAiCandidate.symbol} ${pendingAiCandidate.side}` : 'nenhum'}\n` +
       `🎯 Acompanhando: ${activeSignals.size} sinal(is)\n` +
       `📚 Resultados registrados: ${resultHistory.length}\n` +
-      `🟣 Hyperliquid: ${hyperConfig().enabled ? 'ATIVO' : 'INATIVO'} · TESTNET_DRY_RUN\n` +
-      `🔒 Ordens testnet assinadas: AINDA BLOQUEADAS\n` +
-      `⏸ Executor pausado: ${hyperExecutionPaused ? 'SIM' : 'NÃO'}`
+      `🟣 Hyperliquid: ${hyperConfig().enabled ? 'ATIVO' : 'INATIVO'} · TESTNET\n` +
+      `🧾 Signed testnet ENV: ${hyperConfig().signedTestnetEnabled ? 'HABILITADO' : 'DESABILITADO'}\n` +
+      `🛡 Runtime arm: ${hyperSignedArmed ? 'ARMADO' : 'DESARMADO'}\n` +
+      `🔒 Mainnet: NÃO IMPLEMENTADA\n` +
+      `⏸ Executor pausado: ${hyperExecutionPaused ? 'SIM' : 'NÃO'}\n` +
+      `🧪 Paper trading: ${paperConfig().enabled ? 'ATIVO' : 'INATIVO'} · banca ${paperStateInfo().equity.toFixed(2)} USDC\n` +
+      `📌 Paper posições: ${paperStateInfo().openPositions} · fechados ${paperStateInfo().closedTrades}`
     );
   } else if (text.startsWith('/ativos')) {
     await sendMessage(cfg.token, activeChatId, activeSignalsText());
@@ -2508,6 +2636,58 @@ async function handleMessage(msg) {
     await sendMessage(cfg.token, activeChatId, aiHistoryText());
   } else if (text.startsWith('/debug')) {
     await sendMessage(cfg.token, activeChatId, lastScanDebugText());
+  } else if (text.startsWith('/paperreset')) {
+    const parts = text.trim().split(/\s+/);
+
+    if (String(parts[1] || '').toUpperCase() !== 'CONFIRM') {
+      await sendMessage(
+        cfg.token,
+        activeChatId,
+        '⚠️ Para zerar banca virtual, posições e histórico use exatamente:\n/paperreset CONFIRM'
+      );
+    } else {
+      paperReset();
+
+      await sendMessage(
+        cfg.token,
+        activeChatId,
+        `♻️ Paper trading resetado.\nBanca virtual: ${paperConfig().startingBalance.toFixed(2)} USDC`
+      );
+    }
+  } else if (text.startsWith('/paperpause')) {
+    paperPause();
+
+    await sendMessage(
+      cfg.token,
+      activeChatId,
+      '⏸ Paper trading pausado para NOVAS entradas. Posições já abertas continuam sendo gerenciadas até STOP/TP.'
+    );
+  } else if (text.startsWith('/paperresume')) {
+    paperResume();
+
+    await sendMessage(
+      cfg.token,
+      activeChatId,
+      '▶️ Paper trading reativado.'
+    );
+  } else if (text.startsWith('/papertrades')) {
+    await sendMessage(
+      cfg.token,
+      activeChatId,
+      paperTradesText()
+    );
+  } else if (text.startsWith('/paperpos')) {
+    await sendMessage(
+      cfg.token,
+      activeChatId,
+      paperPositionsText()
+    );
+  } else if (text.startsWith('/paper')) {
+    await sendMessage(
+      cfg.token,
+      activeChatId,
+      paperStatusText()
+    );
   } else if (text.startsWith('/hyper')) {
     await sendMessage(
       cfg.token,
@@ -2515,8 +2695,11 @@ async function handleMessage(msg) {
       '🟣 Testando conexão com Hyperliquid Testnet...'
     );
 
-    const pub = await testHyperliquidConnectivity();
-    const account = await testHyperliquidAccount();
+    const pub =
+      await testHyperliquidConnectivity();
+
+    const account =
+      await testHyperliquidAccount();
 
     const sample = pub.sample
       ? `BTC ${pub.sample.BTC ?? '—'} · ETH ${pub.sample.ETH ?? '—'} · SOL ${pub.sample.SOL ?? '—'}`
@@ -2538,8 +2721,177 @@ async function handleMessage(msg) {
       `Mercados com mid: ${pub.midsCount ?? 0}\n` +
       `Amostra: ${sample}\n\n` +
       `${accountLine}\n\n` +
-      `<i>Nenhuma ordem é enviada nesta versão.</i>`
+      `🧾 Signed testnet ENV: ${hyperConfig().signedTestnetEnabled ? 'HABILITADO' : 'DESABILITADO'}\n` +
+      `🛡 Runtime: ${hyperSignedArmed ? 'ARMADO' : 'DESARMADO'}`
     );
+  } else if (text.startsWith('/hagent')) {
+    const agent =
+      await getHyperAgentStatus();
+
+    let expiry = '—';
+
+    if (agent.validUntil) {
+      try {
+        expiry =
+          new Date(agent.validUntil).toISOString();
+      } catch {
+        expiry = String(agent.validUntil);
+      }
+    }
+
+    await sendMessage(
+      cfg.token,
+      activeChatId,
+      `🔑 <b>Hyperliquid Agent/API Wallet</b>\n\n` +
+      `Agent key: ${agent.configured ? '✅ configurada' : '❌ não configurada'}\n` +
+      `Agent address: <code>${agent.address || '—'}</code>\n` +
+      `Master pública: ${agent.masterConfigured ? '✅ configurada' : '❌ não configurada'}\n` +
+      `Aprovação testnet: ${agent.approved ? '✅ ATIVA' : '❌ NÃO ATIVA'}\n` +
+      `Nome: ${agent.name || '—'}\n` +
+      `Validade: ${expiry}\n\n` +
+      `${agent.message}\n\n` +
+      `<i>Nunca envie a private key pelo Telegram ou chat.</i>`
+    );
+  } else if (text.startsWith('/hdisarm')) {
+    hyperSignedArmed = false;
+
+    await sendMessage(
+      cfg.token,
+      activeChatId,
+      '🟢 Executor Hyperliquid DESARMADO. O scanner continua ativo e novas execuções ficam em DRY-RUN.'
+    );
+  } else if (text.startsWith('/harm')) {
+    const cfgHyper =
+      hyperConfig();
+
+    if (!cfgHyper.signedTestnetEnabled) {
+      hyperSignedArmed = false;
+
+      await sendMessage(
+        cfg.token,
+        activeChatId,
+        '🔒 Não foi possível armar. Configure HYPERLIQUID_TESTNET_SIGNED_ENABLED=true no Environment do Render.'
+      );
+    } else {
+      const agent =
+        await getHyperAgentStatus();
+
+      const account =
+        await testHyperliquidAccount();
+
+      if (!agent.approved) {
+        hyperSignedArmed = false;
+
+        await sendMessage(
+          cfg.token,
+          activeChatId,
+          `❌ Agent não aprovada/ativa.\n` +
+          `Agent address: <code>${agent.address || '—'}</code>\n` +
+          `${agent.message}`
+        );
+      } else if (!account.ok) {
+        hyperSignedArmed = false;
+
+        await sendMessage(
+          cfg.token,
+          activeChatId,
+          `❌ Conta testnet não está pronta: ${account.message}`
+        );
+      } else if (Number(account.accountValue || 0) <= 0) {
+        hyperSignedArmed = false;
+
+        await sendMessage(
+          cfg.token,
+          activeChatId,
+          '❌ Conta Hyperliquid Testnet está sem saldo/equity. Deposite/obtenha fundos testnet antes de armar.'
+        );
+      } else {
+        hyperExecutionPaused = false;
+        hyperSignedArmed = true;
+
+        await sendMessage(
+          cfg.token,
+          activeChatId,
+          `🔴 <b>HYPERLIQUID TESTNET ARMADO</b>\n\n` +
+          `Agent: <code>${agent.address}</code>\n` +
+          `Equity testnet: ${account.accountValue} USDC\n` +
+          `Máx posições: ${cfgHyper.maxOpenPositions}\n` +
+          `Notional alvo: ~${Math.max(cfgHyper.marginUsdc * cfgHyper.leverage, cfgHyper.minNotionalUsdc).toFixed(2)} USDC\n\n` +
+          `<b>Somente TESTNET.</b> Mainnet não existe nesta versão.\n` +
+          `Use /hdisarm ou /kill para bloquear novas ordens.`
+        );
+      }
+    }
+  } else if (text.startsWith('/htest')) {
+    const parts =
+      text.trim().split(/\s+/);
+
+    const coin =
+      String(parts[1] || 'BTC').toUpperCase();
+
+    const side =
+      String(parts[2] || 'LONG').toUpperCase();
+
+    if (!['LONG', 'SHORT'].includes(side)) {
+      await sendMessage(
+        cfg.token,
+        activeChatId,
+        'Uso: /htest BTC LONG  ou  /htest ETH SHORT'
+      );
+    } else if (!hyperSignedArmed) {
+      await sendMessage(
+        cfg.token,
+        activeChatId,
+        '🛡 Executor está DESARMADO. Primeiro use /harm.'
+      );
+    } else {
+      await sendMessage(
+        cfg.token,
+        activeChatId,
+        `🧾 Enviando ordem TESTNET assinada para ${coin}-PERP ${side}...`
+      );
+
+      try {
+        const result =
+          await placeManualSignedTestnet({
+            coin,
+            side
+          });
+
+        hyperExecutionHistory.unshift({
+          ...result,
+          mode: 'SIGNED_TESTNET_MANUAL',
+          aiConfidence: 0,
+          score: 0
+        });
+
+        if (hyperExecutionHistory.length > 50) {
+          hyperExecutionHistory.length = 50;
+        }
+
+        await sendMessage(
+          cfg.token,
+          activeChatId,
+          `✅ <b>ORDEM TESTNET ENVIADA</b>\n` +
+          `${result.side === 'LONG' ? '🟢' : '🔴'} ${result.coin}-PERP ${result.side}\n` +
+          `📦 Notional: ${Number(result.notionalUsdc).toFixed(2)} USDC\n` +
+          `⚙️ ${result.leverage}x\n` +
+          `📐 Qty: ${result.quantity}\n` +
+          `💰 IOC: ${result.entryLimit}\n` +
+          `🛑 STOP: ${result.stop}\n` +
+          `🎯 TP: ${result.tp}\n` +
+          `${result.resultSummary?.oid ? `🆔 OID: ${result.resultSummary.oid}\n` : ''}` +
+          `Resposta: ${result.resultSummary?.status || 'ok'}\n\n` +
+          `<i>TESTNET — sem dinheiro real.</i>`
+        );
+      } catch (error) {
+        await sendMessage(
+          cfg.token,
+          activeChatId,
+          `❌ Falha na ordem TESTNET:\n${String(error.message || error).slice(0, 1200)}`
+        );
+      }
+    }
   } else if (text.startsWith('/hexecs')) {
     await sendMessage(
       cfg.token,
@@ -2552,29 +2904,28 @@ async function handleMessage(msg) {
       activeChatId,
       hyperStatusText({
         paused: hyperExecutionPaused,
-        openDryRuns:
-          hyperExecutionHistory.filter(
-            e => e.status === 'OPEN'
-          ).length,
-        totalDryRuns:
+        signedArmed: hyperSignedArmed,
+        totalExecutions:
           hyperExecutionHistory.length
       })
     );
   } else if (text.startsWith('/kill')) {
     hyperExecutionPaused = true;
+    hyperSignedArmed = false;
 
     await sendMessage(
       cfg.token,
       activeChatId,
-      '⛔ Executor Hyperliquid pausado. Scanner e IA continuam funcionando.'
+      '⛔ Executor Hyperliquid pausado e DESARMADO. Scanner e IA continuam funcionando.'
     );
   } else if (text.startsWith('/resume')) {
     hyperExecutionPaused = false;
+    hyperSignedArmed = false;
 
     await sendMessage(
       cfg.token,
       activeChatId,
-      '✅ Executor Hyperliquid reativado em TESTNET_DRY_RUN.'
+      '✅ Executor reativado, mas continua DESARMADO. Use /harm apenas quando quiser habilitar ordens TESTNET assinadas.'
     );
   } else if (text.startsWith('/scan') || text.startsWith('/top')) {
     if (!scanning) {
@@ -2610,7 +2961,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.4.1-free',
+    version: '1.4.3-free',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -2638,8 +2989,11 @@ http.createServer((req, res) => {
     hyperliquidEnabled: hyperConfig().enabled,
     hyperliquidMode: hyperConfig().mode,
     hyperliquidPaused: hyperExecutionPaused,
-    hyperliquidDryRuns: hyperExecutionHistory.length,
-    hyperliquidSignedOrdersUnlocked: false,
+    hyperliquidSignedEnvEnabled: hyperConfig().signedTestnetEnabled,
+    hyperliquidSignedArmed: hyperSignedArmed,
+    hyperliquidExecutions: hyperExecutionHistory.length,
+    hyperliquidMainnetUnlocked: false,
+    paperTrading: paperStateInfo(),
     pendingAI: pendingAiCandidate
       ? `${pendingAiCandidate.symbol}:${pendingAiCandidate.side}`
       : null,
@@ -2649,7 +3003,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.4.1 FREE pronto ✅');
+console.log('Crypto Futures Scanner V1.4.3 FREE pronto ✅');
 
 setTimeout(() => doScan().catch(console.error), 5000);
 setInterval(() => doScan().catch(console.error), cfg.intervalMin * 60_000);

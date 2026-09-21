@@ -1,94 +1,133 @@
-CRYPTO FUTURES SCANNER V1.4.1 FREE
-HYPERLIQUID TESTNET — PRIMEIRO TESTE
+CRYPTO FUTURES SCANNER V1.4.3 FREE
+PAPER TRADING AUTOMÁTICO
 
 OBJETIVO
-Testar se o Render consegue acessar a Hyperliquid Testnet e preparar
-o bot para execução automática em uma DEX de perpétuos.
+Deixar o bot operar sozinho com uma banca virtual antes de usar dinheiro real.
 
-ESTA VERSÃO NÃO PEDE CHAVE PRIVADA.
-ESTA VERSÃO NÃO ENVIA ORDENS.
+PADRÃO
+Banca virtual: 1.000 USDC
+Risco por trade: 1%
+Alavancagem simulada: 2x
+Máx. margem por trade: 10% da banca
+Máx. posições abertas: 1
+Confiança IA mínima: 70%
+Score mínimo: 75
+Cooldown por ativo: 90 min
+Perda diária máxima: 3%
+Tempo máximo da posição: 24h
 
-NOVO ARQUIVO
-hyperliquid-executor.js
+CUSTOS SIMULADOS
+Fee: 0.045% por execução
+Slippage: 5 bps por execução
 
-NOVOS COMANDOS
+Esses custos são aproximações para deixar o paper trading menos otimista.
 
-/hyper
-- testa POST /info com type=allMids
-- confirma conectividade com https://api.hyperliquid-testnet.xyz
-- mostra mids de BTC/ETH/SOL
-- se HYPERLIQUID_WALLET_ADDRESS estiver configurado,
-  consulta clearinghouseState da conta testnet
+GESTÃO AUTOMÁTICA
+Entrada:
+- somente sinal APPROVE;
+- IA >= 70%;
+- score >= 75;
+- dimensionamento pela distância até o STOP;
+- risco-alvo de 1% da banca;
+- trava por margem máxima.
 
-/hexec
-- status do executor Hyperliquid
+Saída:
+TP1 -> fecha 30% e move STOP do restante para breakeven.
+TP2 -> fecha mais 30% e move STOP do restante para TP1.
+TP3 -> fecha os 40% restantes.
+STOP -> encerra o restante.
+Timeout 24h -> encerra pelo preço de marca.
 
-/hexecs
-- últimas execuções automáticas simuladas
+AMBIGUIDADE INTRACANDLE
+Se STOP e um alvo novo aparecem no MESMO candle fechado de 15m,
+o paper trader assume STOP primeiro.
+É uma regra conservadora para não inflar os resultados.
 
-/kill
-- pausa o executor
+ESTATÍSTICAS
+/paper mostra:
+- banca inicial
+- saldo realizado
+- equity
+- PnL total
+- PnL não realizado
+- margem usada/disponível
+- trades
+- wins/losses
+- win rate
+- profit factor
+- max drawdown
+- taxas simuladas
+- LONG x SHORT
+- melhor/pior ativo
+- PnL do dia
 
-/resume
-- reativa o executor
+COMANDOS
+/paper
+/paperpos
+/papertrades
+/paperpause
+/paperresume
+/paperreset CONFIRM
 
-EXECUÇÃO AUTOMÁTICA SIMULADA
-Quando o scanner realmente liberar um APPROVE:
-- IA >= 70%
-- score >= 75
-- executor cria um TESTNET_DRY_RUN
-- calcula margem, notional e quantidade
-- registra entrada, STOP, TP1, TP2 e TP3
-- envia o plano pelo Telegram
+PERSISTÊNCIA
+O estado é salvo automaticamente em:
+./paper-state.json
 
-PADRÕES
+ATENÇÃO NO RENDER:
+O filesystem padrão do Render pode ser efêmero.
+Um novo deploy/restart pode apagar o arquivo dependendo do tipo de serviço.
+
+Se você tiver Persistent Disk no Render, monte por exemplo /var/data e configure:
+PAPER_STATE_PATH=/var/data/paper-state.json
+
+Sem Persistent Disk, a versão continua funcionando, mas o histórico pode
+reiniciar em deploy/restart.
+
+VARIÁVEIS OPCIONAIS
+PAPER_TRADING_ENABLED=true
+PAPER_STARTING_BALANCE_USDC=1000
+PAPER_RISK_PER_TRADE_PCT=1
+PAPER_LEVERAGE=2
+PAPER_MAX_MARGIN_PCT=10
+PAPER_MAX_OPEN_POSITIONS=1
+PAPER_MIN_NOTIONAL_USDC=10
+PAPER_MIN_AI_CONFIDENCE=70
+PAPER_MIN_SCORE=75
+PAPER_FEE_RATE=0.00045
+PAPER_SLIPPAGE_BPS=5
+PAPER_DAILY_LOSS_LIMIT_PCT=3
+PAPER_COOLDOWN_MINUTES=90
+PAPER_MAX_HOLD_HOURS=24
+PAPER_STATE_PATH=./paper-state.json
+
+HYPERLIQUID
+A integração Hyperliquid Testnet permanece no projeto, mas na V1.4.3
+o executor automático Hyperliquid fica DESABILITADO por padrão.
+
+Para habilitá-lo novamente explicitamente:
 HYPERLIQUID_EXECUTION_ENABLED=true
-HYPERLIQUID_MARGIN_USDC=5
-HYPERLIQUID_LEVERAGE=2
-HYPERLIQUID_AUTO_MIN_AI_CONFIDENCE=70
-HYPERLIQUID_AUTO_MIN_SCORE=75
-HYPERLIQUID_MAX_OPEN_POSITIONS=1
 
-VARIÁVEL OPCIONAL
-HYPERLIQUID_WALLET_ADDRESS=0x...
+A falta de saldo testnet não interfere no PAPER TRADING.
 
-É SOMENTE O ENDEREÇO PÚBLICO.
-NÃO COLOQUE CHAVE PRIVADA NESTA ETAPA.
-
-POR QUE A CONTA PÚBLICA PODE SER CONSULTADA
-O endpoint /info aceita o endereço da conta para clearinghouseState.
-Nenhuma assinatura é necessária para leitura.
-
-PRÓXIMA FASE
-Se /hyper funcionar no Render:
-- adicionar SDK de assinatura;
-- usar API/Agent Wallet;
-- enviar UMA ordem pequena na Hyperliquid TESTNET;
-- testar cancelamento;
-- testar STOP/TP;
-- somente depois pensar em mainnet.
-
-SEGURANÇA
-Quando chegarmos à Agent Wallet:
-- criar uma Agent/API Wallet separada;
-- nunca usar a seed phrase da carteira principal no bot;
-- nunca colar private key no chat;
-- guardar secret somente como variável segura no host.
-
-ARQUIVOS PARA SUBSTITUIR
-Agora são 7:
+ARQUIVOS
 ai.js
 binance.js
 hyperliquid-executor.js
 index.js
 indicators.js
+paper-trader.js        <-- NOVO
 scanner.js
 telegram.js
+package.json
 
 TESTE
-1. Suba os 7 arquivos
-2. Deploy
+1. Suba todos os arquivos.
+2. Deploy.
 3. /status
-4. /hyper
-5. /hexec
-6. /scan
+4. /paper
+5. /scan
+6. Quando surgir APPROVE >=70% e score >=75, o bot abre a posição paper sozinho.
+7. /paperpos
+8. Depois dos fechamentos: /papertrades e /paper
+
+Não há uso de dinheiro real no paper trader.

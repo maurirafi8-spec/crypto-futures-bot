@@ -3,11 +3,14 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "engines": {
-    "node": ">=20"
-  },
   "scripts": {
-    "start": "node index.js",
-    "check": "node --check index.js && node --check binance.js && node --check indicators.js && node --check scanner.js && node --check telegram.js"
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "dependencies": {
+    "@nktkas/hyperliquid": "0.33.3",
+    "viem": "2.56.8"
   }
 }
