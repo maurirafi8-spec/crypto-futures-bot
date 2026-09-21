@@ -367,7 +367,7 @@ async function fetchOpenRouter({ apiKey, body, timeoutMs }) {
         'HTTP-Referer':
           process.env.OPENROUTER_SITE_URL ||
           'https://crypto-futures-bot.onrender.com',
-        'X-Title': 'Crypto Futures Scanner V1.3.8.4 Free'
+        'X-Title': 'Crypto Futures Scanner V1.3.8.5 Free'
       },
       body: JSON.stringify(body),
       signal: controller.signal
@@ -439,24 +439,22 @@ async function requestPrimary({
         name: 'submit_signal_validation'
       }
     },
-    parallel_tool_calls: false,
     messages: [
       {
         role: 'system',
         content:
           systemPrompt() +
-          ' Finalize imediatamente chamando submit_signal_validation.'
+          ' Prefira chamar submit_signal_validation. Se o provedor não conseguir tool calling, responda SOMENTE com um JSON válido no mesmo formato da ferramenta, sem markdown.'
       },
       {
         role: 'user',
         content:
-          'Valide este candidato e chame a ferramenta agora:\n' +
+          'Valide este candidato. Chame a ferramenta; se tool calling não estiver disponível, devolva somente JSON puro:\n' +
           JSON.stringify(payload)
       }
     ],
     provider: {
-      allow_fallbacks: true,
-      require_parameters: true
+      allow_fallbacks: true
     }
   };
 
@@ -528,8 +526,7 @@ async function requestRescue({
       }
     ],
     provider: {
-      allow_fallbacks: true,
-      require_parameters: true
+      allow_fallbacks: true
     }
   };
 
@@ -668,6 +665,11 @@ export async function analyzeSignalWithAI(signal, {
       status === 402 ||
       status === 403 ||
       status === 429;
+
+    // 404 "No endpoints found..." pode ser específico do conjunto
+    // modelo/parâmetros/provedor. Nessa situação o rescue usa outro
+    // modelo e outro formato, então vale tentar.
+
 
     if (
       !allowRescue ||

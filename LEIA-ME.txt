@@ -1,75 +1,68 @@
-CRYPTO FUTURES SCANNER V1.3.8.4 FREE
-NO-REASONING + JSON RESCUE
+CRYPTO FUTURES SCANNER V1.3.8.5 FREE
+RELAXED ROUTING / OPENROUTER 404 FIX
 
-CAUSA ENCONTRADA
-Nos testes reais o modelo principal retornou:
-finish=length
-content=null
-tools=0
+ERRO CORRIGIDO
+OpenRouter 404:
+"No endpoints found that can handle the requested parameters"
 
-Ou seja: chegou ao limite da conclusão ANTES de entregar o tool call.
+A causa mais provável era o filtro:
+provider.require_parameters=true
 
-CORREÇÃO DESTA VERSÃO
+Ele obriga o OpenRouter a escolher SOMENTE endpoints que declaram suporte
+a TODOS os parâmetros enviados. No modelo gratuito Ling, isso pode eliminar
+todos os providers disponíveis mesmo quando o modelo em si aceita tools/tool_choice.
+
+O QUE MUDOU
 
 PRINCIPAL
-Modelo:
-inclusionai/ling-3.0-flash-fin:free
-
-- tool calling obrigatório
-- reasoning explícito removido/desativado
-- 2048 tokens máximos de saída
-- parallel_tool_calls=false
-- require_parameters=true
+- inclusionai/ling-3.0-flash-fin:free
+- tool calling mantido
+- reasoning explícito desligado
+- REMOVIDO provider.require_parameters=true
+- REMOVIDO parallel_tool_calls=false
+- allow_fallbacks=true mantido
+- se o provider ignorar tool calling e devolver JSON em texto, o parser aceita
 
 RESCUE
-Modelo:
-google/gemma-4-31b-it-20260402:free
+- google/gemma-4-31b-it-20260402:free
+- JSON object
+- sem tool calling
+- sem reasoning explícito
+- REMOVIDO provider.require_parameters=true
+- allow_fallbacks=true mantido
 
-O rescue agora usa um caminho DIFERENTE:
-- SEM tool calling
-- SEM reasoning
-- response_format json_object
-- 768 tokens
-- parser JSON defensivo
-
-Isso evita repetir o mesmo tipo de falha no rescue.
-
-IMPORTANTE SOBRE O RENDER
-Não precisa apagar sua variável atual:
-AI_MODEL=inclusionai/ling-3.0-flash-fin:free
-
-A variável antiga AI_RESCUE_MODEL da V1.3.8.3 é ignorada nesta versão.
-
-Se quiser trocar manualmente o rescue novo, use:
-AI_JSON_RESCUE_MODEL=google/gemma-4-31b-it-20260402:free
-
-Outras variáveis opcionais:
-AI_PRIMARY_OUTPUT_TOKENS=2048
-AI_JSON_RESCUE_OUTPUT_TOKENS=768
-AI_TIMEOUT_MS=35000
-AI_RESCUE_ENABLED=true
+NÃO ALTERADO
+- score
+- volume 24h
+- volume relativo
+- OI
+- candles fechados
+- cooldown
+- prioridade IA
+- acompanhamento
+- TP/SL
 
 SUBSTITUA OS 6 ARQUIVOS
-- ai.js
-- binance.js
-- index.js
-- indicators.js
-- scanner.js
-- telegram.js
+ai.js
+binance.js
+index.js
+indicators.js
+scanner.js
+telegram.js
 
-DEPOIS TESTE
-/status
-/scan
-/ia
-/debug
+DEPOIS
+1. Deploy
+2. /status
+3. /scan
+4. /ia
+5. /debug
 
-NO /status DEVE APARECER
-V1.3.8.4 FREE
-Modelo principal: inclusionai/ling-3.0-flash-fin:free
-Modelo rescue: google/gemma-4-31b-it-20260402:free
-Tool calling principal: ATIVO
+NO /status:
+V1.3.8.5 FREE
+Tool calling principal: ATIVO (roteamento flexível)
 Reasoning explícito: DESATIVADO
 Rescue: JSON object sem tool calling
-Saída máxima: 2048 tokens · rescue 768
 
-REGRAS TÉCNICAS NÃO FORAM ALTERADAS.
+IMPORTANTE:
+Não precisa mudar AI_MODEL.
+Não precisa criar variável nova no Render.

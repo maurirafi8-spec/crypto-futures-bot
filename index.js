@@ -1724,7 +1724,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.3.8.4 FREE</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.3.8.5 FREE</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o mercado agora\n' +
       '/status — ver configuração\n' +
@@ -1738,7 +1738,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.3.8.4 FREE\n` +
+      `✅ Online — V1.3.8.5 FREE\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🪙 Top mercados: ${cfg.topMarkets}\n` +
       `⭐ Score mínimo para sinal: ${cfg.minScore}\n` +
@@ -1760,7 +1760,7 @@ async function handleMessage(msg) {
       `🧠 Modelo principal: ${aiModel()}\n` +
       `🛟 Rescue IA: ${aiRescueEnabled() ? 'ATIVO' : 'INATIVO'} · requests extras ${aiBudgetStats().rescueCalls}\n` +
       `🛟 Modelo rescue: ${aiRescueEnabled() ? aiRescueModel() : '—'}\n` +
-      `🧰 Tool calling principal: ${aiToolCallingEnabled() ? 'ATIVO' : 'INATIVO'}\n` +
+      `🧰 Tool calling principal: ${aiToolCallingEnabled() ? 'ATIVO (roteamento flexível)' : 'INATIVO'}\n` +
       `🧠 Reasoning explícito: ${aiReasoningMode()}\n` +
       `🧯 Rescue: JSON object sem tool calling\n` +
       `📏 Saída máxima: ${aiPrimaryMaxTokens()} tokens · rescue ${aiRescueMaxTokens()}\n` +
@@ -1815,7 +1815,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.3.8.4-free',
+    version: '1.3.8.5-free',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -1840,7 +1840,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.3.8.4 FREE pronto ✅');
+console.log('Crypto Futures Scanner V1.3.8.5 FREE pronto ✅');
 
 setTimeout(() => doScan().catch(console.error), 5000);
 setInterval(() => doScan().catch(console.error), cfg.intervalMin * 60_000);

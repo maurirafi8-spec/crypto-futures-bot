@@ -780,7 +780,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.3.8.4: reasoning desligado + tool call direto + rescue JSON Gemma. ` +
+    `<i>V1.3.8.5: roteamento flexível OpenRouter + tool call/JSON fallback + rescue Gemma. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }
