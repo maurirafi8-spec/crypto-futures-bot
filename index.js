@@ -13,13 +13,13 @@ import {
   aiRescueMaxTokens
 } from './ai.js';
 import {
-  buildExecutionPlan,
-  executionEligibility,
-  executionConfig,
-  executionStatusText,
-  testBinancePublicConnectivity,
-  testBinanceAuth
-} from './binance-executor.js';
+  buildHyperPlan,
+  hyperExecutionEligibility,
+  hyperConfig,
+  hyperStatusText,
+  testHyperliquidConnectivity,
+  testHyperliquidAccount
+} from './hyperliquid-executor.js';
 
 const cfg = {
   token: process.env.BOT_TOKEN,
@@ -143,11 +143,11 @@ const activeSignals = new Map();
 const resultHistory = [];
 const aiHistory = [];
 
-// V1.4.0: executor Binance em DRY_RUN.
-// Não envia nenhuma ordem real nesta versão.
-const executionHistory = [];
-const executionKeys = new Set();
-let executionPaused = false;
+// V1.4.1: executor Hyperliquid TESTNET em DRY_RUN.
+// Nenhuma chave privada é necessária nesta etapa.
+const hyperExecutionHistory = [];
+const hyperExecutionKeys = new Set();
+let hyperExecutionPaused = false;
 let lastAiEvent = null;
 
 // Último candidato que passou 100% pelo filtro técnico,
@@ -1200,26 +1200,26 @@ async function trackSignal(s) {
 }
 
 
-function executionKey(signal) {
+function hyperExecutionKey(signal) {
   return `${signal.symbol}:${signal.side}:${signal.t15?.openTime || 0}`;
 }
 
-function executionHistoryText() {
-  if (!executionHistory.length) {
-    return '🧪 Nenhum DRY-RUN de execução registrado desde o último deploy.';
+function hyperExecutionHistoryText() {
+  if (!hyperExecutionHistory.length) {
+    return '🧪 Nenhum DRY-RUN Hyperliquid registrado desde o último deploy.';
   }
 
   const lines = [
-    '🧪 <b>Últimas execuções simuladas</b>',
+    '🧪 <b>Hyperliquid Testnet — DRY-RUNs</b>',
     ''
   ];
 
-  for (const e of executionHistory.slice(0, 10)) {
+  for (const e of hyperExecutionHistory.slice(0, 10)) {
     lines.push(
-      `${e.side === 'LONG' ? '🟢' : '🔴'} <b>${e.symbol} ${e.side}</b>\n` +
+      `${e.side === 'LONG' ? '🟢' : '🔴'} <b>${e.coin}-PERP ${e.side}</b>\n` +
       `🤖 IA ${Math.round(e.aiConfidence)}% · ⭐ Score ${e.score}\n` +
-      `💵 Margem ${Number(e.marginUsdt).toFixed(2)} USDT · ${e.leverage}x · ` +
-      `Notional ~${Number(e.notionalUsdt).toFixed(2)} USDT\n` +
+      `💵 Margem ${Number(e.marginUsdc).toFixed(2)} USDC · ` +
+      `${e.leverage}x · Notional ~${Number(e.notionalUsdc).toFixed(2)} USDC\n` +
       `📦 Qty simulada: ${e.quantity}\n` +
       `Entrada ${e.entry} | STOP ${e.stop} | TP3 ${e.tp3}`
     );
@@ -1228,68 +1228,75 @@ function executionHistoryText() {
   return lines.join('\n\n');
 }
 
-async function maybeExecuteSignal(signal) {
-  const key = executionKey(signal);
+async function maybeExecuteHyper(signal) {
+  const key = hyperExecutionKey(signal);
 
-  if (executionPaused) {
+  if (hyperExecutionPaused) {
     console.log(
-      `[exec] ${signal.symbol}: ignorado — executor pausado`
+      `[hyper] ${signal.symbol}: ignorado — executor pausado`
     );
     return null;
   }
 
-  if (executionKeys.has(key)) {
+  if (hyperExecutionKeys.has(key)) {
     console.log(
-      `[exec] ${signal.symbol}: DRY_RUN já registrado para este candle`
+      `[hyper] ${signal.symbol}: DRY_RUN já criado neste candle`
     );
     return null;
   }
 
-  const eligibility = executionEligibility(signal);
+  const eligibility =
+    hyperExecutionEligibility(signal);
 
   if (!eligibility.ok) {
     console.log(
-      `[exec] ${signal.symbol}: não executado — ${eligibility.reason}`
+      `[hyper] ${signal.symbol}: não executado — ${eligibility.reason}`
     );
     return null;
   }
 
-  const cfgExec = executionConfig();
+  const cfgHyper = hyperConfig();
+
+  const openCount =
+    hyperExecutionHistory.filter(
+      e => e.status === 'OPEN'
+    ).length;
 
   if (
-    cfgExec.maxOpenPositions > 0 &&
-    executionHistory.filter(e => e.status === 'OPEN').length >=
-      cfgExec.maxOpenPositions
+    cfgHyper.maxOpenPositions > 0 &&
+    openCount >= cfgHyper.maxOpenPositions
   ) {
     console.log(
-      `[exec] ${signal.symbol}: não executado — limite de posições simuladas`
+      `[hyper] ${signal.symbol}: não executado — ` +
+      `limite de posições simuladas`
     );
     return null;
   }
 
   const plan = {
-    ...buildExecutionPlan(signal),
+    ...buildHyperPlan(signal),
     status: 'OPEN'
   };
 
-  executionKeys.add(key);
-  executionHistory.unshift(plan);
+  hyperExecutionKeys.add(key);
+  hyperExecutionHistory.unshift(plan);
 
-  if (executionHistory.length > 50) {
-    executionHistory.length = 50;
+  if (hyperExecutionHistory.length > 50) {
+    hyperExecutionHistory.length = 50;
   }
 
   console.log(
-    `[exec][DRY_RUN] ${plan.symbol} ${plan.side} · ` +
-    `qty ${plan.quantity} · margem ${plan.marginUsdt} USDT · ` +
+    `[hyper][TESTNET_DRY_RUN] ${plan.coin}-PERP ${plan.side} · ` +
+    `qty ${plan.quantity} · margem ${plan.marginUsdc} USDC · ` +
     `${plan.leverage}x`
   );
 
   await notify(
-    `🧪 <b>BINANCE DRY-RUN</b>\n` +
-    `${plan.side === 'LONG' ? '🟢' : '🔴'} <b>${plan.symbol} ${plan.side}</b>\n` +
+    `🧪 <b>HYPERLIQUID TESTNET — DRY-RUN</b>\n` +
+    `${plan.side === 'LONG' ? '🟢' : '🔴'} ` +
+    `<b>${plan.coin}-PERP ${plan.side}</b>\n` +
     `🤖 IA ${Math.round(plan.aiConfidence)}% · ⭐ Score ${plan.score}\n` +
-    `💵 Margem simulada: ${Number(plan.marginUsdt).toFixed(2)} USDT\n` +
+    `💵 Margem simulada: ${Number(plan.marginUsdc).toFixed(2)} USDC\n` +
     `⚙️ Alavancagem: ${plan.leverage}x\n` +
     `📦 Quantidade simulada: ${plan.quantity}\n` +
     `💰 Entrada: ${plan.entry}\n` +
@@ -1297,7 +1304,7 @@ async function maybeExecuteSignal(signal) {
     `🎯 TP1: ${plan.tp1}\n` +
     `🎯 TP2: ${plan.tp2}\n` +
     `🏆 TP3: ${plan.tp3}\n\n` +
-    `<i>Nenhuma ordem real foi enviada à Binance.</i>`
+    `<i>Nenhuma ordem foi enviada. Estamos testando o executor primeiro.</i>`
   );
 
   return plan;
@@ -2369,7 +2376,7 @@ async function doScan({ forceReply = false } = {}) {
         await sendMessage(cfg.token, activeChatId, signalText(s));
         markAlert(s);
         await trackSignal(s);
-        await maybeExecuteSignal(s);
+        await maybeExecuteHyper(s);
       }
     }
 
@@ -2430,7 +2437,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.4.0 FREE</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.4.1 FREE</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o mercado agora\n' +
       '/status — ver configuração\n' +
@@ -2439,9 +2446,9 @@ async function handleMessage(msg) {
       '/resultados — últimos resultados acompanhados\n' +
       '/ia — últimas decisões do Analista IA\n' +
       '/debug — diagnóstico do último scan\n' +
-      '/binance — testar conectividade com Binance Futures\n' +
-      '/exec — status do executor Binance\n' +
-      '/execs — últimas execuções simuladas\n' +
+      '/hyper — testar Hyperliquid Testnet\n' +
+      '/hexec — status do executor Hyperliquid\n' +
+      '/hexecs — DRY-RUNs Hyperliquid\n' +
       '/kill — pausar executor\n' +
       '/resume — reativar executor'
     );
@@ -2449,7 +2456,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.4.0 FREE\n` +
+      `✅ Online — V1.4.1 FREE\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🪙 Top mercados: ${cfg.topMarkets}\n` +
       `⭐ Score mínimo para sinal: ${cfg.minScore}\n` +
@@ -2489,9 +2496,9 @@ async function handleMessage(msg) {
       `🟠 Pendente de IA: ${pendingAiCandidate ? `${pendingAiCandidate.symbol} ${pendingAiCandidate.side}` : 'nenhum'}\n` +
       `🎯 Acompanhando: ${activeSignals.size} sinal(is)\n` +
       `📚 Resultados registrados: ${resultHistory.length}\n` +
-      `🏦 Executor Binance: ${executionConfig().enabled ? 'ATIVO' : 'INATIVO'} · ${executionConfig().mode}\n` +
-      `🔒 Ordens reais: BLOQUEADAS na V1.4.0\n` +
-      `⏸ Executor pausado: ${executionPaused ? 'SIM' : 'NÃO'}`
+      `🟣 Hyperliquid: ${hyperConfig().enabled ? 'ATIVO' : 'INATIVO'} · TESTNET_DRY_RUN\n` +
+      `🔒 Ordens testnet assinadas: AINDA BLOQUEADAS\n` +
+      `⏸ Executor pausado: ${hyperExecutionPaused ? 'SIM' : 'NÃO'}`
     );
   } else if (text.startsWith('/ativos')) {
     await sendMessage(cfg.token, activeChatId, activeSignalsText());
@@ -2501,62 +2508,73 @@ async function handleMessage(msg) {
     await sendMessage(cfg.token, activeChatId, aiHistoryText());
   } else if (text.startsWith('/debug')) {
     await sendMessage(cfg.token, activeChatId, lastScanDebugText());
-  } else if (text.startsWith('/binance')) {
+  } else if (text.startsWith('/hyper')) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🏦 Testando conexão com Binance Futures...'
+      '🟣 Testando conexão com Hyperliquid Testnet...'
     );
 
-    const pub = await testBinancePublicConnectivity();
-    const auth = await testBinanceAuth();
+    const pub = await testHyperliquidConnectivity();
+    const account = await testHyperliquidAccount();
 
-    const authLine = auth.skipped
-      ? `🔑 Auth: ${auth.message}`
-      : auth.ok
-        ? `🔑 Auth: ✅ OK · canTrade=${auth.canTrade ? 'sim' : 'não'} · saldo disp. ${auth.availableBalance ?? '—'}`
-        : `🔑 Auth: ❌ ${auth.message}`;
+    const sample = pub.sample
+      ? `BTC ${pub.sample.BTC ?? '—'} · ETH ${pub.sample.ETH ?? '—'} · SOL ${pub.sample.SOL ?? '—'}`
+      : '—';
+
+    const accountLine = account.skipped
+      ? `👛 Conta: ${account.message}`
+      : account.ok
+        ? `👛 Conta: ✅ OK · valor ${account.accountValue ?? '—'} USDC · ` +
+          `withdrawable ${account.withdrawable ?? '—'} · posições ${account.positions}`
+        : `👛 Conta: ❌ ${account.message}`;
 
     await sendMessage(
       cfg.token,
       activeChatId,
-      `🏦 <b>Binance Futures</b>\n\n` +
-      `${pub.ok ? '✅' : '❌'} Público: ${pub.message}\n` +
+      `🟣 <b>Hyperliquid Testnet</b>\n\n` +
+      `${pub.ok ? '✅' : '❌'} API pública: ${pub.message}\n` +
       `HTTP: ${pub.status ?? '—'} · latência ${pub.latencyMs ?? '—'}ms\n` +
-      `${authLine}\n\n` +
-      `<i>Esta versão continua sem enviar ordens reais.</i>`
+      `Mercados com mid: ${pub.midsCount ?? 0}\n` +
+      `Amostra: ${sample}\n\n` +
+      `${accountLine}\n\n` +
+      `<i>Nenhuma ordem é enviada nesta versão.</i>`
     );
-  } else if (text.startsWith('/execs')) {
+  } else if (text.startsWith('/hexecs')) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      executionHistoryText()
+      hyperExecutionHistoryText()
     );
-  } else if (text.startsWith('/exec')) {
+  } else if (text.startsWith('/hexec')) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      executionStatusText({
-        paused: executionPaused,
-        openDryRuns: executionHistory.filter(e => e.status === 'OPEN').length,
-        totalDryRuns: executionHistory.length
+      hyperStatusText({
+        paused: hyperExecutionPaused,
+        openDryRuns:
+          hyperExecutionHistory.filter(
+            e => e.status === 'OPEN'
+          ).length,
+        totalDryRuns:
+          hyperExecutionHistory.length
       })
     );
   } else if (text.startsWith('/kill')) {
-    executionPaused = true;
+    hyperExecutionPaused = true;
 
     await sendMessage(
       cfg.token,
       activeChatId,
-      '⛔ Executor Binance pausado. O scanner e a IA continuam funcionando, mas nenhum novo DRY-RUN será criado.'
+      '⛔ Executor Hyperliquid pausado. Scanner e IA continuam funcionando.'
     );
   } else if (text.startsWith('/resume')) {
-    executionPaused = false;
+    hyperExecutionPaused = false;
 
     await sendMessage(
       cfg.token,
       activeChatId,
-      '✅ Executor Binance reativado em DRY_RUN. Ordens reais continuam bloqueadas.'
+      '✅ Executor Hyperliquid reativado em TESTNET_DRY_RUN.'
     );
   } else if (text.startsWith('/scan') || text.startsWith('/top')) {
     if (!scanning) {
@@ -2592,7 +2610,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.4.0-free',
+    version: '1.4.1-free',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -2617,11 +2635,11 @@ http.createServer((req, res) => {
     aiWaitConditionalVolumeRatio: cfg.aiWaitConditionalVolumeRatio,
     aiWaitConditionalOiPct: cfg.aiWaitConditionalOiPct,
     aiWatchRecheckMinConfidence: cfg.aiWatchRecheckMinConfidence,
-    binanceExecutorEnabled: executionConfig().enabled,
-    binanceExecutionMode: executionConfig().mode,
-    binanceExecutionPaused: executionPaused,
-    binanceDryRuns: executionHistory.length,
-    binanceLiveOrdersUnlocked: false,
+    hyperliquidEnabled: hyperConfig().enabled,
+    hyperliquidMode: hyperConfig().mode,
+    hyperliquidPaused: hyperExecutionPaused,
+    hyperliquidDryRuns: hyperExecutionHistory.length,
+    hyperliquidSignedOrdersUnlocked: false,
     pendingAI: pendingAiCandidate
       ? `${pendingAiCandidate.symbol}:${pendingAiCandidate.side}`
       : null,
@@ -2631,7 +2649,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.4.0 FREE pronto ✅');
+console.log('Crypto Futures Scanner V1.4.1 FREE pronto ✅');
 
 setTimeout(() => doScan().catch(console.error), 5000);
 setInterval(() => doScan().catch(console.error), cfg.intervalMin * 60_000);

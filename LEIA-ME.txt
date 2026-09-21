@@ -1,106 +1,94 @@
-CRYPTO FUTURES SCANNER V1.4.0 FREE
-BINANCE FUTURES EXECUTOR — DRY RUN
+CRYPTO FUTURES SCANNER V1.4.1 FREE
+HYPERLIQUID TESTNET — PRIMEIRO TESTE
 
-IMPORTANTE
-Esta versão NÃO envia ordens reais.
-Mesmo se BINANCE_EXECUTION_MODE=LIVE for colocado por engano,
-a V1.4.0 bloqueia live trading.
+OBJETIVO
+Testar se o Render consegue acessar a Hyperliquid Testnet e preparar
+o bot para execução automática em uma DEX de perpétuos.
 
-POR QUE COMEÇAR ASSIM
-Antes de ligar dinheiro real precisamos confirmar duas coisas:
-1) o Render consegue alcançar a API USD-M Futures da Binance;
-2) uma API Key de Futures autentica corretamente nesse host.
+ESTA VERSÃO NÃO PEDE CHAVE PRIVADA.
+ESTA VERSÃO NÃO ENVIA ORDENS.
 
-COMANDOS NOVOS
+NOVO ARQUIVO
+hyperliquid-executor.js
 
-/binance
-- testa GET /fapi/v1/time
-- se BINANCE_API_KEY e BINANCE_API_SECRET existirem,
-  também testa GET /fapi/v3/account
-- NÃO envia ordem
+NOVOS COMANDOS
 
-/exec
-- mostra status/riscos do executor
+/hyper
+- testa POST /info com type=allMids
+- confirma conectividade com https://api.hyperliquid-testnet.xyz
+- mostra mids de BTC/ETH/SOL
+- se HYPERLIQUID_WALLET_ADDRESS estiver configurado,
+  consulta clearinghouseState da conta testnet
 
-/execs
-- mostra últimas execuções simuladas
+/hexec
+- status do executor Hyperliquid
+
+/hexecs
+- últimas execuções automáticas simuladas
 
 /kill
-- pausa novas execuções simuladas
+- pausa o executor
 
 /resume
-- reativa o executor DRY_RUN
+- reativa o executor
 
-EXECUÇÃO AUTOMÁTICA
-Quando um sinal for realmente LIBERADO pelo scanner/IA:
-- decisão precisa ser APPROVE;
-- confiança IA padrão >= 70%;
-- score padrão >= 75;
-- o bot cria automaticamente um plano DRY_RUN;
-- calcula margem/notional/quantidade;
-- registra STOP, TP1, TP2 e TP3;
-- avisa no Telegram.
+EXECUÇÃO AUTOMÁTICA SIMULADA
+Quando o scanner realmente liberar um APPROVE:
+- IA >= 70%
+- score >= 75
+- executor cria um TESTNET_DRY_RUN
+- calcula margem, notional e quantidade
+- registra entrada, STOP, TP1, TP2 e TP3
+- envia o plano pelo Telegram
 
 PADRÕES
-BINANCE_EXECUTION_ENABLED=true
-BINANCE_EXECUTION_MODE=DRY_RUN
-BINANCE_MARGIN_USDT=5
-BINANCE_LEVERAGE=2
-BINANCE_AUTO_MIN_AI_CONFIDENCE=70
-BINANCE_AUTO_MIN_SCORE=75
-BINANCE_MAX_OPEN_POSITIONS=1
+HYPERLIQUID_EXECUTION_ENABLED=true
+HYPERLIQUID_MARGIN_USDC=5
+HYPERLIQUID_LEVERAGE=2
+HYPERLIQUID_AUTO_MIN_AI_CONFIDENCE=70
+HYPERLIQUID_AUTO_MIN_SCORE=75
+HYPERLIQUID_MAX_OPEN_POSITIONS=1
 
-Com 5 USDT de margem e 2x:
-notional aproximado = 10 USDT por operação simulada.
+VARIÁVEL OPCIONAL
+HYPERLIQUID_WALLET_ADDRESS=0x...
 
-VARIÁVEIS OPCIONAIS PARA TESTAR AUTENTICAÇÃO
-BINANCE_API_KEY=...
-BINANCE_API_SECRET=...
+É SOMENTE O ENDEREÇO PÚBLICO.
+NÃO COLOQUE CHAVE PRIVADA NESTA ETAPA.
 
-SEGURANÇA DA CHAVE
-- use uma API Key dedicada ao bot;
-- ative somente Futures/Trading quando chegarmos à fase real;
-- não habilite saque;
-- nunca envie a secret pelo Telegram/chat;
-- salve a secret somente no Environment do Render.
+POR QUE A CONTA PÚBLICA PODE SER CONSULTADA
+O endpoint /info aceita o endereço da conta para clearinghouseState.
+Nenhuma assinatura é necessária para leitura.
 
-ARQUIVOS
-Agora são 7 arquivos:
-- ai.js
-- binance.js
-- binance-executor.js   <-- NOVO
-- index.js
-- indicators.js
-- scanner.js
-- telegram.js
+PRÓXIMA FASE
+Se /hyper funcionar no Render:
+- adicionar SDK de assinatura;
+- usar API/Agent Wallet;
+- enviar UMA ordem pequena na Hyperliquid TESTNET;
+- testar cancelamento;
+- testar STOP/TP;
+- somente depois pensar em mainnet.
+
+SEGURANÇA
+Quando chegarmos à Agent Wallet:
+- criar uma Agent/API Wallet separada;
+- nunca usar a seed phrase da carteira principal no bot;
+- nunca colar private key no chat;
+- guardar secret somente como variável segura no host.
+
+ARQUIVOS PARA SUBSTITUIR
+Agora são 7:
+ai.js
+binance.js
+hyperliquid-executor.js
+index.js
+indicators.js
+scanner.js
+telegram.js
 
 TESTE
 1. Suba os 7 arquivos
 2. Deploy
 3. /status
-4. /binance
-5. /exec
+4. /hyper
+5. /hexec
 6. /scan
-
-SE /binance RETORNAR 451/403
-Não vamos tentar contornar restrição da Binance.
-Será preciso executar o serviço em uma região/host em que a API esteja
-oficialmente disponível para a sua conta e uso.
-
-PRÓXIMA FASE
-Somente depois de:
-- conectividade OK;
-- auth OK;
-- alguns DRY_RUNs corretos;
-
-a próxima versão poderá implementar envio de ordem real com:
-- MARKET entry
-- leverage
-- tamanho por risco
-- STOP obrigatório
-- TAKE PROFIT
-- 1 posição por vez
-- limite de perda diária
-- kill switch
-
-Futuros têm risco elevado, alavancagem e liquidação.

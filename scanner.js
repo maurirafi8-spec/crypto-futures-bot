@@ -782,7 +782,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.4.0: scanner + IA + watchlist + executor Binance DRY_RUN. ` +
+    `<i>V1.4.1: scanner + IA + watchlist + Hyperliquid Testnet DRY_RUN. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }
