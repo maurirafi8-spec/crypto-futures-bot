@@ -284,7 +284,7 @@ function scoreSignal(t5, t15, t1h, t4h, oiPct) {
 }
 
 function confirmationStatus(
-  t15,
+  t5,
   oiPct,
   score,
   minVolumeRatio,
@@ -294,7 +294,7 @@ function confirmationStatus(
   exceptionScore,
   exceptionVolumeRatio
 ) {
-  const volumeRatio = Number(t5.volumeRatio || 0);
+  const volumeRatio = Number(t5?.volumeRatio || 0);
   const volumeFloorOk = volumeRatio >= hardMinVolumeRatio;
   const volumeOk = volumeRatio >= minVolumeRatio;
   const oiOk = oiPct >= minOiPct;
@@ -960,7 +960,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.5.0: wide scan rotativo + scalp 5m + paper trades curtos. ` +
+    `<i>V1.5.1: hotfix t5 + wide scan rotativo + scalp 5m. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

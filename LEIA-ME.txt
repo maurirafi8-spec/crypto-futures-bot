@@ -1,148 +1,57 @@
-CRYPTO FUTURES SCANNER V1.5.0 FREE
-WIDE SCAN + SCALP PAPER TRADING
+CRYPTO FUTURES SCANNER V1.5.1 FREE
+HOTFIX DO WIDE SCAN + SCALP
 
-OBJETIVO
-- varrer mais moedas sem estourar a cota da Coinalyze;
-- fazer operações paper mais curtas, no estilo scalp;
-- manter IA + filtros de risco.
+CORREÇÃO PRINCIPAL
+O log da V1.5.0 mostrava:
+t5 is not defined
 
-MERCADOS
-Cada scan analisa até 12 mercados.
+Causa:
+confirmationStatus recebia o candle rápido como parâmetro antigo "t15",
+mas a lógica interna já usava "t5".
 
-6 principais sempre:
-BTC
-ETH
-SOL
-XRP
-BNB
-DOGE
+Correção:
+confirmationStatus agora recebe t5 corretamente.
 
-6 vagas rotativas entre:
-ADA
-LINK
-AVAX
-SUI
-LTC
-BCH
-DOT
-NEAR
-UNI
-AAVE
-ETC
-ATOM
-INJ
-HBAR
-TRX
-FIL
-ARB
-OP
+NÃO ALTERADO
+- 12 mercados por scan
+- 6 core + 6 alts rotativas
+- timing 5m
+- confirmação 15m
+- tendência 1h
+- contexto 4h
+- paper trading scalp
+- até 3 posições
+- risco 0.75%
+- TP 0.70R / 1.10R / 1.60R
 
-Assim o bot cobre mais moedas ao longo dos scans sem consultar todas
-ao mesmo tempo.
+MELHORIA DE DEPLOY
+Agora o primeiro scan automático espera 30 segundos após o processo iniciar.
 
-POR QUE 12
-A Coinalyze limita a API a 40 chamadas/minuto e informa que cada símbolo
-consome uma chamada nos endpoints históricos.
+Motivo:
+durante rolling deploy do Render, a instância antiga pode continuar viva
+por alguns segundos. Se as duas varrerem 12 moedas ao mesmo tempo,
+a cota da Coinalyze pode ser atingida.
 
-Nesta versão usamos 3 blocos por símbolo:
-- OHLCV 5m
-- OHLCV 1h
-- Open Interest history
+Variável opcional:
+SCAN_START_DELAY_SECONDS=30
 
-12 x 3 = 36 unidades, deixando pequena folga.
+TELEGRAM 409
+Se aparecer:
+Conflict: terminated by other getUpdates request
 
-FUNDING
-O funding foi removido do score rápido desta versão para preservar a cota.
-Ele valia somente 4 pontos no score anterior.
+o bot agora espera 30 segundos antes de tentar polling novamente.
+Isso ajuda durante a troca entre a instância antiga e a nova no Render.
 
-SCALP 5m
-Agora o scanner usa:
-5m = timing
-15m = confirmação
-1h = tendência principal
-4h = contexto secundário
+Se o 409 continuar aparecendo por vários minutos, então existe outra
+instância/serviço usando o mesmo BOT_TOKEN e ela precisa ser desligada.
 
-O 4h não precisa estar perfeitamente alinhado para um scalp.
-
-ALVOS MAIS CURTOS
-Stop:
-aprox. 1 ATR de 5m
-com piso 0.25% e teto 1.20%.
-
-TP1 = 0.70R
-TP2 = 1.10R
-TP3 = 1.60R
-
-PAPER TRADING
-Padrões:
-banca 1000 USDC
-risco 0.75% por trade
-2x
-até 3 posições simultâneas
-cooldown 30 min
-máximo 3 horas por posição
-
-SAÍDAS
-TP1 fecha 30% -> stop para breakeven
-TP2 fecha 30% -> stop para TP1
-TP3 fecha 40%
-
-SCALP STALE
-Se passar 60 minutos:
-- ainda não bateu TP1;
-- e o trade estiver no zero/negativo;
-
-o bot encerra a posição paper para liberar capital.
-
-GESTÃO A CADA 5 MIN
-As posições paper agora usam o candle fechado de 5m para STOP/TP,
-em vez de esperar candle de 15m.
-
-IA
-Prompt atualizado:
-- foco 5m/15m/1h;
-- 4h é contexto;
-- duração esperada 15min–3h.
-
-Gap IA normal padrão:
-20 min
-
-Prioridade:
-continua 5 min.
-
-RECHECK WAIT/WATCH
-Gap padrão:
-10 min
-
-Usa novo candle de 5m.
-
-COMANDOS
+TESTE APÓS DEPLOY
 /status
 /scan
-/top
-/ia
 /debug
 /paper
-/paperpos
-/papertrades
-/paperpause
-/paperresume
 
-VARIÁVEIS OPCIONAIS
-V133_TOP_MARKETS=12
-PAPER_RISK_PER_TRADE_PCT=0.75
-PAPER_MAX_OPEN_POSITIONS=3
-PAPER_COOLDOWN_MINUTES=30
-PAPER_MAX_HOLD_HOURS=3
-PAPER_SCALP_MODE=true
-PAPER_SCALP_STALE_MINUTES=60
-AI_MIN_GAP_MINUTES=20
-AI_WAIT_RECHECK_GAP_MINUTES=10
-
-IMPORTANTE
-Não estamos copiando a estratégia proprietária de nenhum outro bot.
-Estamos implementando um comportamento semelhante de trades curtos:
-mais ativos, timing 5m, alvos menores e tempo máximo reduzido.
-
-Paper trading continua sendo simulação. Resultado simulado não garante
-resultado equivalente em execução real.
+No log queremos ver:
+[scan] modo SCALP 5m · 12 mercados
+e NÃO queremos mais:
+t5 is not defined
