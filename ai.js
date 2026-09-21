@@ -93,6 +93,20 @@ function buildPayload(signal) {
       change24hPct: num(signal.change24h, 3),
       stopPct: num(stopPct, 3)
     },
+    timeframe5m: {
+      trend: sideTrend(signal.t5),
+      rsi: num(signal.t5?.rsi, 2),
+      macdHistogram: num(signal.t5?.macdHist, 8),
+      volumeRatio: num(signal.t5?.volumeRatio, 3),
+      priceVsEma20Pct:
+        signal.t5?.ema20
+          ? num(((signal.t5.price - signal.t5.ema20) / signal.t5.ema20) * 100, 3)
+          : null,
+      ema20VsEma50Pct:
+        signal.t5?.ema50
+          ? num(((signal.t5.ema20 - signal.t5.ema50) / signal.t5.ema50) * 100, 3)
+          : null
+    },
     timeframe15m: {
       trend: sideTrend(signal.t15),
       rsi: num(signal.t15?.rsi, 2),
@@ -121,7 +135,10 @@ function buildPayload(signal) {
     },
     derivatives: {
       openInterestChangePct: num(signal.oiPct, 3),
-      fundingRatePct: num(signal.fundingRate, 5)
+      fundingRatePct:
+        signal.fundingRate == null
+          ? null
+          : num(signal.fundingRate, 5)
     },
     btcContext: signal.btcContext || null,
     deterministicReasons: (signal.reasons || []).slice(0, 6),
@@ -134,7 +151,9 @@ function systemPrompt() {
     'Você é a segunda camada conservadora de validação de um scanner de futuros de criptomoedas.',
     'Use somente os dados enviados.',
     'Não invente notícias, preços ou indicadores.',
-    'Analise confluência multi-timeframe, volume relativo, Open Interest, funding, RSI, MACD, stop e contexto do BTC.',
+    'Este scanner está em modo SCALP: duração esperada de aproximadamente 15 minutos a 3 horas.',
+    'Dê maior peso para 5m, 15m e 1h. Use 4h apenas como contexto e risco, sem exigir alinhamento perfeito.',
+    'Analise confluência multi-timeframe, volume relativo, Open Interest, RSI, MACD, stop e contexto do BTC. Funding pode estar ausente.',
     'STANDARD pode receber APPROVE, WATCH, WAIT ou REJECT.',
     'PRE_CANDIDATE nunca pode receber APPROVE.',
     'WATCH é somente observação, nunca entrada.',
@@ -367,7 +386,7 @@ async function fetchOpenRouter({ apiKey, body, timeoutMs }) {
         'HTTP-Referer':
           process.env.OPENROUTER_SITE_URL ||
           'https://crypto-futures-bot.onrender.com',
-        'X-Title': 'Crypto Futures Scanner V1.3.8.5 Free'
+        'X-Title': 'Crypto Futures Scanner V1.5.0 Free'
       },
       body: JSON.stringify(body),
       signal: controller.signal

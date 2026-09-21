@@ -8,16 +8,37 @@ import {
 
 import { ema, rsi, atr, macd, pctChange } from './indicators.js';
 
-const TARGET_BASES = [
+const CORE_BASES = [
   'BTC',
   'ETH',
   'SOL',
   'XRP',
   'BNB',
-  'DOGE',
-  'ADA',
-  'AVAX'
+  'DOGE'
 ];
+
+const ROTATING_BASES = [
+  'ADA',
+  'LINK',
+  'AVAX',
+  'SUI',
+  'LTC',
+  'BCH',
+  'DOT',
+  'NEAR',
+  'UNI',
+  'AAVE',
+  'ETC',
+  'ATOM',
+  'INJ',
+  'HBAR',
+  'TRX',
+  'FIL',
+  'ARB',
+  'OP'
+];
+
+let marketRotationCursor = 0;
 
 const EXCHANGE_PRIORITY = [
   'BINANCE',
@@ -30,6 +51,7 @@ function last(arr) {
   return arr[arr.length - 1];
 }
 
+const M5_MS = 5 * 60 * 1000;
 const M15_MS = 15 * 60 * 1000;
 const H1_MS = 60 * 60 * 1000;
 const H4_MS = 4 * 60 * 60 * 1000;
@@ -74,13 +96,13 @@ function mapHistory(data) {
   }));
 }
 
-function resample4h(candles) {
+function resampleCandles(candles, bucketMs) {
   const groups = new Map();
 
   for (const c of candles) {
     const bucket =
-      Math.floor(c.openTime / (4 * 60 * 60 * 1000)) *
-      (4 * 60 * 60 * 1000);
+      Math.floor(c.openTime / bucketMs) *
+      bucketMs;
 
     if (!groups.has(bucket)) {
       groups.set(bucket, {
@@ -94,6 +116,7 @@ function resample4h(candles) {
       });
     } else {
       const g = groups.get(bucket);
+
       g.high = Math.max(g.high, c.high);
       g.low = Math.min(g.low, c.low);
       g.close = c.close;
@@ -102,7 +125,16 @@ function resample4h(candles) {
     }
   }
 
-  return [...groups.values()].sort((a, b) => a.openTime - b.openTime);
+  return [...groups.values()]
+    .sort((a, b) => a.openTime - b.openTime);
+}
+
+function resample15m(candles5m) {
+  return resampleCandles(candles5m, M15_MS);
+}
+
+function resample4h(candles1h) {
+  return resampleCandles(candles1h, H4_MS);
 }
 
 function analyzeTf(candles) {
@@ -146,7 +178,7 @@ function analyzeTf(candles) {
   };
 }
 
-function scoreSignal(t15, t1h, t4h, oiPct, fundingRate) {
+function scoreSignal(t5, t15, t1h, t4h, oiPct) {
   let long = 0;
   let short = 0;
 
@@ -163,66 +195,91 @@ function scoreSignal(t15, t1h, t4h, oiPct, fundingRate) {
     }
   };
 
-  if (t4h.bullish) add('LONG', 22, '4H em tendência de alta');
-  if (t4h.bearish) add('SHORT', 22, '4H em tendência de baixa');
+  // V1.5.0 SCALP:
+  // 5m / 15m / 1h mandam no sinal.
+  // 4h vira contexto secundário, não o motor principal.
+  if (t1h.bullish) add('LONG', 18, '1H em tendência de alta');
+  if (t1h.bearish) add('SHORT', 18, '1H em tendência de baixa');
 
-  if (t1h.bullish) add('LONG', 18, '1H alinhado para alta');
-  if (t1h.bearish) add('SHORT', 18, '1H alinhado para baixa');
-
-  if (t15.price > t15.ema20 && t15.ema20 > t15.ema50) {
-    add('LONG', 12, '15m acima das EMAs');
+  if (
+    t15.price > t15.ema20 &&
+    t15.ema20 > t15.ema50
+  ) {
+    add('LONG', 18, '15m acima das EMAs');
   }
 
-  if (t15.price < t15.ema20 && t15.ema20 < t15.ema50) {
-    add('SHORT', 12, '15m abaixo das EMAs');
+  if (
+    t15.price < t15.ema20 &&
+    t15.ema20 < t15.ema50
+  ) {
+    add('SHORT', 18, '15m abaixo das EMAs');
   }
 
-  if (t15.rsi >= 52 && t15.rsi <= 68) {
-    add('LONG', 10, `RSI 15m ${t15.rsi.toFixed(1)}`);
+  if (
+    t5.price > t5.ema20 &&
+    t5.ema20 > t5.ema50
+  ) {
+    add('LONG', 14, '5m acima das EMAs');
   }
 
-  if (t15.rsi <= 48 && t15.rsi >= 32) {
-    add('SHORT', 10, `RSI 15m ${t15.rsi.toFixed(1)}`);
+  if (
+    t5.price < t5.ema20 &&
+    t5.ema20 < t5.ema50
+  ) {
+    add('SHORT', 14, '5m abaixo das EMAs');
   }
 
-  if (t15.macdHist > 0) add('LONG', 8, 'MACD comprador');
-  if (t15.macdHist < 0) add('SHORT', 8, 'MACD vendedor');
+  if (t5.rsi >= 51 && t5.rsi <= 69) {
+    add('LONG', 10, `RSI 5m ${t5.rsi.toFixed(1)}`);
+  }
 
-  if (t15.volumeRatio >= 1.25) {
-    if (t15.price > t15.ema20) {
-      add('LONG', 10, `Volume ${t15.volumeRatio.toFixed(2)}x`);
+  if (t5.rsi <= 49 && t5.rsi >= 31) {
+    add('SHORT', 10, `RSI 5m ${t5.rsi.toFixed(1)}`);
+  }
+
+  if (t5.macdHist > 0) {
+    add('LONG', 10, 'MACD 5m comprador');
+  }
+
+  if (t5.macdHist < 0) {
+    add('SHORT', 10, 'MACD 5m vendedor');
+  }
+
+  if (t5.volumeRatio >= 1.10) {
+    if (t5.price > t5.ema20) {
+      add('LONG', 10, `Volume 5m ${t5.volumeRatio.toFixed(2)}x`);
     }
 
-    if (t15.price < t15.ema20) {
-      add('SHORT', 10, `Volume ${t15.volumeRatio.toFixed(2)}x`);
+    if (t5.price < t5.ema20) {
+      add('SHORT', 10, `Volume 5m ${t5.volumeRatio.toFixed(2)}x`);
     }
   }
 
-  if (oiPct >= 0.5) {
-    if (t15.price > t15.ema20) {
+  if (oiPct >= 0.50) {
+    if (t5.price > t5.ema20) {
       add('LONG', 10, `OI +${oiPct.toFixed(2)}%`);
     }
 
-    if (t15.price < t15.ema20) {
+    if (t5.price < t5.ema20) {
       add('SHORT', 10, `OI +${oiPct.toFixed(2)}%`);
     }
   }
 
-  // Coinalyze já retorna funding em percentual.
-  if (fundingRate <= -0.01) {
-    add('LONG', 4, `Funding ${fundingRate.toFixed(4)}%`);
-  }
+  if (t15.macdHist > 0) add('LONG', 4, 'MACD 15m comprador');
+  if (t15.macdHist < 0) add('SHORT', 4, 'MACD 15m vendedor');
 
-  if (fundingRate >= 0.01) {
-    add('SHORT', 4, `Funding ${fundingRate.toFixed(4)}%`);
-  }
+  if (t4h.bullish) add('LONG', 6, '4H favorável');
+  if (t4h.bearish) add('SHORT', 6, '4H favorável');
 
   const side = long >= short ? 'LONG' : 'SHORT';
 
   return {
     side,
     score: Math.min(100, Math.max(long, short)),
-    reasons: side === 'LONG' ? whyLong : whyShort
+    reasons:
+      side === 'LONG'
+        ? whyLong
+        : whyShort
   };
 }
 
@@ -237,7 +294,7 @@ function confirmationStatus(
   exceptionScore,
   exceptionVolumeRatio
 ) {
-  const volumeRatio = Number(t15.volumeRatio || 0);
+  const volumeRatio = Number(t5.volumeRatio || 0);
   const volumeFloorOk = volumeRatio >= hardMinVolumeRatio;
   const volumeOk = volumeRatio >= minVolumeRatio;
   const oiOk = oiPct >= minOiPct;
@@ -284,71 +341,148 @@ function confirmationStatus(
 }
 
 function buildLevels(side, price, atrValue) {
-  const risk = atrValue * 1.25;
+  // Scalp: stop mais curto e alvos próximos.
+  // Piso evita stop microscópico; teto evita transformar scalp em swing.
+  const atrRisk =
+    Number(atrValue || 0) * 1.0;
+
+  const risk =
+    Math.min(
+      Math.max(
+        atrRisk,
+        price * 0.0025
+      ),
+      price * 0.012
+    );
 
   if (side === 'LONG') {
     return {
       entry: price,
       stop: price - risk,
-      tp1: price + risk * 1.5,
-      tp2: price + risk * 2.2,
-      tp3: price + risk * 3
+      tp1: price + risk * 0.70,
+      tp2: price + risk * 1.10,
+      tp3: price + risk * 1.60,
+      tradeStyle: 'SCALP_5M'
     };
   }
 
   return {
     entry: price,
     stop: price + risk,
-    tp1: price - risk * 1.5,
-    tp2: price - risk * 2.2,
-    tp3: price - risk * 3
+    tp1: price - risk * 0.70,
+    tp2: price - risk * 1.10,
+    tp3: price - risk * 1.60,
+    tradeStyle: 'SCALP_5M'
+  };
+}
+
+function bestMarketForBase(
+  markets,
+  exchangeNames,
+  base
+) {
+  const available = markets.filter(m =>
+    String(m.base_asset).toUpperCase() === base &&
+    String(m.quote_asset).toUpperCase() === 'USDT' &&
+    m.is_perpetual === true &&
+    m.has_ohlcv_data === true
+  );
+
+  if (!available.length) {
+    return null;
+  }
+
+  available.sort((a, b) => {
+    const aName = String(
+      exchangeNames.get(String(a.exchange)) || a.exchange
+    ).toUpperCase();
+
+    const bName = String(
+      exchangeNames.get(String(b.exchange)) || b.exchange
+    ).toUpperCase();
+
+    const ai = EXCHANGE_PRIORITY.indexOf(aName);
+    const bi = EXCHANGE_PRIORITY.indexOf(bName);
+
+    return (
+      (ai === -1 ? 999 : ai) -
+      (bi === -1 ? 999 : bi)
+    );
+  });
+
+  const picked = available[0];
+
+  return {
+    ...picked,
+    exchangeName:
+      exchangeNames.get(String(picked.exchange)) ||
+      picked.exchange
   };
 }
 
 function chooseMarkets(markets, exchangeNames, limit) {
   const selected = [];
+  const usedBases = new Set();
 
-  for (const base of TARGET_BASES) {
-    const available = markets.filter(m =>
-      String(m.base_asset).toUpperCase() === base &&
-      String(m.quote_asset).toUpperCase() === 'USDT' &&
-      m.is_perpetual === true &&
-      m.has_ohlcv_data === true
+  const pushBase = base => {
+    if (
+      selected.length >= limit ||
+      usedBases.has(base)
+    ) {
+      return;
+    }
+
+    const picked =
+      bestMarketForBase(
+        markets,
+        exchangeNames,
+        base
+      );
+
+    if (picked) {
+      selected.push(picked);
+      usedBases.add(base);
+    }
+  };
+
+  // 6 principais sempre entram.
+  for (const base of CORE_BASES) {
+    pushBase(base);
+  }
+
+  // As demais vagas giram entre as alts.
+  const altSlots =
+    Math.max(0, limit - selected.length);
+
+  for (
+    let offset = 0;
+    offset < ROTATING_BASES.length &&
+    selected.length < limit;
+    offset += 1
+  ) {
+    const idx =
+      (marketRotationCursor + offset) %
+      ROTATING_BASES.length;
+
+    pushBase(
+      ROTATING_BASES[idx]
     );
+  }
 
-    if (!available.length) continue;
-
-    available.sort((a, b) => {
-      const aName = String(
-        exchangeNames.get(String(a.exchange)) || a.exchange
-      ).toUpperCase();
-
-      const bName = String(
-        exchangeNames.get(String(b.exchange)) || b.exchange
-      ).toUpperCase();
-
-      const ai = EXCHANGE_PRIORITY.indexOf(aName);
-      const bi = EXCHANGE_PRIORITY.indexOf(bName);
-
-      return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
-    });
-
-    const picked = available[0];
-
-    selected.push({
-      ...picked,
-      exchangeName:
-        exchangeNames.get(String(picked.exchange)) || picked.exchange
-    });
-
-    if (selected.length >= limit) break;
+  if (altSlots > 0) {
+    marketRotationCursor =
+      (
+        marketRotationCursor +
+        altSlots
+      ) %
+      ROTATING_BASES.length;
   }
 
   return selected;
 }
 
 export async function scanMarket({
-  topMarkets = 6,
+  topMarkets = 12,
   minQuoteVolume = 20_000_000,
   minScore = 70,
   preCandidateMinScore = 60,
@@ -368,10 +502,12 @@ export async function scanMarket({
     exchangeList.map(e => [String(e.code), e.name])
   );
 
+  // 12 símbolos x 3 endpoints históricos = 36 unidades de cota.
+  // Mantém folga abaixo do limite de 40 chamadas/minuto da Coinalyze.
   const markets = chooseMarkets(
     marketList,
     exchangeNames,
-    Math.min(topMarkets, 6)
+    Math.min(topMarkets, 12)
   );
 
   if (!markets.length) {
@@ -381,7 +517,7 @@ export async function scanMarket({
   const symbols = markets.map(m => m.symbol);
 
   const now = Math.floor(Date.now() / 1000);
-  const from15 = now - 72 * 60 * 60;
+  const from5 = now - 72 * 60 * 60;
   const from1h = now - 900 * 60 * 60;
   const fromOi = now - 6 * 60 * 60;
 
@@ -390,24 +526,23 @@ export async function scanMarket({
     markets.map(m => `${m.base_asset}@${m.exchangeName}`).join(', ')
   );
 
-  const [candles15Raw, candles1hRaw, fundingRaw, oiRaw] =
+  console.log(
+    `[scan] modo SCALP 5m · ${markets.length} mercados · funding omitido para preservar rate limit`
+  );
+
+  const [candles5Raw, candles1hRaw, oiRaw] =
     await Promise.all([
-      ohlcvHistory(symbols, '15min', from15, now),
+      ohlcvHistory(symbols, '5min', from5, now),
       ohlcvHistory(symbols, '1hour', from1h, now),
-      fundingRates(symbols),
       openInterestHistory(symbols, '15min', fromOi, now)
     ]);
 
-  const map15 = new Map(
-    candles15Raw.map(x => [x.symbol, x.history])
+  const map5 = new Map(
+    candles5Raw.map(x => [x.symbol, x.history])
   );
 
   const map1h = new Map(
     candles1hRaw.map(x => [x.symbol, x.history])
-  );
-
-  const fundingMap = new Map(
-    fundingRaw.map(x => [x.symbol, Number(x.value || 0)])
   );
 
   const oiMap = new Map(
@@ -421,13 +556,34 @@ export async function scanMarket({
     try {
       const nowMs = Date.now();
 
-      const c15All = mapHistory(map15.get(market.symbol));
-      const c1hAll = mapHistory(map1h.get(market.symbol));
+      const c5All =
+        mapHistory(map5.get(market.symbol));
 
-      const c15 = onlyClosedCandles(c15All, M15_MS, nowMs);
-      const c1h = onlyClosedCandles(c1hAll, H1_MS, nowMs);
+      const c1hAll =
+        mapHistory(map1h.get(market.symbol));
 
-      // Primeiro agrega 1h -> 4h; depois remove o bloco 4h ainda em formação.
+      const c5 =
+        onlyClosedCandles(
+          c5All,
+          M5_MS,
+          nowMs
+        );
+
+      const c15 =
+        onlyClosedCandles(
+          resample15m(c5),
+          M15_MS,
+          nowMs
+        );
+
+      const c1h =
+        onlyClosedCandles(
+          c1hAll,
+          H1_MS,
+          nowMs
+        );
+
+      // Primeiro agrega 1h -> 4h; depois remove o bloco ainda em formação.
       const c4h = onlyClosedCandles(
         resample4h(c1h),
         H4_MS,
@@ -435,12 +591,19 @@ export async function scanMarket({
       );
 
       const displaySymbol =
-        market.symbol_on_exchange || `${market.base_asset}USDT`;
+        market.symbol_on_exchange ||
+        `${market.base_asset}USDT`;
 
-      if (c15.length < 210 || c1h.length < 210 || c4h.length < 205) {
+      if (
+        c5.length < 210 ||
+        c15.length < 210 ||
+        c1h.length < 210 ||
+        c4h.length < 205
+      ) {
         console.log(
           '[scan] poucos candles',
           market.symbol,
+          c5.length,
           c15.length,
           c1h.length,
           c4h.length
@@ -494,15 +657,24 @@ export async function scanMarket({
         }
       }
 
+      const t5 = analyzeTf(c5);
       const t15 = analyzeTf(c15);
       const t1h = analyzeTf(c1h);
       const t4h = analyzeTf(c4h);
 
-      const fundingRate = fundingMap.get(market.symbol) || 0;
+      const fundingRate = null;
 
-      const sig = scoreSignal(t15, t1h, t4h, oiPct, fundingRate);
+      const sig =
+        scoreSignal(
+          t5,
+          t15,
+          t1h,
+          t4h,
+          oiPct
+        );
+
       const confirmation = confirmationStatus(
-        t15,
+        t5,
         oiPct,
         sig.score,
         minVolumeRatio,
@@ -512,7 +684,12 @@ export async function scanMarket({
         exceptionScore,
         exceptionVolumeRatio
       );
-      const levels = buildLevels(sig.side, t15.price, t15.atr);
+      const levels =
+        buildLevels(
+          sig.side,
+          t5.price,
+          t5.atr
+        );
 
       const volume24hOk = quoteVolume24h >= minQuoteVolume;
       const scoreOk = sig.score >= minScore;
@@ -543,7 +720,7 @@ export async function scanMarket({
 
       if (!confirmation.volumeFloorOk) {
         rejectionReasons.push(
-          `Volume relativo ${t15.volumeRatio.toFixed(2)}x abaixo do piso ${hardMinVolumeRatio.toFixed(2)}x`
+          `Volume relativo ${t5.volumeRatio.toFixed(2)}x abaixo do piso ${hardMinVolumeRatio.toFixed(2)}x`
         );
       }
 
@@ -559,7 +736,7 @@ export async function scanMarket({
         !confirmation.confirmed
       ) {
         rejectionReasons.push(
-          `Sem confirmação: volume ${t15.volumeRatio.toFixed(2)}x (alvo ${minVolumeRatio.toFixed(2)}x) e OI ${oiPct >= 0 ? '+' : ''}${oiPct.toFixed(2)}% (alvo +${minOiPct.toFixed(2)}%)`
+          `Sem confirmação: volume ${t5.volumeRatio.toFixed(2)}x (alvo ${minVolumeRatio.toFixed(2)}x) e OI ${oiPct >= 0 ? '+' : ''}${oiPct.toFixed(2)}% (alvo +${minOiPct.toFixed(2)}%)`
         );
       }
 
@@ -583,6 +760,7 @@ export async function scanMarket({
         ...sig,
         ...levels,
         confirmation,
+        t5,
         t15,
         t1h,
         t4h,
@@ -635,7 +813,7 @@ export async function scanMarket({
         trend1h: btc.t1h.bullish ? 'BULLISH' : btc.t1h.bearish ? 'BEARISH' : 'MIXED',
         trend4h: btc.t4h.bullish ? 'BULLISH' : btc.t4h.bearish ? 'BEARISH' : 'MIXED',
         rsi15m: Number(btc.t15.rsi.toFixed(2)),
-        volumeRatio15m: Number(btc.t15.volumeRatio.toFixed(3)),
+        volumeRatio15m: Number(btc.t5.volumeRatio.toFixed(3)),
         openInterestChangePct: Number(btc.oiPct.toFixed(3)),
         fundingRatePct: Number(btc.fundingRate.toFixed(5))
       }
@@ -655,8 +833,8 @@ export async function scanMarket({
     .filter(r => r.gates.preCandidate)
     .sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
-      if (b.t15.volumeRatio !== a.t15.volumeRatio) {
-        return b.t15.volumeRatio - a.t15.volumeRatio;
+      if (b.t5.volumeRatio !== a.t5.volumeRatio) {
+        return b.t5.volumeRatio - a.t5.volumeRatio;
       }
       return b.oiPct - a.oiPct;
     });
@@ -669,7 +847,7 @@ export async function scanMarket({
         exchange: r.exchange,
         side: r.side,
         score: r.score,
-        volumeRatio: r.t15.volumeRatio,
+        volumeRatio: r.t5.volumeRatio,
         oiPct: r.oiPct,
         quoteVolume: r.quoteVolume,
         confirmation: r.confirmation.label,
@@ -709,7 +887,7 @@ export async function scanMarket({
         exchange: r.exchange,
         side: r.side,
         score: r.score,
-        volumeRatio: r.t15.volumeRatio,
+        volumeRatio: r.t5.volumeRatio,
         oiPct: r.oiPct,
         quoteVolume: r.quoteVolume,
         reasons: r.rejectionReasons,
@@ -775,14 +953,14 @@ export function signalText(s) {
     `🎯 TP3: ${n(s.tp3)} — 1:${rr3.toFixed(1)}\n\n` +
 
     `📊 RSI 15m: ${s.t15.rsi.toFixed(1)} | ` +
-    `Vol: ${s.t15.volumeRatio.toFixed(2)}x\n` +
+    `Vol: ${s.t5.volumeRatio.toFixed(2)}x\n` +
 
     `📈 OI: ${s.oiPct >= 0 ? '+' : ''}${s.oiPct.toFixed(2)}% | ` +
     `Funding: ${s.fundingRate.toFixed(4)}%\n\n` +
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.4.3: paper trading automático com banca, risco, TP parcial, drawdown e estatísticas. ` +
+    `<i>V1.5.0: wide scan rotativo + scalp 5m + paper trades curtos. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

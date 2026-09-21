@@ -42,8 +42,8 @@ const cfg = {
   port: Number(process.env.PORT || 3000),
   intervalMin: Number(process.env.SCAN_INTERVAL_MINUTES || 5),
   topMarkets: Math.min(
-    Math.max(Number(process.env.V133_TOP_MARKETS || 6), 1),
-    6
+    Math.max(Number(process.env.V133_TOP_MARKETS || 12), 1),
+    12
   ),
   minScore: Number(process.env.MIN_SCORE || 70),
   preCandidateMinScore: Number(process.env.PRE_CANDIDATE_MIN_SCORE || 60),
@@ -63,7 +63,7 @@ const cfg = {
   // Reserva algumas chamadas abaixo do teto diário do plano gratuito.
   aiDailyLimit: Math.min(Number(process.env.AI_DAILY_LIMIT || 45), 45),
   // 30 min para candidatos normais.
-  aiMinGapMin: Math.max(Number(process.env.AI_MIN_GAP_MINUTES || 30), 1),
+  aiMinGapMin: Math.max(Number(process.env.AI_MIN_GAP_MINUTES || 20), 1),
 
   // V1.3.7: setups muito fortes podem usar uma janela prioritária menor.
   aiPriorityEnabled:
@@ -95,7 +95,7 @@ const cfg = {
   aiWaitRecheckEnabled:
     String(process.env.AI_WAIT_RECHECK_ENABLED || 'true').toLowerCase() !== 'false',
   aiWaitRecheckGapMin: Math.max(
-    Number(process.env.AI_WAIT_RECHECK_GAP_MINUTES || 15),
+    Number(process.env.AI_WAIT_RECHECK_GAP_MINUTES || 10),
     5
   ),
   aiWaitRecheckDailyLimit: Math.min(
@@ -137,11 +137,11 @@ const cfg = {
   ),
 
   aiWaitRecheckStaleMin: Math.max(
-    Number(process.env.AI_WAIT_RECHECK_STALE_MINUTES || 30),
+    Number(process.env.AI_WAIT_RECHECK_STALE_MINUTES || 20),
     15
   ),
   aiWaitWatchMaxAgeMin: Math.max(
-    Number(process.env.AI_WAIT_WATCH_MAX_AGE_MINUTES || 120),
+    Number(process.env.AI_WAIT_WATCH_MAX_AGE_MINUTES || 90),
     30
   )
 };
@@ -269,6 +269,7 @@ function finiteNumber(value, fallback = 0) {
 
 function directionalRsiHeat(signal) {
   const values = [
+    signal?.t5?.rsi,
     signal?.t15?.rsi,
     signal?.t1h?.rsi,
     signal?.t4h?.rsi
@@ -287,8 +288,8 @@ function directionalRsiHeat(signal) {
 }
 
 function emaStretchPct(signal) {
-  const price = finiteNumber(signal?.t15?.price, NaN);
-  const ema20 = finiteNumber(signal?.t15?.ema20, NaN);
+  const price = finiteNumber(signal?.t5?.price ?? signal?.t15?.price, NaN);
+  const ema20 = finiteNumber(signal?.t5?.ema20 ?? signal?.t15?.ema20, NaN);
 
   if (!Number.isFinite(price) || !Number.isFinite(ema20) || ema20 === 0) {
     return 0;
@@ -300,11 +301,12 @@ function emaStretchPct(signal) {
 function waitSnapshot(signal) {
   return {
     score: finiteNumber(signal?.score),
-    volumeRatio: finiteNumber(signal?.t15?.volumeRatio),
+    volumeRatio: finiteNumber(signal?.t5?.volumeRatio ?? signal?.t15?.volumeRatio),
     oiPct: finiteNumber(signal?.oiPct),
     rsiHeat: directionalRsiHeat(signal),
     stretchPct: emaStretchPct(signal),
-    barTime: finiteNumber(signal?.t15?.openTime),
+    barTime: finiteNumber(signal?.t5?.openTime ?? signal?.t15?.openTime),
+    rsi5: finiteNumber(signal?.t5?.rsi, 50),
     rsi15: finiteNumber(signal?.t15?.rsi, 50),
     rsi1h: finiteNumber(signal?.t1h?.rsi, 50),
     rsi4h: finiteNumber(signal?.t4h?.rsi, 50)
@@ -439,7 +441,7 @@ function registerWaitDecision(signal, ai) {
     side: signal.side,
     createdAt: previous?.createdAt || Date.now(),
     lastDecisionAt: Date.now(),
-    lastBarTime: finiteNumber(signal?.t15?.openTime),
+    lastBarTime: finiteNumber(signal?.t5?.openTime ?? signal?.t15?.openTime),
     attempts: wasRecheck
       ? Math.min((previous?.attempts || 0) + 1, cfg.aiWaitRecheckMaxAttempts)
       : (previous?.attempts || 0),
@@ -511,7 +513,7 @@ function waitRecheckAssessment(signal) {
   ) {
     return {
       ready: false,
-      reason: 'aguardando novo candle fechado de 15m'
+      reason: 'aguardando novo candle fechado de 5m'
     };
   }
 
@@ -2551,7 +2553,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.4.3 FREE</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.5.0 FREE</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o mercado agora\n' +
       '/status — ver configuração\n' +
@@ -2580,9 +2582,10 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.4.3 FREE\n` +
+      `✅ Online — V1.5.0 FREE\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
-      `🪙 Top mercados: ${cfg.topMarkets}\n` +
+      `🪙 Mercados por scan: ${cfg.topMarkets} · rotação de alts\n` +
+      `⚡ Modo: SCALP 5m · alvo de duração 15min–3h\n` +
       `⭐ Score mínimo para sinal: ${cfg.minScore}\n` +
       `👀 Pré-candidato IA: ${cfg.preCandidateMinScore}–${cfg.minScore - 1}\n` +
       `💵 Volume mínimo 24h: $${Math.round(cfg.minVolume / 1e6)}M\n` +
@@ -2961,7 +2964,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.4.3-free',
+    version: '1.5.0-free',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -3003,7 +3006,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.4.3 FREE pronto ✅');
+console.log('Crypto Futures Scanner V1.5.0 FREE pronto ✅');
 
 setTimeout(() => doScan().catch(console.error), 5000);
 setInterval(() => doScan().catch(console.error), cfg.intervalMin * 60_000);

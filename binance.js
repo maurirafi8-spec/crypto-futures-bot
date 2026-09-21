@@ -21,7 +21,7 @@ async function get(path, params = {}, tentativa = 0) {
   const res = await fetch(url, {
     headers: {
       api_key: API_KEY,
-      'User-Agent': 'crypto-futures-scanner/1.4.3'
+      'User-Agent': 'crypto-futures-scanner/1.5.0'
     },
     signal: AbortSignal.timeout(20000)
   });
@@ -47,8 +47,23 @@ async function get(path, params = {}, tentativa = 0) {
   return res.json();
 }
 
+let futureMarketsCache = null;
+let futureMarketsCacheAt = 0;
+
 export async function futureMarkets() {
-  return get('/future-markets');
+  const ttlMs = 15 * 60 * 1000;
+
+  if (
+    futureMarketsCache &&
+    Date.now() - futureMarketsCacheAt < ttlMs
+  ) {
+    return futureMarketsCache;
+  }
+
+  futureMarketsCache = await get('/future-markets');
+  futureMarketsCacheAt = Date.now();
+
+  return futureMarketsCache;
 }
 
 let exchangesCache = null;

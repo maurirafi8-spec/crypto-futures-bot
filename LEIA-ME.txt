@@ -1,133 +1,148 @@
-CRYPTO FUTURES SCANNER V1.4.3 FREE
-PAPER TRADING AUTOMÁTICO
+CRYPTO FUTURES SCANNER V1.5.0 FREE
+WIDE SCAN + SCALP PAPER TRADING
 
 OBJETIVO
-Deixar o bot operar sozinho com uma banca virtual antes de usar dinheiro real.
+- varrer mais moedas sem estourar a cota da Coinalyze;
+- fazer operações paper mais curtas, no estilo scalp;
+- manter IA + filtros de risco.
 
-PADRÃO
-Banca virtual: 1.000 USDC
-Risco por trade: 1%
-Alavancagem simulada: 2x
-Máx. margem por trade: 10% da banca
-Máx. posições abertas: 1
-Confiança IA mínima: 70%
-Score mínimo: 75
-Cooldown por ativo: 90 min
-Perda diária máxima: 3%
-Tempo máximo da posição: 24h
+MERCADOS
+Cada scan analisa até 12 mercados.
 
-CUSTOS SIMULADOS
-Fee: 0.045% por execução
-Slippage: 5 bps por execução
+6 principais sempre:
+BTC
+ETH
+SOL
+XRP
+BNB
+DOGE
 
-Esses custos são aproximações para deixar o paper trading menos otimista.
+6 vagas rotativas entre:
+ADA
+LINK
+AVAX
+SUI
+LTC
+BCH
+DOT
+NEAR
+UNI
+AAVE
+ETC
+ATOM
+INJ
+HBAR
+TRX
+FIL
+ARB
+OP
 
-GESTÃO AUTOMÁTICA
-Entrada:
-- somente sinal APPROVE;
-- IA >= 70%;
-- score >= 75;
-- dimensionamento pela distância até o STOP;
-- risco-alvo de 1% da banca;
-- trava por margem máxima.
+Assim o bot cobre mais moedas ao longo dos scans sem consultar todas
+ao mesmo tempo.
 
-Saída:
-TP1 -> fecha 30% e move STOP do restante para breakeven.
-TP2 -> fecha mais 30% e move STOP do restante para TP1.
-TP3 -> fecha os 40% restantes.
-STOP -> encerra o restante.
-Timeout 24h -> encerra pelo preço de marca.
+POR QUE 12
+A Coinalyze limita a API a 40 chamadas/minuto e informa que cada símbolo
+consome uma chamada nos endpoints históricos.
 
-AMBIGUIDADE INTRACANDLE
-Se STOP e um alvo novo aparecem no MESMO candle fechado de 15m,
-o paper trader assume STOP primeiro.
-É uma regra conservadora para não inflar os resultados.
+Nesta versão usamos 3 blocos por símbolo:
+- OHLCV 5m
+- OHLCV 1h
+- Open Interest history
 
-ESTATÍSTICAS
-/paper mostra:
-- banca inicial
-- saldo realizado
-- equity
-- PnL total
-- PnL não realizado
-- margem usada/disponível
-- trades
-- wins/losses
-- win rate
-- profit factor
-- max drawdown
-- taxas simuladas
-- LONG x SHORT
-- melhor/pior ativo
-- PnL do dia
+12 x 3 = 36 unidades, deixando pequena folga.
+
+FUNDING
+O funding foi removido do score rápido desta versão para preservar a cota.
+Ele valia somente 4 pontos no score anterior.
+
+SCALP 5m
+Agora o scanner usa:
+5m = timing
+15m = confirmação
+1h = tendência principal
+4h = contexto secundário
+
+O 4h não precisa estar perfeitamente alinhado para um scalp.
+
+ALVOS MAIS CURTOS
+Stop:
+aprox. 1 ATR de 5m
+com piso 0.25% e teto 1.20%.
+
+TP1 = 0.70R
+TP2 = 1.10R
+TP3 = 1.60R
+
+PAPER TRADING
+Padrões:
+banca 1000 USDC
+risco 0.75% por trade
+2x
+até 3 posições simultâneas
+cooldown 30 min
+máximo 3 horas por posição
+
+SAÍDAS
+TP1 fecha 30% -> stop para breakeven
+TP2 fecha 30% -> stop para TP1
+TP3 fecha 40%
+
+SCALP STALE
+Se passar 60 minutos:
+- ainda não bateu TP1;
+- e o trade estiver no zero/negativo;
+
+o bot encerra a posição paper para liberar capital.
+
+GESTÃO A CADA 5 MIN
+As posições paper agora usam o candle fechado de 5m para STOP/TP,
+em vez de esperar candle de 15m.
+
+IA
+Prompt atualizado:
+- foco 5m/15m/1h;
+- 4h é contexto;
+- duração esperada 15min–3h.
+
+Gap IA normal padrão:
+20 min
+
+Prioridade:
+continua 5 min.
+
+RECHECK WAIT/WATCH
+Gap padrão:
+10 min
+
+Usa novo candle de 5m.
 
 COMANDOS
+/status
+/scan
+/top
+/ia
+/debug
 /paper
 /paperpos
 /papertrades
 /paperpause
 /paperresume
-/paperreset CONFIRM
-
-PERSISTÊNCIA
-O estado é salvo automaticamente em:
-./paper-state.json
-
-ATENÇÃO NO RENDER:
-O filesystem padrão do Render pode ser efêmero.
-Um novo deploy/restart pode apagar o arquivo dependendo do tipo de serviço.
-
-Se você tiver Persistent Disk no Render, monte por exemplo /var/data e configure:
-PAPER_STATE_PATH=/var/data/paper-state.json
-
-Sem Persistent Disk, a versão continua funcionando, mas o histórico pode
-reiniciar em deploy/restart.
 
 VARIÁVEIS OPCIONAIS
-PAPER_TRADING_ENABLED=true
-PAPER_STARTING_BALANCE_USDC=1000
-PAPER_RISK_PER_TRADE_PCT=1
-PAPER_LEVERAGE=2
-PAPER_MAX_MARGIN_PCT=10
-PAPER_MAX_OPEN_POSITIONS=1
-PAPER_MIN_NOTIONAL_USDC=10
-PAPER_MIN_AI_CONFIDENCE=70
-PAPER_MIN_SCORE=75
-PAPER_FEE_RATE=0.00045
-PAPER_SLIPPAGE_BPS=5
-PAPER_DAILY_LOSS_LIMIT_PCT=3
-PAPER_COOLDOWN_MINUTES=90
-PAPER_MAX_HOLD_HOURS=24
-PAPER_STATE_PATH=./paper-state.json
+V133_TOP_MARKETS=12
+PAPER_RISK_PER_TRADE_PCT=0.75
+PAPER_MAX_OPEN_POSITIONS=3
+PAPER_COOLDOWN_MINUTES=30
+PAPER_MAX_HOLD_HOURS=3
+PAPER_SCALP_MODE=true
+PAPER_SCALP_STALE_MINUTES=60
+AI_MIN_GAP_MINUTES=20
+AI_WAIT_RECHECK_GAP_MINUTES=10
 
-HYPERLIQUID
-A integração Hyperliquid Testnet permanece no projeto, mas na V1.4.3
-o executor automático Hyperliquid fica DESABILITADO por padrão.
+IMPORTANTE
+Não estamos copiando a estratégia proprietária de nenhum outro bot.
+Estamos implementando um comportamento semelhante de trades curtos:
+mais ativos, timing 5m, alvos menores e tempo máximo reduzido.
 
-Para habilitá-lo novamente explicitamente:
-HYPERLIQUID_EXECUTION_ENABLED=true
-
-A falta de saldo testnet não interfere no PAPER TRADING.
-
-ARQUIVOS
-ai.js
-binance.js
-hyperliquid-executor.js
-index.js
-indicators.js
-paper-trader.js        <-- NOVO
-scanner.js
-telegram.js
-package.json
-
-TESTE
-1. Suba todos os arquivos.
-2. Deploy.
-3. /status
-4. /paper
-5. /scan
-6. Quando surgir APPROVE >=70% e score >=75, o bot abre a posição paper sozinho.
-7. /paperpos
-8. Depois dos fechamentos: /papertrades e /paper
-
-Não há uso de dinheiro real no paper trader.
+Paper trading continua sendo simulação. Resultado simulado não garante
+resultado equivalente em execução real.

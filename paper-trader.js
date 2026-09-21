@@ -37,7 +37,7 @@ export function paperConfig() {
       numEnv('PAPER_STARTING_BALANCE_USDC', 1000, 10, 1_000_000),
 
     riskPct:
-      numEnv('PAPER_RISK_PER_TRADE_PCT', 1.0, 0.1, 10),
+      numEnv('PAPER_RISK_PER_TRADE_PCT', 0.75, 0.1, 10),
 
     leverage:
       intEnv('PAPER_LEVERAGE', 2, 1, 50),
@@ -46,7 +46,7 @@ export function paperConfig() {
       numEnv('PAPER_MAX_MARGIN_PCT', 10, 1, 100),
 
     maxOpenPositions:
-      intEnv('PAPER_MAX_OPEN_POSITIONS', 1, 1, 20),
+      intEnv('PAPER_MAX_OPEN_POSITIONS', 3, 1, 20),
 
     minNotional:
       numEnv('PAPER_MIN_NOTIONAL_USDC', 10, 1, 10000),
@@ -67,10 +67,17 @@ export function paperConfig() {
       numEnv('PAPER_DAILY_LOSS_LIMIT_PCT', 3, 0.1, 50),
 
     cooldownMin:
-      numEnv('PAPER_COOLDOWN_MINUTES', 90, 0, 1440),
+      numEnv('PAPER_COOLDOWN_MINUTES', 30, 0, 1440),
 
     maxHoldHours:
-      numEnv('PAPER_MAX_HOLD_HOURS', 24, 1, 720),
+      numEnv('PAPER_MAX_HOLD_HOURS', 3, 0.5, 720),
+
+    scalpMode:
+      String(process.env.PAPER_SCALP_MODE || 'true')
+        .toLowerCase() !== 'false',
+
+    scalpStaleMin:
+      numEnv('PAPER_SCALP_STALE_MINUTES', 60, 15, 360),
 
     statePath:
       process.env.PAPER_STATE_PATH ||
@@ -287,7 +294,7 @@ function availableBalance() {
 function signalKey(signal) {
   return (
     `${signal.symbol}:${signal.side}:` +
-    `${signal.t15?.openTime || 0}`
+    `${signal.t5?.openTime ?? signal.t15?.openTime ?? 0}`
   );
 }
 
@@ -596,12 +603,14 @@ export function maybeOpenPaperPosition(signal) {
         signal.ai?.decision || 'APPROVE',
       aiConfidence:
         Number(signal.ai?.confidence || 0),
+      tradeStyle:
+        signal.tradeStyle || 'SCALP_5M',
 
       openedAt: Date.now(),
       openBarTime:
-        Number(signal.t15?.openTime || 0),
+        Number(signal.t5?.openTime ?? signal.t15?.openTime ?? 0),
       lastProcessedBarTime:
-        Number(signal.t15?.openTime || 0),
+        Number(signal.t5?.openTime ?? signal.t15?.openTime ?? 0),
 
       entryReference:
         rawEntry,
@@ -862,24 +871,27 @@ function updateOnePosition(position, snap) {
   const cfg = paperConfig();
   const events = [];
 
+  const fastTf =
+    snap?.t5 || snap?.t15;
+
   if (
-    !snap?.t15 ||
-    Number(snap.t15.openTime || 0) <=
+    !fastTf ||
+    Number(fastTf.openTime || 0) <=
     Number(position.lastProcessedBarTime || 0)
   ) {
     return events;
   }
 
   const high =
-    Number(snap.t15.high);
+    Number(fastTf.high);
 
   const low =
-    Number(snap.t15.low);
+    Number(fastTf.low);
 
   const mark =
     Number(
-      snap.t15.price ??
-      snap.t15.close ??
+      fastTf.price ??
+      fastTf.close ??
       position.lastMark ??
       position.entryFill
     );
@@ -892,13 +904,42 @@ function updateOnePosition(position, snap) {
   }
 
   position.lastProcessedBarTime =
-    Number(snap.t15.openTime || 0);
+    Number(fastTf.openTime || 0);
 
   if (
     Number.isFinite(mark) &&
     mark > 0
   ) {
     position.lastMark = mark;
+  }
+
+  // Scalp stale exit:
+  // se passou 60 min, ainda não tocou TP1 e o trade não está positivo,
+  // sai para liberar capital para outro setup.
+  if (
+    cfg.scalpMode &&
+    position.stage === 0 &&
+    Date.now() - position.openedAt >=
+      cfg.scalpStaleMin * 60 * 1000
+  ) {
+    const directionalMove =
+      directionSign(position.side) *
+      (mark - position.entryFill);
+
+    if (directionalMove <= 0) {
+      const result =
+        closeRemainingAt(
+          position,
+          mark,
+          `SCALP STALE ${Math.round(cfg.scalpStaleMin)}m`
+        );
+
+      events.push(
+        positionCloseMessage(result.closed)
+      );
+
+      return events;
+    }
   }
 
   // Timeout: encerra pela marca atual após o máximo de permanência.
@@ -1292,7 +1333,7 @@ export function paperStatusText() {
       : null;
 
   return [
-    '🧪 <b>PAPER TRADING — V1.4.3</b>',
+    '🧪 <b>PAPER TRADING — V1.5.0 SCALP</b>',
     '',
     `Status: ${cfg.enabled ? '✅ ATIVO' : '⛔ DESATIVADO'} · ${state.paused ? '⏸ PAUSADO' : '▶️ RODANDO'}`,
     `💰 Banca inicial: ${state.startingBalance.toFixed(2)} USDC`,
@@ -1304,8 +1345,9 @@ export function paperStatusText() {
     `📌 Posições abertas: ${state.openPositions.length}/${cfg.maxOpenPositions}`,
     `🔒 Margem usada: ${used.toFixed(2)} USDC`,
     `💳 Disponível: ${available.toFixed(2)} USDC`,
-    `⚖️ Risco por trade: ${cfg.riskPct.toFixed(1)}%`,
+    `⚖️ Risco por trade: ${cfg.riskPct.toFixed(2)}%`,
     `⚙️ Alavancagem simulada: ${cfg.leverage}x`,
+    `⚡ Scalp: ${cfg.scalpMode ? 'ATIVO' : 'INATIVO'} · stale ${cfg.scalpStaleMin} min · máx ${cfg.maxHoldHours}h`,
     '',
     `📊 Trades fechados: ${stats.total}`,
     `✅ Wins: ${stats.wins} · 🛑 Losses: ${stats.losses} · ➖ Flat: ${stats.flat}`,
