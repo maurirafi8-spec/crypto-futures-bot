@@ -390,7 +390,7 @@ async function fetchOpenRouter({ apiKey, body, timeoutMs }) {
         'HTTP-Referer':
           process.env.OPENROUTER_SITE_URL ||
           'https://crypto-futures-bot.onrender.com',
-        'X-Title': 'Crypto Futures Scanner V1.5.5 Free'
+        'X-Title': 'Crypto Futures Scanner V1.5.6 Free'
       },
       body: JSON.stringify(body),
       signal: controller.signal
@@ -521,6 +521,7 @@ async function requestPrimary({
 async function requestRescue({
   apiKey,
   model,
+  fallbackModels = [],
   payload,
   timeoutMs,
   maxTokens = rescueMaxTokens(),
@@ -531,8 +532,12 @@ async function requestRescue({
   // Gemma aceita structured JSON e thinking configurável.
   // Para o router openrouter/free não forçamos reasoning=none,
   // porque o router pode escolher um modelo cujo reasoning seja obrigatório.
-  const body = {
+  const modelChain = [
     model,
+    ...fallbackModels
+  ].filter(Boolean);
+
+  const body = {
     temperature: 0,
     max_tokens: maxTokens,
     response_format: {
@@ -555,6 +560,12 @@ async function requestRescue({
       allow_fallbacks: true
     }
   };
+
+  if (modelChain.length > 1) {
+    body.models = modelChain;
+  } else {
+    body.model = model;
+  }
 
   if (disableReasoning) {
     body.reasoning = {
@@ -688,6 +699,9 @@ export async function analyzeSignalWithAI(signal, {
       const fast = await requestRescue({
         apiKey,
         model: fastModel,
+        fallbackModels: [
+          aiFreeFallbackModel()
+        ],
         payload,
         timeoutMs,
         maxTokens: fastMaxTokens(),
@@ -728,8 +742,7 @@ export async function analyzeSignalWithAI(signal, {
       const nonRetryable =
         status === 401 ||
         status === 402 ||
-        status === 403 ||
-        status === 429;
+        status === 403;
 
       if (
         !allowRescue ||
@@ -761,7 +774,7 @@ export async function analyzeSignalWithAI(signal, {
             timeoutMs,
             maxTokens: rescueMaxTokens(),
             disableReasoning: false,
-            label: `${callMode} fallback`
+            label: `${callMode} backup fallback`
           });
 
         let parsed =
@@ -898,6 +911,9 @@ export async function analyzeSignalWithAI(signal, {
     const rescued = await requestRescue({
       apiKey,
       model: rescueModel,
+      fallbackModels: [
+        aiFreeFallbackModel()
+      ],
       payload,
       timeoutMs,
       maxTokens: rescueMaxTokens(),

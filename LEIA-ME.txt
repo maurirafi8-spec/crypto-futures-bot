@@ -1,84 +1,33 @@
-CRYPTO FUTURES SCANNER V1.5.5 FREE
-HOTFIX IA SUPER SCALP + RELIABILITY
+CRYPTO FUTURES SCANNER V1.5.6 FREE
+OPENROUTER 429 FAILOVER HOTFIX
 
-O LOG DA V1.5.4 MOSTROU:
-candidato: DOGE score 100 / vol 1.80x / OI +2.75% / SUPER_SCALP
-mas depois:
-avaliando ... [NORMAL]
+ERRO VISTO
+OpenRouter 429: Provider returned error
 
-CAUSA
-aiCallPermission liberava primeiro a janela NORMAL quando ela já estava
-aberta e só depois verificava a classe SUPER_SCALP.
+CORREÇÃO
+SCALP_FORTE / SUPER_SCALP agora enviam uma cadeia de modelos na MESMA
+chamada OpenRouter:
 
-CORRIGIDO
-Agora a classe real sempre é preservada:
-SUPER_SCALP -> [SUPER_SCALP]
-SCALP_FORTE -> [SCALP_STRONG]
-NORMAL -> [NORMAL]
+1. google/gemma-4-31b-it:free
+2. openrouter/free
 
-SEGUNDO PROBLEMA DO LOG
-Ling retornou finish=length antes de entregar o tool call.
+Se o primeiro modelo/provedor estiver rate-limited ou indisponível,
+o OpenRouter pode tentar o próximo automaticamente.
 
-V1.5.5 USA DOIS CAMINHOS
+Também removemos 429 da lista de erros não-retryable.
+401, 402 e 403 continuam sem retry automático.
 
 NORMAL
-- continua usando Ling finance como principal;
-- se falhar, usa Gemma JSON como rescue.
+Ling continua principal.
+Se Ling falhar, o rescue usa Gemma -> openrouter/free.
 
-SCALP_FORTE / SUPER_SCALP
-- primeira tentativa: Gemma 4 31B free;
-- JSON direto;
-- reasoning desativado;
-- sem tool call;
-- saída curta;
-- se falhar: openrouter/free como fallback.
-
-Isso é proposital para scalp: a decisão precisa ser curta e rápida.
-
-MODELOS PADRÃO
-Normal:
-inclusionai/ling-3.0-flash-fin:free
-
-Fast:
-google/gemma-4-31b-it:free
-
-Fallback rápido:
-openrouter/free
-
-Rescue normal:
-google/gemma-4-31b-it:free
-
-VARIÁVEIS OPCIONAIS
-AI_FAST_MODEL=google/gemma-4-31b-it:free
-AI_FREE_FALLBACK_MODEL=openrouter/free
-AI_JSON_RESCUE_MODEL=google/gemma-4-31b-it:free
-
-AI_FAST_OUTPUT_TOKENS=768
-AI_JSON_RESCUE_OUTPUT_TOKENS=1024
-
-REGRAS DE FILA MANTIDAS
-NORMAL:
-20 min
-
-SCALP_FORTE:
-score >=85
-vol >=0.60x
-OI >=+1.00%
-gap 5 min
-
-SUPER_SCALP:
-score >=90
-vol >=0.60x
-OI >=+1.50%
-gap 2 min
-
-LIMITES MANTIDOS
-45 requests/dia global
+LIMITES INTERNOS MANTIDOS
+45 chamadas lógicas/dia
 12 chamadas rápidas/dia
 
-LOG ESPERADO NO DOGE DO EXEMPLO
-[ai] candidato escolhido: DOGEUSDT LONG · score 100 · vol 1.80x · OI 2.75% · 🚀 SUPER_SCALP
-[ai] avaliando DOGEUSDT LONG com ... [SUPER_SCALP]
-
-Depois deve vir APPROVE / WATCH / WAIT / REJECT,
-em vez do finish=length ser o comportamento normal.
+COMANDOS
+/status
+/ia
+/scan
+/scheduler
+/paper

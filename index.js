@@ -2918,7 +2918,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.5.5 FREE</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.5.6 FREE</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o próximo lote agora\n' +
       '/scheduler — ver rotação automática de 1 minuto\n' +
@@ -2954,7 +2954,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.5.5 FREE\n` +
+      `✅ Online — V1.5.6 FREE\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `⏱ Scan automático: a cada ${cfg.intervalMin} min\n` +
       `🪙 Lote automático: ${cfg.scanBatchSize} moedas · pares /USDT\n` +
@@ -2984,6 +2984,7 @@ async function handleMessage(msg) {
       `🧯 Rescue: JSON object sem tool calling\n` +
       `📏 Saída máxima: ${aiPrimaryMaxTokens()} tokens · rescue ${aiRescueMaxTokens()}\n` +
       `⚡ IA adaptativa: ${cfg.aiPriorityEnabled ? 'ATIVA' : 'INATIVA'}\n` +
+      `🔁 Failover OpenRouter: ATIVO (modelo rápido → router free)\n` +
       `🚀 SUPER SCALP: score ${cfg.aiSuperScalpScore}+ · vol ${cfg.aiSuperScalpVolumeRatio.toFixed(2)}x+ · OI +${cfg.aiSuperScalpOiPct.toFixed(2)}%+ · gap ${cfg.aiSuperScalpGapMin} min\n` +
       `⚡ SCALP FORTE: score ${cfg.aiPriorityScore}+ · vol ${cfg.aiPriorityVolumeRatio.toFixed(2)}x+ · OI +${cfg.aiPriorityOiPct.toFixed(2)}%+ · gap ${cfg.aiPriorityGapMin} min\n` +
       `⚡ Chamadas rápidas hoje: ${aiBudgetStats().priorityUsed}/${aiBudgetStats().priorityLimit}\n` +
@@ -3348,7 +3349,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.5.5-free',
+    version: '1.5.6-free',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -3390,7 +3391,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.5.5 FREE pronto ✅');
+console.log('Crypto Futures Scanner V1.5.6 FREE pronto ✅');
 
 // Em rolling deploy o processo antigo do Render pode permanecer vivo por
 // alguns segundos. Um pequeno atraso evita duas instâncias consumindo a
