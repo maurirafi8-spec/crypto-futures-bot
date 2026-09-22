@@ -488,7 +488,7 @@ async function fetchOpenRouter({ apiKey, body, timeoutMs }) {
         'HTTP-Referer':
           process.env.OPENROUTER_SITE_URL ||
           'https://crypto-futures-bot.onrender.com',
-        'X-Title': 'Crypto Futures Scanner V1.5.9 Free'
+        'X-Title': 'Crypto Futures Scanner V1.6.0 Free'
       },
       body: JSON.stringify(body),
       signal: controller.signal
@@ -706,7 +706,10 @@ async function requestRescue({
 }
 
 export function aiConfigured() {
-  return Boolean(process.env.OPENROUTER_API_KEY);
+  return Boolean(
+    process.env.OPENROUTER_API_KEY ||
+    process.env.GEMINI_API_KEY
+  );
 }
 
 export function aiModel() {
@@ -740,6 +743,100 @@ export function aiFreeFallbackModel() {
   );
 }
 
+export function geminiFallbackConfigured() {
+  return Boolean(process.env.GEMINI_API_KEY);
+}
+
+export function geminiFallbackModel() {
+  return (
+    process.env.GEMINI_FALLBACK_MODEL ||
+    'gemini-3.5-flash-lite'
+  );
+}
+
+function geminiFallbackMaxTokens() {
+  return intEnv(
+    'GEMINI_FALLBACK_MAX_TOKENS',
+    768,
+    128,
+    4096
+  );
+}
+
+// Circuit breaker em memória para não continuar desperdiçando
+// chamadas OpenRouter depois de "free-models-per-day".
+let openRouterBlockedUntil = 0;
+let openRouterBlockReason = '';
+
+function openRouterCircuitInfo() {
+  const remainingMs =
+    Math.max(
+      0,
+      openRouterBlockedUntil - Date.now()
+    );
+
+  return {
+    blocked: remainingMs > 0,
+    remainingMin:
+      Math.ceil(remainingMs / 60_000),
+    reason:
+      remainingMs > 0
+        ? openRouterBlockReason
+        : ''
+  };
+}
+
+export function openRouterCircuitStatus() {
+  return openRouterCircuitInfo();
+}
+
+function armOpenRouterCircuit(error) {
+  const status =
+    Number(error?.status || 0);
+
+  const message =
+    [
+      error?.message,
+      error?.diagnostic
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+
+  if (status !== 429) {
+    return;
+  }
+
+  const dailyQuota =
+    message.includes('free-models-per-day') ||
+    message.includes('per day') ||
+    message.includes('daily');
+
+  const cooldownMin =
+    dailyQuota
+      ? intEnv(
+          'OPENROUTER_DAILY_429_COOLDOWN_MINUTES',
+          720,
+          30,
+          1440
+        )
+      : intEnv(
+          'OPENROUTER_429_COOLDOWN_MINUTES',
+          10,
+          1,
+          120
+        );
+
+  openRouterBlockedUntil =
+    Date.now() +
+    cooldownMin * 60_000;
+
+  openRouterBlockReason =
+    dailyQuota
+      ? 'cota diária gratuita OpenRouter atingida'
+      : 'OpenRouter 429 temporário';
+}
+
 export function aiRescueEnabled() {
   return boolEnv('AI_RESCUE_ENABLED', true);
 }
@@ -764,7 +861,330 @@ export function aiFastMaxTokens() {
   return fastMaxTokens();
 }
 
-export async function analyzeSignalWithAI(signal, {
+function geminiErrorMessage(data, rawBody, status) {
+  const apiMessage =
+    data?.error?.message ||
+    data?.message ||
+    '';
+
+  const text =
+    String(
+      apiMessage ||
+      rawBody ||
+      `HTTP ${status}`
+    )
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  return text.slice(0, 700);
+}
+
+async function fetchGemini({
+  apiKey,
+  model,
+  payload,
+  timeoutMs
+}) {
+  const controller =
+    new AbortController();
+
+  const timer =
+    setTimeout(
+      () => controller.abort(),
+      timeoutMs
+    );
+
+  const url =
+    `https://generativelanguage.googleapis.com/v1beta/models/` +
+    `${encodeURIComponent(model)}:generateContent`;
+
+  const body = {
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          {
+            text:
+              jsonOnlyPrompt(payload) +
+              '\nDecida apenas com os dados enviados. ' +
+              'Não invente preços, indicadores ou contexto ausente.'
+          }
+        ]
+      }
+    ],
+    generationConfig: {
+      maxOutputTokens:
+        geminiFallbackMaxTokens(),
+      responseMimeType:
+        'application/json'
+    }
+  };
+
+  try {
+    const response =
+      await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type':
+            'application/json',
+          'x-goog-api-key':
+            apiKey
+        },
+        body:
+          JSON.stringify(body),
+        signal:
+          controller.signal
+      });
+
+    const rawBody =
+      await response.text();
+
+    let data = null;
+
+    try {
+      data =
+        rawBody
+          ? JSON.parse(rawBody)
+          : null;
+    } catch {
+      data = null;
+    }
+
+    if (!response.ok) {
+      throw makeAiError(
+        `Gemini HTTP ${response.status}: ` +
+        geminiErrorMessage(
+          data,
+          rawBody,
+          response.status
+        ),
+        {
+          status:
+            response.status,
+          diagnostic:
+            geminiErrorMessage(
+              data,
+              rawBody,
+              response.status
+            )
+        }
+      );
+    }
+
+    const candidate =
+      data?.candidates?.[0];
+
+    const text =
+      (candidate?.content?.parts || [])
+        .map(part => part?.text || '')
+        .join('')
+        .trim();
+
+    if (!text) {
+      throw makeAiError(
+        'Gemini retornou resposta vazia',
+        {
+          status: 200,
+          diagnostic:
+            `finish=${candidate?.finishReason || '—'}`
+        }
+      );
+    }
+
+    const parsed =
+      parseJson(text);
+
+    return {
+      parsed,
+      data,
+      rawText: text,
+      finishReason:
+        candidate?.finishReason || null
+    };
+  } catch (error) {
+    if (
+      error?.name === 'AbortError'
+    ) {
+      throw makeAiError(
+        'Gemini timeout',
+        {
+          status: 408,
+          diagnostic:
+            `timeout=${timeoutMs}ms`
+        }
+      );
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function analyzeSignalWithGemini(
+  signal,
+  {
+    timeoutMs =
+      Number(
+        process.env.GEMINI_TIMEOUT_MS ||
+        process.env.AI_TIMEOUT_MS ||
+        35000
+      ),
+    callMode = 'NORMAL',
+    previousError = null,
+    previousRequestCount = 0
+  } = {}
+) {
+  const apiKey =
+    process.env.GEMINI_API_KEY;
+
+  if (!apiKey) {
+    throw makeAiError(
+      'GEMINI_API_KEY não configurada',
+      {
+        apiRequestCount:
+          previousRequestCount
+      }
+    );
+  }
+
+  const payload =
+    buildPayload(signal);
+
+  const model =
+    geminiFallbackModel();
+
+  try {
+    const result =
+      await fetchGemini({
+        apiKey,
+        model,
+        payload,
+        timeoutMs
+      });
+
+    let parsed =
+      result.parsed;
+
+    if (
+      signal.candidateTier ===
+        'PRE_CANDIDATE' &&
+      parsed.decision ===
+        'APPROVE'
+    ) {
+      parsed = {
+        ...parsed,
+        decision: 'WATCH',
+        reason:
+          `Pré-candidato: ${parsed.reason}`
+            .slice(0, 240)
+      };
+    }
+
+    return {
+      ...parsed,
+      model,
+      provider:
+        'google-gemini',
+      checkedAt:
+        Date.now(),
+      apiRequestCount:
+        previousRequestCount + 1,
+      rescueUsed:
+        Boolean(previousError),
+      geminiFallbackUsed:
+        true,
+      responseMode:
+        `${callMode}_GEMINI_FALLBACK`,
+      extractedFrom:
+        'gemini-json',
+      diagnosticSummary:
+        `Gemini ${model} · finish=` +
+        `${result.finishReason || '—'}`,
+      primaryFailure:
+        previousError
+          ? String(
+              previousError?.message ||
+              'falha OpenRouter'
+            )
+              .replace(/\s+/g, ' ')
+              .slice(0, 190)
+          : undefined
+    };
+  } catch (error) {
+    const previous =
+      previousError
+        ? String(
+            previousError?.message ||
+            previousError
+          )
+            .replace(/\s+/g, ' ')
+            .slice(0, 220)
+        : '';
+
+    const gemini =
+      String(
+        error?.message ||
+        error
+      )
+        .replace(/\s+/g, ' ')
+        .slice(0, 220);
+
+    throw makeAiError(
+      previousError
+        ? 'OpenRouter e Gemini falharam'
+        : 'Gemini fallback falhou',
+      {
+        apiRequestCount:
+          previousRequestCount + 1,
+        rescueUsed:
+          Boolean(previousError),
+        diagnostic:
+          [
+            previous
+              ? `openrouter=${previous}`
+              : '',
+            `gemini=${gemini}`
+          ]
+            .filter(Boolean)
+            .join(' | '),
+        status:
+          error?.status
+      }
+    );
+  }
+}
+
+function shouldUseGeminiAfter(error) {
+  if (!geminiFallbackConfigured()) {
+    return false;
+  }
+
+  const status =
+    Number(error?.status || 0);
+
+  const text =
+    [
+      error?.message,
+      error?.diagnostic
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+
+  return (
+    status === 429 ||
+    status === 408 ||
+    status >= 500 ||
+    status === 0 ||
+    text.includes('rate limit') ||
+    text.includes('free-models-per-day') ||
+    text.includes('timeout') ||
+    text.includes('fetch failed')
+  );
+}
+
+async function analyzeSignalWithOpenRouter(signal, {
   apiKey = process.env.OPENROUTER_API_KEY,
   model = aiModel(),
   timeoutMs = Number(process.env.AI_TIMEOUT_MS || 35000),
@@ -1060,6 +1480,111 @@ export async function analyzeSignalWithAI(signal, {
         rescueUsed: true,
         diagnostic,
         status: rescueError?.status
+      }
+    );
+  }
+}
+
+
+export async function analyzeSignalWithAI(
+  signal,
+  options = {}
+) {
+  const openRouterKey =
+    options.apiKey !== undefined
+      ? options.apiKey
+      : process.env.OPENROUTER_API_KEY;
+
+  const callMode =
+    options.callMode ||
+    'NORMAL';
+
+  const timeoutMs =
+    Number(
+      options.timeoutMs ||
+      process.env.AI_TIMEOUT_MS ||
+      35000
+    );
+
+  const circuit =
+    openRouterCircuitInfo();
+
+  // Se a cota diária do OpenRouter já estourou neste processo,
+  // vai direto ao Gemini em vez de perder tempo em novos 429.
+  if (
+    circuit.blocked &&
+    geminiFallbackConfigured()
+  ) {
+    return analyzeSignalWithGemini(
+      signal,
+      {
+        timeoutMs,
+        callMode,
+        previousError:
+          makeAiError(
+            circuit.reason,
+            {
+              status: 429,
+              diagnostic:
+                `circuit-breaker ${circuit.remainingMin}min`
+            }
+          ),
+        previousRequestCount: 0
+      }
+    );
+  }
+
+  if (!openRouterKey) {
+    if (geminiFallbackConfigured()) {
+      return analyzeSignalWithGemini(
+        signal,
+        {
+          timeoutMs,
+          callMode,
+          previousRequestCount: 0
+        }
+      );
+    }
+
+    throw new Error(
+      'OPENROUTER_API_KEY e GEMINI_API_KEY não configuradas'
+    );
+  }
+
+  try {
+    return await analyzeSignalWithOpenRouter(
+      signal,
+      {
+        ...options,
+        apiKey:
+          openRouterKey,
+        timeoutMs,
+        callMode
+      }
+    );
+  } catch (error) {
+    armOpenRouterCircuit(
+      error
+    );
+
+    if (
+      !shouldUseGeminiAfter(error)
+    ) {
+      throw error;
+    }
+
+    return analyzeSignalWithGemini(
+      signal,
+      {
+        timeoutMs,
+        callMode,
+        previousError:
+          error,
+        previousRequestCount:
+          Number(
+            error?.apiRequestCount ||
+            1
+          )
       }
     );
   }

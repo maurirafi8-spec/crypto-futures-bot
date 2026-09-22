@@ -1,74 +1,77 @@
-CRYPTO FUTURES SCANNER V1.5.9 — CONFIDENCE GUARD
+CRYPTO FUTURES SCANNER V1.6.0 — DUAL AI
 
-PROBLEMA CORRIGIDO
-No /ia apareceu:
-BCHUSDT LONG — APPROVE 0%
+OBJETIVO
+Quando o OpenRouter gratuito devolver 429 / cota diária esgotada,
+o bot tenta uma segunda IA fora do OpenRouter: Google Gemini API.
 
-Isso acontecia porque, se a IA omitisse "confidence" ou enviasse
-um valor inválido, o parser antigo convertia automaticamente para 0.
+FLUXO
+OpenRouter
+  ↓ se 429 / rate limit / timeout / 5xx
+Gemini API
+  ↓
+APPROVE / WATCH / WAIT / REJECT
 
-Assim o histórico podia mostrar uma aprovação contraditória.
+MODELO GEMINI PADRÃO
+gemini-3.5-flash-lite
 
-NOVA REGRA
-APPROVE só continua APPROVE se "confidence" for válida.
+A V1.6.0 chama a Gemini API diretamente por REST.
+Não precisa instalar pacote extra.
 
-Confidence válida:
-- campo presente;
-- número finito;
-- entre 0 e 100.
+VARIÁVEL OBRIGATÓRIA PARA O FALLBACK
+GEMINI_API_KEY=<sua chave do Google AI Studio>
 
-REGRA EXTRA
-APPROVE com confidence 0% também é tratado como contraditório
-e é BLOQUEADO.
+VARIÁVEIS OPCIONAIS
+GEMINI_FALLBACK_MODEL=gemini-3.5-flash-lite
+GEMINI_FALLBACK_MAX_TOKENS=768
+GEMINI_TIMEOUT_MS=35000
 
-Nesses casos:
-APPROVE
-↓
-WAIT
-↓
-confidence mostrada como "—"
-↓
+CIRCUIT BREAKER OPENROUTER
+Quando aparece:
+free-models-per-day
+
+o bot evita continuar chamando OpenRouter repetidamente e vai direto
+para Gemini durante 12 horas por padrão.
+
+Opcional:
+OPENROUTER_DAILY_429_COOLDOWN_MINUTES=720
+OPENROUTER_429_COOLDOWN_MINUTES=10
+
 CONFIDENCE GUARD
-↓
-nenhuma posição PAPER é aberta.
+Mantido:
+APPROVE sem confidence válida ou APPROVE 0% vira WAIT.
 
-EXEMPLO
-Resposta problemática:
-{
-  "decision": "APPROVE",
-  "confidence": null
-}
+PROFIT PROTECT
+Mantido:
+depois do TP1, stop líquido cobre taxas/slippage conforme a simulação.
 
-Agora vira:
-WAIT —
-🛡 CONFIDENCE GUARD
-APPROVE bloqueado: confidence ausente/inválida.
-
-DEFESA EM DUAS CAMADAS
-1. ai.js corrige a resposta no parser.
-2. index.js verifica novamente antes de cache, histórico e execução.
-
-Isso também protege contra uma resposta antiga/incompleta vinda do cache.
-
-MANTIDO DA V1.5.8
-- Profit Protect pós-TP1;
-- breakeven líquido;
-- piso +0.02 USDC;
-- PAPER como fonte única de STOP/TP;
-- FAST PAPER;
-- scan a cada 1 minuto em lotes;
-- até 4 posições paper.
-
-IMPORTANTE
-APPROVE com confidence válida, mas abaixo do mínimo de execução,
-continua sem abrir trade.
-
-No FAST PAPER:
-confidence mínima para abrir PAPER = 62%.
+FAST PAPER
+Mantido:
+score mínimo 65
+confidence PAPER 62%
+até 2 candidatos IA por scan
+até 4 posições paper
 
 COMANDOS
-/ia
 /status
+/ia
+/scan
 /paper
 /paperpos
 /papertrades
+
+NO /IA
+Você verá:
+OpenRouter: ...
+Gemini fallback: CONFIGURADO / NÃO CONFIGURADO
+
+QUANDO GEMINI FOR USADO
+O histórico mostra:
+🟦 GEMINI FALLBACK
+
+SEGURANÇA
+Nunca envie GEMINI_API_KEY no Telegram/chat.
+Coloque a chave somente em Render -> Environment como secret.
+
+OBSERVAÇÃO
+O nível gratuito do Gemini possui limites próprios.
+O fallback melhora a disponibilidade, mas não garante chamadas ilimitadas.

@@ -1008,7 +1008,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.5.9: Confidence Guard + Profit Protect + PAPER como fonte única. ` +
+    `<i>V1.6.0: Dual AI OpenRouter + Gemini fallback gratuito. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

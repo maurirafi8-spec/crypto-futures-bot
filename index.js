@@ -10,7 +10,10 @@ import {
   aiToolCallingEnabled,
   aiReasoningMode,
   aiPrimaryMaxTokens,
-  aiRescueMaxTokens
+  aiRescueMaxTokens,
+  geminiFallbackConfigured,
+  geminiFallbackModel,
+  openRouterCircuitStatus
 } from './ai.js';
 import {
   buildHyperDryRunPlan,
@@ -67,7 +70,7 @@ const cfg = {
   aiEnabled: String(process.env.AI_ENABLED || 'true').toLowerCase() !== 'false',
   aiMinConfidence: Number(process.env.AI_MIN_CONFIDENCE || 62),
   aiFailOpen: String(process.env.AI_FAIL_OPEN || 'false').toLowerCase() === 'true',
-  // V1.5.9 CONFIDENCE GUARD: até 2 candidatos por ciclo.
+  // V1.6.0 DUAL AI: até 2 candidatos por ciclo.
   // O limite diário global continua protegendo a cota.
   aiMaxCandidates: Math.min(
     Math.max(Number(process.env.AI_MAX_CANDIDATES || 2), 1),
@@ -81,7 +84,7 @@ const cfg = {
   // 30 min para candidatos normais.
   aiMinGapMin: Math.max(Number(process.env.AI_MIN_GAP_MINUTES || 20), 1),
 
-  // V1.5.9 CONFIDENCE GUARD: prioridade adaptativa mais agressiva.
+  // V1.6.0 DUAL AI: prioridade adaptativa mais agressiva.
   // NORMAL: gap 20 min.
   // SCALP_FORTE: score 85+ / vol 0.50x+ / OI +0.70%+ -> gap 3 min.
   // SUPER_SCALP: score 90+ / vol 0.60x+ / OI +1.50%+ -> gap 1 min.
@@ -2031,6 +2034,12 @@ function rememberAI(signal, ai) {
       Boolean(ai.confidenceGuarded),
     originalDecision:
       ai.originalDecision || null,
+    geminiFallbackUsed:
+      Boolean(ai.geminiFallbackUsed),
+    provider:
+      ai.provider || null,
+    model:
+      ai.model || null,
     reason: ai.reason,
     model: ai.model,
     provider: ai.provider || null,
@@ -2122,6 +2131,7 @@ function aiHistoryText() {
       ...(lines.length ? ['', '────────────'] : []),
       '🤖 <b>Histórico da IA</b>',
       extra,
+      `🟦 Gemini fallback: ${geminiFallbackConfigured() ? 'CONFIGURADO' : 'NÃO CONFIGURADO'} · ${geminiFallbackModel()}`,
       `🆓 Tentativas IA hoje: ${budget.used}/${budget.limit}`,
       `✅ Concluídas: ${budget.completed} · ⚠️ Falhas: ${budget.failed} · 🛟 Rescue: ${budget.rescueCalls}`
     );
@@ -2132,7 +2142,8 @@ function aiHistoryText() {
   lines.push(
     ...(lines.length ? ['', '────────────'] : []),
     `🤖 <b>Histórico da IA desde o último deploy</b>`,
-    `Modelo: <code>${aiModel()}</code>`,
+    `OpenRouter: <code>${aiModel()}</code>`,
+    `🟦 Gemini fallback: ${geminiFallbackConfigured() ? 'CONFIGURADO' : 'NÃO CONFIGURADO'} · <code>${geminiFallbackModel()}</code>`,
     `🆓 Tentativas IA hoje: ${budget.used}/${budget.limit} (${budget.remaining} restantes)`,
     `✅ Análises concluídas: ${budget.completed} · ⚠️ Falhas: ${budget.failed}`,
     `🛟 Requests de rescue: ${budget.rescueCalls}`,
@@ -2147,8 +2158,10 @@ function aiHistoryText() {
   for (const r of aiHistory.slice(0, 10)) {
     const source = r.cached
       ? '♻️ <b>CACHE</b>'
-      : r.rescueUsed
-        ? '🛟 <b>RESCUE OPENROUTER</b>'
+      : r.geminiFallbackUsed
+        ? '🟦 <b>GEMINI FALLBACK</b>'
+        : r.rescueUsed
+          ? '🛟 <b>RESCUE OPENROUTER</b>'
         : r.callMode === 'RECHECK'
           ? '🔄 <b>RECHECK INTELIGENTE DE WAIT</b>'
           : r.callMode === 'SUPER_SCALP'
@@ -2588,7 +2601,7 @@ async function validateSignalsWithAI(signals) {
 
     let permission = aiCallPermission(s);
 
-    // V1.5.9 CONFIDENCE GUARD:
+    // V1.6.0 DUAL AI:
     // se já analisamos 1 candidato neste scan, permitimos um segundo
     // candidato imediatamente (até o máximo de 2), sem esperar o gap
     // entre chamadas. Isso é apenas a fila de IA; os limites diário,
@@ -3114,7 +3127,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.5.9 CONFIDENCE GUARD</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.6.0 DUAL AI</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o próximo lote agora\n' +
       '/scheduler — ver rotação automática de 1 minuto\n' +
@@ -3150,11 +3163,14 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.5.9 CONFIDENCE GUARD\n` +
+      `✅ Online — V1.6.0 DUAL AI\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🛡 Modo: CONFIDENCE GUARD V1.5.9\n` +
       `🤖 APPROVE exige confidence válida; ausente/0% vira WAIT\n` +
       `🔗 Tracker/PAPER: SINCRONIZADO · PAPER manda TP/STOP quando houver posição\n` +
+      `🧠 Modo: DUAL AI V1.6.0\n` +
+      `🟦 Gemini fallback: ${geminiFallbackConfigured() ? 'ATIVO' : 'SEM CHAVE'} · ${geminiFallbackModel()}\n` +
+      `🚦 OpenRouter circuit: ${openRouterCircuitStatus().blocked ? `PAUSADO ~${openRouterCircuitStatus().remainingMin}m` : 'NORMAL'}\n` +
       `⏱ Scan automático: a cada ${cfg.intervalMin} min\n` +
       `🪙 Lote automático: ${cfg.scanBatchSize} moedas · pares /USDT\n` +
       `🔁 Universo: BTC/ETH/SOL prioritários + 21 moedas em rotação\n` +
@@ -3550,7 +3566,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.5.9-confidence-guard',
+    version: '1.6.0-dual-ai',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -3592,7 +3608,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.5.9 CONFIDENCE GUARD pronto ✅');
+console.log('Crypto Futures Scanner V1.6.0 DUAL AI pronto ✅');
 
 // Em rolling deploy o processo antigo do Render pode permanecer vivo por
 // alguns segundos. Um pequeno atraso evita duas instâncias consumindo a
