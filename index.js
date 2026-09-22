@@ -70,7 +70,7 @@ const cfg = {
   aiEnabled: String(process.env.AI_ENABLED || 'true').toLowerCase() !== 'false',
   aiMinConfidence: Number(process.env.AI_MIN_CONFIDENCE || 62),
   aiFailOpen: String(process.env.AI_FAIL_OPEN || 'false').toLowerCase() === 'true',
-  // V1.6.0 DUAL AI: até 2 candidatos por ciclo.
+  // V1.6.1 DUAL AI: até 2 candidatos por ciclo.
   // O limite diário global continua protegendo a cota.
   aiMaxCandidates: Math.min(
     Math.max(Number(process.env.AI_MAX_CANDIDATES || 2), 1),
@@ -84,7 +84,7 @@ const cfg = {
   // 30 min para candidatos normais.
   aiMinGapMin: Math.max(Number(process.env.AI_MIN_GAP_MINUTES || 20), 1),
 
-  // V1.6.0 DUAL AI: prioridade adaptativa mais agressiva.
+  // V1.6.1 DUAL AI: prioridade adaptativa mais agressiva.
   // NORMAL: gap 20 min.
   // SCALP_FORTE: score 85+ / vol 0.50x+ / OI +0.70%+ -> gap 3 min.
   // SUPER_SCALP: score 90+ / vol 0.60x+ / OI +1.50%+ -> gap 1 min.
@@ -2601,7 +2601,7 @@ async function validateSignalsWithAI(signals) {
 
     let permission = aiCallPermission(s);
 
-    // V1.6.0 DUAL AI:
+    // V1.6.1 DUAL AI:
     // se já analisamos 1 candidato neste scan, permitimos um segundo
     // candidato imediatamente (até o máximo de 2), sem esperar o gap
     // entre chamadas. Isso é apenas a fila de IA; os limites diário,
@@ -3127,7 +3127,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.6.0 DUAL AI</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.6.1 DUAL AI</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o próximo lote agora\n' +
       '/scheduler — ver rotação automática de 1 minuto\n' +
@@ -3163,7 +3163,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.6.0 DUAL AI\n` +
+      `✅ Online — V1.6.1 DUAL AI\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🛡 Modo: CONFIDENCE GUARD V1.5.9\n` +
       `🤖 APPROVE exige confidence válida; ausente/0% vira WAIT\n` +
@@ -3566,7 +3566,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.6.0-dual-ai',
+    version: '1.6.1-bank-50',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -3608,7 +3608,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.6.0 DUAL AI pronto ✅');
+console.log('Crypto Futures Scanner V1.6.1 DUAL AI pronto ✅');
 
 // Em rolling deploy o processo antigo do Render pode permanecer vivo por
 // alguns segundos. Um pequeno atraso evita duas instâncias consumindo a

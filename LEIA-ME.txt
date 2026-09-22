@@ -1,77 +1,32 @@
-CRYPTO FUTURES SCANNER V1.6.0 — DUAL AI
+CRYPTO FUTURES SCANNER V1.6.1 — BANCA PAPER 50 USDC
 
-OBJETIVO
-Quando o OpenRouter gratuito devolver 429 / cota diária esgotada,
-o bot tenta uma segunda IA fora do OpenRouter: Google Gemini API.
+MUDANÇA PRINCIPAL
+Banca inicial do PAPER:
+1000.00 USDC -> 50.00 USDC
 
-FLUXO
-OpenRouter
-  ↓ se 429 / rate limit / timeout / 5xx
-Gemini API
-  ↓
-APPROVE / WATCH / WAIT / REJECT
+MANTIDO
+- risco por trade: 0.75%
+- alavancagem simulada: 2x
+- até 4 posições paper
+- Profit Protect
+- Confidence Guard
+- OpenRouter + Gemini fallback
+- scan automático por lotes
+- TP1 / TP2 / TP3
+- taxas e slippage simulados
 
-MODELO GEMINI PADRÃO
-gemini-3.5-flash-lite
+COM 50 USDC
+Risco teórico por trade:
+50 x 0.75% = 0.375 USDC
 
-A V1.6.0 chama a Gemini API diretamente por REST.
-Não precisa instalar pacote extra.
+Margem máxima padrão por trade:
+10% da banca = 5 USDC
 
-VARIÁVEL OBRIGATÓRIA PARA O FALLBACK
-GEMINI_API_KEY=<sua chave do Google AI Studio>
+Com 2x:
+notional máximo padrão ~10 USDC por posição.
 
-VARIÁVEIS OPCIONAIS
-GEMINI_FALLBACK_MODEL=gemini-3.5-flash-lite
-GEMINI_FALLBACK_MAX_TOKENS=768
-GEMINI_TIMEOUT_MS=35000
+Se após o deploy o /paper ainda mostrar a banca antiga, use:
+/paperreset CONFIRM
 
-CIRCUIT BREAKER OPENROUTER
-Quando aparece:
-free-models-per-day
-
-o bot evita continuar chamando OpenRouter repetidamente e vai direto
-para Gemini durante 12 horas por padrão.
-
-Opcional:
-OPENROUTER_DAILY_429_COOLDOWN_MINUTES=720
-OPENROUTER_429_COOLDOWN_MINUTES=10
-
-CONFIDENCE GUARD
-Mantido:
-APPROVE sem confidence válida ou APPROVE 0% vira WAIT.
-
-PROFIT PROTECT
-Mantido:
-depois do TP1, stop líquido cobre taxas/slippage conforme a simulação.
-
-FAST PAPER
-Mantido:
-score mínimo 65
-confidence PAPER 62%
-até 2 candidatos IA por scan
-até 4 posições paper
-
-COMANDOS
-/status
-/ia
-/scan
-/paper
-/paperpos
-/papertrades
-
-NO /IA
-Você verá:
-OpenRouter: ...
-Gemini fallback: CONFIGURADO / NÃO CONFIGURADO
-
-QUANDO GEMINI FOR USADO
-O histórico mostra:
-🟦 GEMINI FALLBACK
-
-SEGURANÇA
-Nunca envie GEMINI_API_KEY no Telegram/chat.
-Coloque a chave somente em Render -> Environment como secret.
-
-OBSERVAÇÃO
-O nível gratuito do Gemini possui limites próprios.
-O fallback melhora a disponibilidade, mas não garante chamadas ilimitadas.
+Variável opcional:
+PAPER_STARTING_BALANCE_USDC=50

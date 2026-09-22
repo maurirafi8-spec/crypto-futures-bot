@@ -34,7 +34,7 @@ export function paperConfig() {
         .toLowerCase() !== 'false',
 
     startingBalance:
-      numEnv('PAPER_STARTING_BALANCE_USDC', 1000, 10, 1_000_000),
+      numEnv('PAPER_STARTING_BALANCE_USDC', 50, 10, 1_000_000),
 
     riskPct:
       numEnv('PAPER_RISK_PER_TRADE_PCT', 0.75, 0.1, 10),
@@ -1471,7 +1471,7 @@ export function paperStatusText() {
       : null;
 
   return [
-    '🛡 <b>PAPER TRADING — V1.5.8 PROFIT PROTECT</b>',
+    '🛡 <b>PAPER TRADING — V1.6.1 · BANCA 50 USDC</b>',
     '',
     `Status: ${cfg.enabled ? '✅ ATIVO' : '⛔ DESATIVADO'} · ${state.paused ? '⏸ PAUSADO' : '▶️ RODANDO'}`,
     `💰 Banca inicial: ${state.startingBalance.toFixed(2)} USDC`,

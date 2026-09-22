@@ -1008,7 +1008,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.6.0: Dual AI OpenRouter + Gemini fallback gratuito. ` +
+    `<i>V1.6.1: Dual AI + banca paper padrão de 50 USDC. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }
