@@ -207,25 +207,123 @@ function parseJson(content) {
 }
 
 function normalizeParsed(obj) {
-  const decision = String(obj?.decision || '').toUpperCase();
+  const rawDecision =
+    String(obj?.decision || '').toUpperCase();
 
-  if (!['APPROVE', 'WATCH', 'WAIT', 'REJECT'].includes(decision)) {
-    throw new Error(`Decisão inválida da IA: ${decision || 'vazia'}`);
+  if (!['APPROVE', 'WATCH', 'WAIT', 'REJECT'].includes(rawDecision)) {
+    throw new Error(
+      `Decisão inválida da IA: ${rawDecision || 'vazia'}`
+    );
   }
 
-  const risk = String(obj?.risk || 'MEDIUM').toUpperCase();
-  const style = String(obj?.style || 'NORMAL').toUpperCase();
+  const risk =
+    String(obj?.risk || 'MEDIUM').toUpperCase();
+
+  const style =
+    String(obj?.style || 'NORMAL').toUpperCase();
+
+  const rawConfidence =
+    obj?.confidence;
+
+  const confidenceNumber =
+    Number(rawConfidence);
+
+  const confidencePresent =
+    rawConfidence !== null &&
+    rawConfidence !== undefined &&
+    String(rawConfidence).trim() !== '';
+
+  const confidenceValid =
+    confidencePresent &&
+    Number.isFinite(confidenceNumber) &&
+    confidenceNumber >= 0 &&
+    confidenceNumber <= 100;
+
+  let decision =
+    rawDecision;
+
+  let confidence =
+    confidenceValid
+      ? clamp(confidenceNumber, 0, 100)
+      : null;
+
+  let reason =
+    String(
+      obj?.reason ||
+      'Sem justificativa'
+    ).slice(0, 240);
+
+  const warnings =
+    Array.isArray(obj?.warnings)
+      ? obj.warnings
+          .map(x => String(x).slice(0, 120))
+          .slice(0, 4)
+      : [];
+
+  let confidenceGuarded = false;
+
+  // V1.5.9 CONFIDENCE GUARD:
+  // APPROVE sem confidence válida (ou contraditório APPROVE 0%)
+  // nunca é aceito como aprovação.
+  if (
+    decision === 'APPROVE' &&
+    (
+      !confidenceValid ||
+      confidence <= 0
+    )
+  ) {
+    decision = 'WAIT';
+    confidence = null;
+    confidenceGuarded = true;
+
+    reason = (
+      'APPROVE bloqueado: confidence ausente/inválida. ' +
+      reason
+    ).slice(0, 240);
+
+    if (
+      !warnings.some(
+        x =>
+          String(x)
+            .toLowerCase()
+            .includes('confidence')
+      )
+    ) {
+      warnings.unshift(
+        'confidence ausente/inválida; entrada bloqueada'
+      );
+    }
+  }
 
   return {
     decision,
-    confidence: clamp(Number(obj?.confidence) || 0, 0, 100),
-    risk: ['LOW', 'MEDIUM', 'HIGH'].includes(risk) ? risk : 'MEDIUM',
-    style: ['SCALP', 'NORMAL'].includes(style) ? style : 'NORMAL',
-    reason: String(obj?.reason || 'Sem justificativa').slice(0, 240),
-    warnings: Array.isArray(obj?.warnings)
-      ? obj.warnings.map(x => String(x).slice(0, 120)).slice(0, 4)
-      : []
+    confidence,
+    confidenceValid:
+      confidenceValid &&
+      !confidenceGuarded,
+    confidenceGuarded,
+    originalDecision:
+      confidenceGuarded
+        ? rawDecision
+        : null,
+    risk:
+      ['LOW', 'MEDIUM', 'HIGH'].includes(risk)
+        ? risk
+        : 'MEDIUM',
+    style:
+      ['SCALP', 'NORMAL'].includes(style)
+        ? style
+        : 'NORMAL',
+    reason,
+    warnings:
+      warnings.slice(0, 4)
   };
+}
+
+// Exportado para smoke test e diagnóstico.
+// A lógica usada aqui é exatamente a mesma usada nas respostas da IA.
+export function normalizeAIResponse(obj) {
+  return normalizeParsed(obj);
 }
 
 function contentPartsToText(content) {
@@ -390,7 +488,7 @@ async function fetchOpenRouter({ apiKey, body, timeoutMs }) {
         'HTTP-Referer':
           process.env.OPENROUTER_SITE_URL ||
           'https://crypto-futures-bot.onrender.com',
-        'X-Title': 'Crypto Futures Scanner V1.5.6 Free'
+        'X-Title': 'Crypto Futures Scanner V1.5.9 Free'
       },
       body: JSON.stringify(body),
       signal: controller.signal

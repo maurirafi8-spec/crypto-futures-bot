@@ -1008,7 +1008,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.5.8: Profit Protect líquido + PAPER como fonte única de TP/STOP. ` +
+    `<i>V1.5.9: Confidence Guard + Profit Protect + PAPER como fonte única. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

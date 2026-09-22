@@ -67,7 +67,7 @@ const cfg = {
   aiEnabled: String(process.env.AI_ENABLED || 'true').toLowerCase() !== 'false',
   aiMinConfidence: Number(process.env.AI_MIN_CONFIDENCE || 62),
   aiFailOpen: String(process.env.AI_FAIL_OPEN || 'false').toLowerCase() === 'true',
-  // V1.5.8 PROFIT PROTECT: até 2 candidatos por ciclo.
+  // V1.5.9 CONFIDENCE GUARD: até 2 candidatos por ciclo.
   // O limite diário global continua protegendo a cota.
   aiMaxCandidates: Math.min(
     Math.max(Number(process.env.AI_MAX_CANDIDATES || 2), 1),
@@ -81,7 +81,7 @@ const cfg = {
   // 30 min para candidatos normais.
   aiMinGapMin: Math.max(Number(process.env.AI_MIN_GAP_MINUTES || 20), 1),
 
-  // V1.5.8 PROFIT PROTECT: prioridade adaptativa mais agressiva.
+  // V1.5.9 CONFIDENCE GUARD: prioridade adaptativa mais agressiva.
   // NORMAL: gap 20 min.
   // SCALP_FORTE: score 85+ / vol 0.50x+ / OI +0.70%+ -> gap 3 min.
   // SUPER_SCALP: score 90+ / vol 0.60x+ / OI +1.50%+ -> gap 1 min.
@@ -1926,6 +1926,96 @@ function aiDecisionIcon(decision) {
   return '🚫';
 }
 
+function validAIConfidence(value) {
+  if (
+    value === null ||
+    value === undefined ||
+    String(value).trim() === ''
+  ) {
+    return false;
+  }
+
+  const n =
+    Number(value);
+
+  return (
+    Number.isFinite(n) &&
+    n >= 0 &&
+    n <= 100
+  );
+}
+
+function aiConfidenceText(aiOrValue) {
+  const value =
+    aiOrValue &&
+    typeof aiOrValue === 'object'
+      ? aiOrValue.confidence
+      : aiOrValue;
+
+  const explicitInvalid =
+    aiOrValue &&
+    typeof aiOrValue === 'object' &&
+    aiOrValue.confidenceValid === false;
+
+  if (
+    explicitInvalid ||
+    !validAIConfidence(value)
+  ) {
+    return '—';
+  }
+
+  return `${Math.round(Number(value))}%`;
+}
+
+function enforceAIConfidenceGuard(ai) {
+  if (!ai || typeof ai !== 'object') {
+    return ai;
+  }
+
+  const valid =
+    validAIConfidence(
+      ai.confidence
+    );
+
+  const confidence =
+    valid
+      ? Number(ai.confidence)
+      : null;
+
+  if (
+    String(ai.decision || '').toUpperCase() === 'APPROVE' &&
+    (
+      !valid ||
+      confidence <= 0
+    )
+  ) {
+    return {
+      ...ai,
+      decision: 'WAIT',
+      originalDecision:
+        ai.originalDecision ||
+        'APPROVE',
+      confidence: null,
+      confidenceValid: false,
+      confidenceGuarded: true,
+      reason: String(
+        ai.reason || ''
+      ).startsWith('APPROVE bloqueado:')
+        ? ai.reason
+        : (
+            'APPROVE bloqueado: confidence ausente/inválida. ' +
+            String(ai.reason || 'Sem justificativa')
+          ).slice(0, 240)
+    };
+  }
+
+  return {
+    ...ai,
+    confidence,
+    confidenceValid: valid
+  };
+}
+
 function rememberAI(signal, ai) {
   const item = {
     symbol: signal.symbol,
@@ -1934,6 +2024,13 @@ function rememberAI(signal, ai) {
     tier: signal.candidateTier || 'STANDARD',
     decision: ai.decision,
     confidence: ai.confidence,
+    confidenceValid:
+      ai.confidenceValid !== false &&
+      validAIConfidence(ai.confidence),
+    confidenceGuarded:
+      Boolean(ai.confidenceGuarded),
+    originalDecision:
+      ai.originalDecision || null,
     reason: ai.reason,
     model: ai.model,
     provider: ai.provider || null,
@@ -1952,7 +2049,7 @@ function rememberAI(signal, ai) {
       r.symbol === item.symbol &&
       r.side === item.side &&
       r.decision === item.decision &&
-      Math.round(r.confidence) === Math.round(item.confidence) &&
+      aiConfidenceText(r) === aiConfidenceText(item) &&
       r.reason === item.reason &&
       r.model === item.model
     );
@@ -2064,7 +2161,8 @@ function aiHistoryText() {
     lines.push(
       `${aiDecisionIcon(r.decision)} <b>${r.symbol} ${r.side}</b> — ` +
       `${r.tier === 'PRE_CANDIDATE' ? 'PRÉ · ' : ''}` +
-      `${r.decision} ${Math.round(r.confidence)}%\n` +
+      `${r.decision} ${aiConfidenceText(r)}\n` +
+      `${r.confidenceGuarded ? '🛡 <b>CONFIDENCE GUARD</b>\n' : ''}` +
       `${source}\n` +
       `${r.reason}`
     );
@@ -2437,7 +2535,13 @@ async function validateSignalsWithAI(signals) {
   let pending = null;
 
   for (const s of signals) {
-    const cached = getCachedAI(s);
+    const cachedRaw =
+      getCachedAI(s);
+
+    const cached =
+      cachedRaw
+        ? enforceAIConfidenceGuard(cachedRaw)
+        : null;
 
     if (cached) {
       if (
@@ -2452,7 +2556,7 @@ async function validateSignalsWithAI(signals) {
 
       console.log(
         `[ai] cache ${s.symbol}: ${cached.decision} ` +
-        `${Math.round(cached.confidence)}% · ` +
+        `${aiConfidenceText(cached)} · ` +
         `${cached.cacheAgeMin.toFixed(1)}/${cached.cacheTtlMin} min`
       );
 
@@ -2484,7 +2588,7 @@ async function validateSignalsWithAI(signals) {
 
     let permission = aiCallPermission(s);
 
-    // V1.5.8 PROFIT PROTECT:
+    // V1.5.9 CONFIDENCE GUARD:
     // se já analisamos 1 candidato neste scan, permitimos um segundo
     // candidato imediatamente (até o máximo de 2), sem esperar o gap
     // entre chamadas. Isso é apenas a fila de IA; os limites diário,
@@ -2613,10 +2717,11 @@ async function validateSignalsWithAI(signals) {
         meta.rescueCalls += extraRequests;
       }
 
-      const ai = {
-        ...aiRaw,
-        callMode: permission.mode
-      };
+      const ai =
+        enforceAIConfidenceGuard({
+          ...aiRaw,
+          callMode: permission.mode
+        });
 
       saveCachedAI(s, ai);
       rememberAI(s, ai);
@@ -2635,7 +2740,7 @@ async function validateSignalsWithAI(signals) {
 
       console.log(
         `[ai] ${s.symbol}: ${ai.decision} ` +
-        `${Math.round(ai.confidence)}% — ${ai.reason}`
+        `${aiConfidenceText(ai)} — ${ai.reason}`
       );
 
       if (
@@ -3009,7 +3114,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.5.8 PROFIT PROTECT</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.5.9 CONFIDENCE GUARD</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o próximo lote agora\n' +
       '/scheduler — ver rotação automática de 1 minuto\n' +
@@ -3045,9 +3150,10 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.5.8 PROFIT PROTECT\n` +
+      `✅ Online — V1.5.9 CONFIDENCE GUARD\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
-      `🛡 Modo: PROFIT PROTECT V1.5.8\n` +
+      `🛡 Modo: CONFIDENCE GUARD V1.5.9\n` +
+      `🤖 APPROVE exige confidence válida; ausente/0% vira WAIT\n` +
       `🔗 Tracker/PAPER: SINCRONIZADO · PAPER manda TP/STOP quando houver posição\n` +
       `⏱ Scan automático: a cada ${cfg.intervalMin} min\n` +
       `🪙 Lote automático: ${cfg.scanBatchSize} moedas · pares /USDT\n` +
@@ -3444,7 +3550,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.5.8-profit-protect',
+    version: '1.5.9-confidence-guard',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -3486,7 +3592,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.5.8 PROFIT PROTECT pronto ✅');
+console.log('Crypto Futures Scanner V1.5.9 CONFIDENCE GUARD pronto ✅');
 
 // Em rolling deploy o processo antigo do Render pode permanecer vivo por
 // alguns segundos. Um pequeno atraso evita duas instâncias consumindo a

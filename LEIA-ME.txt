@@ -1,87 +1,74 @@
-CRYPTO FUTURES SCANNER V1.5.8 — PROFIT PROTECT
+CRYPTO FUTURES SCANNER V1.5.9 — CONFIDENCE GUARD
 
-BASE
-Mantém tudo da V1.5.7 FAST PAPER:
-- scan em lotes a cada 1 min;
-- score mínimo 65;
-- até 2 candidatos IA;
-- confiança PAPER 62%;
-- até 4 posições;
-- SCALP FORTE / SUPER SCALP;
-- TP1 30%, TP2 30%, TP3 restante;
-- slippage e taxas simuladas.
+PROBLEMA CORRIGIDO
+No /ia apareceu:
+BCHUSDT LONG — APPROVE 0%
 
-NOVIDADE 1 — BREAKEVEN LÍQUIDO
-Antes:
-depois do TP1 o stop ia exatamente para o preço de entrada.
+Isso acontecia porque, se a IA omitisse "confidence" ou enviasse
+um valor inválido, o parser antigo convertia automaticamente para 0.
 
-Problema:
-preço de entrada puro não cobre necessariamente:
-- taxa de entrada;
-- taxa da parcial TP1;
-- futura taxa de saída;
-- slippage.
+Assim o histórico podia mostrar uma aprovação contraditória.
 
-Por isso XRP e LTC puderam bater TP1 e ainda terminar
-ligeiramente negativos no STOP posterior.
+NOVA REGRA
+APPROVE só continua APPROVE se "confidence" for válida.
 
-Agora:
-depois do TP1 o bot calcula um STOP de PROFIT PROTECT.
+Confidence válida:
+- campo presente;
+- número finito;
+- entre 0 e 100.
 
-O cálculo considera:
-- lucro bruto já realizado;
-- fee de entrada;
-- fees das parciais;
-- fee futura estimada;
-- slippage futuro;
-- quantidade restante.
+REGRA EXTRA
+APPROVE com confidence 0% também é tratado como contraditório
+e é BLOQUEADO.
 
-Piso padrão:
-+0.02 USDC no trade completo, quando matematicamente possível
-e quando o restante sair no stop calculado.
+Nesses casos:
+APPROVE
+↓
+WAIT
+↓
+confidence mostrada como "—"
+↓
+CONFIDENCE GUARD
+↓
+nenhuma posição PAPER é aberta.
 
-Variáveis:
-PAPER_PROFIT_PROTECT_ENABLED=true
-PAPER_PROFIT_PROTECT_BUFFER_USDC=0.02
+EXEMPLO
+Resposta problemática:
+{
+  "decision": "APPROVE",
+  "confidence": null
+}
 
-Depois do TP2:
-o stop continua no mínimo no TP1, ou em nível ainda mais protetor
-se o cálculo líquido exigir.
+Agora vira:
+WAIT —
+🛡 CONFIDENCE GUARD
+APPROVE bloqueado: confidence ausente/inválida.
 
-NOVIDADE 2 — TRACKER SINCRONIZADO COM PAPER
-Antes havia dois acompanhamentos:
-1. tracker do sinal;
-2. paper trader.
+DEFESA EM DUAS CAMADAS
+1. ai.js corrige a resposta no parser.
+2. index.js verifica novamente antes de cache, histórico e execução.
 
-Isso podia gerar:
-PAPER encerrado no STOP após TP1
-e mais tarde
-"TP2 atingido" / "TP3 atingido"
-pelo tracker antigo.
+Isso também protege contra uma resposta antiga/incompleta vinda do cache.
 
-Agora:
-quando uma posição PAPER abre, o PAPER vira a fonte de verdade
-para mensagens de STOP/TP dessa operação.
-
-O tracker paralelo não é criado para uma posição PAPER ativa.
-Se existir tracker antigo do mesmo sinal, ele é desligado quando
-o PAPER assume a gestão.
-
-RESULTADO ESPERADO
-Após TP1:
-- fecha 30%;
-- stop sobe para breakeven líquido/protegido;
-- se voltar no stop, o resultado total tende a ficar perto de
-  +0.02 USDC ou melhor, dentro das regras da simulação.
+MANTIDO DA V1.5.8
+- Profit Protect pós-TP1;
+- breakeven líquido;
+- piso +0.02 USDC;
+- PAPER como fonte única de STOP/TP;
+- FAST PAPER;
+- scan a cada 1 minuto em lotes;
+- até 4 posições paper.
 
 IMPORTANTE
-Isso é paper trading e não garante o mesmo fill em mercado real.
-Gap de preço, liquidez e execução real podem produzir resultado diferente.
+APPROVE com confidence válida, mas abaixo do mínimo de execução,
+continua sem abrir trade.
+
+No FAST PAPER:
+confidence mínima para abrir PAPER = 62%.
 
 COMANDOS
+/ia
+/status
 /paper
 /paperpos
 /papertrades
-/status
-/ativos
-/resultados
