@@ -43,7 +43,7 @@ export function paperConfig() {
       intEnv('PAPER_LEVERAGE', 2, 1, 50),
 
     maxMarginPct:
-      numEnv('PAPER_MAX_MARGIN_PCT', 10, 1, 100),
+      numEnv('PAPER_MAX_MARGIN_PCT', 15, 1, 100),
 
     maxOpenPositions:
       intEnv('PAPER_MAX_OPEN_POSITIONS', 4, 1, 20),
@@ -83,10 +83,16 @@ export function paperConfig() {
       String(process.env.PAPER_PROFIT_PROTECT_ENABLED || 'true')
         .toLowerCase() !== 'false',
 
-    // Depois do TP1, o stop é calculado para que, se o restante sair nele,
-    // o trade completo cubra fee + slippage e ainda tente preservar este piso.
-    profitProtectBufferUsdc:
-      numEnv('PAPER_PROFIT_PROTECT_BUFFER_USDC', 0.02, 0, 10),
+    // V1.6.2:
+    // buffer proporcional ao tamanho da posição, em vez de piso fixo em USDC.
+    // 0.05% de um notional de 10 USDC = 0.005 USDC.
+    profitProtectBufferPctNotional:
+      numEnv(
+        'PAPER_PROFIT_PROTECT_BUFFER_PCT_NOTIONAL',
+        0.05,
+        0,
+        5
+      ),
 
     statePath:
       process.env.PAPER_STATE_PATH ||
@@ -845,6 +851,78 @@ function positionCloseMessage(closed) {
   );
 }
 
+function profitProtectTargetNet(position) {
+  const cfg = paperConfig();
+
+  const notional =
+    Number(position?.initialNotional || 0);
+
+  if (
+    !Number.isFinite(notional) ||
+    notional <= 0
+  ) {
+    return 0;
+  }
+
+  return (
+    notional *
+    cfg.profitProtectBufferPctNotional /
+    100
+  );
+}
+
+function clampProtectedStop(
+  position,
+  desiredStop,
+  stage
+) {
+  const desired =
+    Number(desiredStop);
+
+  if (!Number.isFinite(desired)) {
+    return Number(position.entryFill);
+  }
+
+  const entry =
+    Number(position.entryFill);
+
+  const tp1 =
+    Number(position.tp1);
+
+  const tp2 =
+    Number(position.tp2);
+
+  if (position.side === 'LONG') {
+    if (stage <= 1) {
+      // Pós-TP1: entre entrada e TP1.
+      return Math.min(
+        tp1,
+        Math.max(entry, desired)
+      );
+    }
+
+    // Pós-TP2: nunca abaixo de TP1 nem acima de TP2.
+    return Math.min(
+      tp2,
+      Math.max(tp1, desired)
+    );
+  }
+
+  if (stage <= 1) {
+    // SHORT pós-TP1: entre TP1 e entrada.
+    return Math.max(
+      tp1,
+      Math.min(entry, desired)
+    );
+  }
+
+  // SHORT pós-TP2: nunca acima de TP1 nem abaixo de TP2.
+  return Math.max(
+    tp2,
+    Math.min(tp1, desired)
+  );
+}
+
 function profitProtectStopReference(
   position,
   targetNetUsdc = 0
@@ -982,6 +1060,45 @@ function closeRemainingAt(position, reference, outcome) {
   };
 }
 
+function moderateTargetFirst(
+  position,
+  fastTf,
+  nextTarget
+) {
+  const stop =
+    Number(position.stopCurrent);
+
+  const target =
+    Number(nextTarget);
+
+  const close =
+    Number(
+      fastTf?.close ??
+      fastTf?.price
+    );
+
+  if (
+    !Number.isFinite(stop) ||
+    !Number.isFinite(target) ||
+    !Number.isFinite(close)
+  ) {
+    return false;
+  }
+
+  // Critério MODERADO:
+  // se STOP e alvo foram tocados no mesmo candle de 5m,
+  // usa a posição do fechamento entre os dois níveis para inferir
+  // qual lado teve mais domínio no candle.
+  const midpoint =
+    (stop + target) / 2;
+
+  if (position.side === 'LONG') {
+    return close >= midpoint;
+  }
+
+  return close <= midpoint;
+}
+
 function updateOnePosition(position, snap) {
   const cfg = paperConfig();
   const events = [];
@@ -1101,24 +1218,45 @@ function updateOnePosition(position, snap) {
       nextTarget
     );
 
-  // Conservador: se STOP e novo alvo ocorreram no mesmo candle,
-  // assume STOP primeiro. Evita inflar artificialmente o paper PnL.
+  let moderateConflictTargetFirst = false;
+
+  // V1.6.2 MODERADO:
+  // se STOP e próximo alvo aparecem no mesmo candle fechado de 5m,
+  // não assume mais automaticamente o pior caso.
+  // Usa o fechamento do candle em relação ao ponto médio STOP↔ALVO.
   if (stopHit && nextTargetHit) {
-    const result =
-      closeRemainingAt(
+    moderateConflictTargetFirst =
+      moderateTargetFirst(
         position,
-        position.stopCurrent,
-        `STOP CONSERVADOR após TP${position.stage || 0}`
+        fastTf,
+        nextTarget
       );
 
-    events.push(
-      positionCloseMessage(result.closed)
-    );
+    if (!moderateConflictTargetFirst) {
+      const result =
+        closeRemainingAt(
+          position,
+          position.stopCurrent,
+          `STOP MODERADO após TP${position.stage || 0}`
+        );
 
-    return events;
+      events.push(
+        positionCloseMessage(result.closed)
+      );
+
+      return events;
+    }
+
+    console.log(
+      `[paper] ${position.symbol} ${position.side}: ` +
+      `candle ambíguo STOP+TP — critério MODERADO escolheu alvo primeiro`
+    );
   }
 
-  if (stopHit) {
+  if (
+    stopHit &&
+    !moderateConflictTargetFirst
+  ) {
     const outcome =
       position.stage > 0
         ? `STOP após TP${position.stage}`
@@ -1159,17 +1297,26 @@ function updateOnePosition(position, snap) {
     // V1.5.8 PROFIT PROTECT:
     // breakeven líquido — leva em conta fee de entrada, fee de saída
     // já paga, fee futura e slippage da saída restante.
+    const targetNetUsdc =
+      profitProtectTargetNet(
+        position
+      );
+
     const costProtectedStop =
       profitProtectStopReference(
         position,
-        cfg.profitProtectBufferUsdc
+        targetNetUsdc
       );
 
     position.stopCurrent =
-      moreProtectiveStop(
+      clampProtectedStop(
         position,
-        position.entryFill,
-        costProtectedStop
+        moreProtectiveStop(
+          position,
+          position.entryFill,
+          costProtectedStop
+        ),
+        1
       );
 
     if (leg) {
@@ -1180,6 +1327,13 @@ function updateOnePosition(position, snap) {
           'TP1 (30%)'
         )
       );
+    }
+
+    // Candle ambíguo: no modo moderado processa somente o próximo alvo.
+    // O novo stop só passa a valer a partir do próximo candle fechado.
+    if (moderateConflictTargetFirst) {
+      saveState();
+      return events;
     }
   }
 
@@ -1203,17 +1357,26 @@ function updateOnePosition(position, snap) {
 
     // Depois do TP2, mantém pelo menos o TP1 como proteção,
     // mas nunca afrouxa abaixo do piso líquido calculado.
+    const targetNetUsdc =
+      profitProtectTargetNet(
+        position
+      );
+
     const costProtectedStop =
       profitProtectStopReference(
         position,
-        cfg.profitProtectBufferUsdc
+        targetNetUsdc
       );
 
     position.stopCurrent =
-      moreProtectiveStop(
+      clampProtectedStop(
         position,
-        position.tp1,
-        costProtectedStop
+        moreProtectiveStop(
+          position,
+          position.tp1,
+          costProtectedStop
+        ),
+        2
       );
 
     if (leg) {
@@ -1224,6 +1387,11 @@ function updateOnePosition(position, snap) {
           'TP2 (30%)'
         )
       );
+    }
+
+    if (moderateConflictTargetFirst) {
+      saveState();
+      return events;
     }
   }
 
@@ -1471,7 +1639,7 @@ export function paperStatusText() {
       : null;
 
   return [
-    '🛡 <b>PAPER TRADING — V1.6.1 · BANCA 50 USDC</b>',
+    '⚖️ <b>PAPER TRADING — V1.6.3 MODERATE MARGIN</b>',
     '',
     `Status: ${cfg.enabled ? '✅ ATIVO' : '⛔ DESATIVADO'} · ${state.paused ? '⏸ PAUSADO' : '▶️ RODANDO'}`,
     `💰 Banca inicial: ${state.startingBalance.toFixed(2)} USDC`,
@@ -1486,7 +1654,8 @@ export function paperStatusText() {
     `⚖️ Risco por trade: ${cfg.riskPct.toFixed(2)}%`,
     `⚙️ Alavancagem simulada: ${cfg.leverage}x`,
     `⚡ Scalp: ${cfg.scalpMode ? 'ATIVO' : 'INATIVO'} · stale ${cfg.scalpStaleMin} min · máx ${cfg.maxHoldHours}h`,
-    `🛡 Profit Protect: ${cfg.profitProtectEnabled ? 'ATIVO' : 'INATIVO'} · piso pós-TP1 +${cfg.profitProtectBufferUsdc.toFixed(2)} USDC`,
+    `🛡 Profit Protect: ${cfg.profitProtectEnabled ? 'ATIVO' : 'INATIVO'} · buffer ${cfg.profitProtectBufferPctNotional.toFixed(2)}% do notional`,
+    `⚖️ Candle STOP+TP: critério MODERADO`,
     '',
     `📊 Trades fechados: ${stats.total}`,
     `✅ Wins: ${stats.wins} · 🛑 Losses: ${stats.losses} · ➖ Flat: ${stats.flat}`,

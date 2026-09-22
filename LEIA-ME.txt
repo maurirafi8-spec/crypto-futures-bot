@@ -1,32 +1,44 @@
-CRYPTO FUTURES SCANNER V1.6.1 — BANCA PAPER 50 USDC
+CRYPTO FUTURES SCANNER V1.6.3 — MODERATE MARGIN
 
 MUDANÇA PRINCIPAL
-Banca inicial do PAPER:
-1000.00 USDC -> 50.00 USDC
+Margem máxima por trade:
+10% da banca -> 15% da banca
+
+Com banca de 50 USDC:
+10% = 5.00 USDC de margem
+15% = 7.50 USDC de margem
+
+Com alavancagem 2x:
+notional máximo aproximado:
+5.00 x 2 = 10 USDC
+7.50 x 2 = 15 USDC
+
+POR QUE 15%
+É um meio-termo moderado:
+- aumenta o tamanho das posições;
+- continua deixando boa parte da banca livre;
+- com 4 posições no teto, 4 x 7.50 = 30 USDC de margem;
+- ainda sobrariam 20 USDC livres, antes de PnL/taxas.
+
+RISCO POR TRADE
+Continua 0.75% da banca.
+
+Com 50 USDC:
+50 x 0.75% = 0.375 USDC de risco-alvo máximo.
+
+A margem máxima é só um teto.
+Se o cálculo de risco exigir menos margem por causa do stop,
+o bot usa menos.
 
 MANTIDO
-- risco por trade: 0.75%
-- alavancagem simulada: 2x
-- até 4 posições paper
-- Profit Protect
+- banca 50 USDC
+- 2x
+- até 4 posições
+- Profit Protect proporcional
+- critério MODERADO em candle STOP+TP
 - Confidence Guard
 - OpenRouter + Gemini fallback
-- scan automático por lotes
-- TP1 / TP2 / TP3
-- taxas e slippage simulados
+- scan 1 min em lotes
 
-COM 50 USDC
-Risco teórico por trade:
-50 x 0.75% = 0.375 USDC
-
-Margem máxima padrão por trade:
-10% da banca = 5 USDC
-
-Com 2x:
-notional máximo padrão ~10 USDC por posição.
-
-Se após o deploy o /paper ainda mostrar a banca antiga, use:
-/paperreset CONFIRM
-
-Variável opcional:
-PAPER_STARTING_BALANCE_USDC=50
+VARIÁVEL
+PAPER_MAX_MARGIN_PCT=15

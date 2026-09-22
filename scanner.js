@@ -1008,7 +1008,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.6.1: Dual AI + banca paper padrão de 50 USDC. ` +
+    `<i>V1.6.3: margem moderada 15% + Profit Protect proporcional. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }
