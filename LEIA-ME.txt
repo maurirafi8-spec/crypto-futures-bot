@@ -1,33 +1,108 @@
-CRYPTO FUTURES SCANNER V1.5.6 FREE
-OPENROUTER 429 FAILOVER HOTFIX
+CRYPTO FUTURES SCANNER V1.5.7 — FAST PAPER
 
-ERRO VISTO
-OpenRouter 429: Provider returned error
+OBJETIVO
+Aumentar a frequência de PAPER TRADES curtos sem afrouxar o executor
+Hyperliquid real/testnet.
 
-CORREÇÃO
-SCALP_FORTE / SUPER_SCALP agora enviam uma cadeia de modelos na MESMA
-chamada OpenRouter:
+MUDANÇAS DO FAST PAPER
 
-1. google/gemma-4-31b-it:free
-2. openrouter/free
+FILTRO TÉCNICO
+Score mínimo:
+70 -> 65
 
-Se o primeiro modelo/provedor estiver rate-limited ou indisponível,
-o OpenRouter pode tentar o próximo automaticamente.
+Volume de confirmação:
+0.60x -> 0.50x
 
-Também removemos 429 da lista de erros não-retryable.
-401, 402 e 403 continuam sem retry automático.
+IA / PAPER
+Confiança mínima para liberar sinal:
+65% -> 62%
 
-NORMAL
-Ling continua principal.
-Se Ling falhar, o rescue usa Gemma -> openrouter/free.
+Paper trader:
+confiança mínima 62%
+score mínimo 65
 
-LIMITES INTERNOS MANTIDOS
-45 chamadas lógicas/dia
-12 chamadas rápidas/dia
+FILA IA
+Até 2 candidatos por scan.
 
-COMANDOS
+Se o primeiro candidato já consumiu uma chamada e o segundo estiver
+bloqueado apenas pelo gap, o FAST PAPER pode fazer uma segunda análise
+no mesmo scan.
+
+Os limites diários continuam ativos.
+
+SCALP FORTE
+score >= 85
+volume >= 0.50x
+OI >= +0.70%
+gap: 3 min
+
+SUPER SCALP
+score >= 90
+volume >= 0.60x
+OI >= +1.50%
+gap: 1 min
+
+PAPER TRADING
+Máximo de posições simultâneas:
+3 -> 4
+
+Mantido:
+risco 0.75% por trade
+2x simulado
+stop automático
+TP1 / TP2 / TP3
+stale exit 60 min
+máximo 3h por scalp
+limite diário de perda 3%
+
+EXECUÇÃO HYPERLIQUID
+NÃO foi afrouxada.
+
+Continua:
+confiança mínima 70%
+score mínimo 75
+e execução permanece desabilitada por padrão salvo configuração explícita.
+
+LIMITES DA IA
+Global: 45 chamadas/dia
+Fila rápida: 12/dia
+
+ATENÇÃO
+Com 2 candidatos por scan o bot pode consumir a cota de IA mais rápido.
+Isso é intencional no FAST PAPER, mas o teto diário permanece.
+
+VARIÁVEIS PADRÃO
+MIN_SCORE=65
+AI_MIN_CONFIDENCE=62
+AI_MAX_CANDIDATES=2
+AI_BURST_SECOND_CANDIDATE=true
+
+V122_VOLUME_CONFIRM_RATIO=0.50
+
+AI_PRIORITY_SCORE=85
+AI_PRIORITY_VOLUME_RATIO=0.50
+AI_PRIORITY_OI_PCT=0.70
+AI_PRIORITY_GAP_MINUTES=3
+
+AI_SUPER_SCALP_SCORE=90
+AI_SUPER_SCALP_VOLUME_RATIO=0.60
+AI_SUPER_SCALP_OI_PCT=1.50
+AI_SUPER_SCALP_GAP_MINUTES=1
+
+PAPER_MIN_AI_CONFIDENCE=62
+PAPER_MIN_SCORE=65
+PAPER_MAX_OPEN_POSITIONS=4
+
+TESTE
 /status
 /ia
 /scan
-/scheduler
 /paper
+
+LOG ESPERADO QUANDO HOUVER VÁRIOS CANDIDATOS
+[ai] candidato TOP: ...
+[ai] candidato TOP: ...
+[ai] ... BURST liberado ... (2/2 neste scan)
+
+O bot continua exigindo decisão APPROVE para abrir PAPER.
+WAIT/WATCH não abre posição.

@@ -46,16 +46,16 @@ export function paperConfig() {
       numEnv('PAPER_MAX_MARGIN_PCT', 10, 1, 100),
 
     maxOpenPositions:
-      intEnv('PAPER_MAX_OPEN_POSITIONS', 3, 1, 20),
+      intEnv('PAPER_MAX_OPEN_POSITIONS', 4, 1, 20),
 
     minNotional:
       numEnv('PAPER_MIN_NOTIONAL_USDC', 10, 1, 10000),
 
     minAiConfidence:
-      numEnv('PAPER_MIN_AI_CONFIDENCE', 70, 0, 100),
+      numEnv('PAPER_MIN_AI_CONFIDENCE', 62, 0, 100),
 
     minScore:
-      numEnv('PAPER_MIN_SCORE', 75, 0, 100),
+      numEnv('PAPER_MIN_SCORE', 65, 0, 100),
 
     feeRate:
       numEnv('PAPER_FEE_RATE', 0.00045, 0, 0.01),
@@ -1333,7 +1333,7 @@ export function paperStatusText() {
       : null;
 
   return [
-    '🧪 <b>PAPER TRADING — V1.5.0 SCALP</b>',
+    '🔥 <b>PAPER TRADING — V1.5.7 FAST PAPER</b>',
     '',
     `Status: ${cfg.enabled ? '✅ ATIVO' : '⛔ DESATIVADO'} · ${state.paused ? '⏸ PAUSADO' : '▶️ RODANDO'}`,
     `💰 Banca inicial: ${state.startingBalance.toFixed(2)} USDC`,

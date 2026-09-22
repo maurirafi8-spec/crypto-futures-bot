@@ -53,38 +53,45 @@ const cfg = {
     Math.max(Number(process.env.V133_TOP_MARKETS || 12), 1),
     12
   ),
-  minScore: Number(process.env.MIN_SCORE || 70),
+  minScore: Number(process.env.MIN_SCORE || 65),
   preCandidateMinScore: Number(process.env.PRE_CANDIDATE_MIN_SCORE || 60),
   minVolume: Number(process.env.MIN_QUOTE_VOLUME_USDT || 20_000_000),
   cooldownMin: Number(process.env.COOLDOWN_MINUTES || 90),
-  minVolumeRatio: Number(process.env.V122_VOLUME_CONFIRM_RATIO || 0.60),
+  minVolumeRatio: Number(process.env.V122_VOLUME_CONFIRM_RATIO || 0.50),
   minOiPct: Number(process.env.V122_OI_CONFIRM_PCT || 0.50),
   hardMinVolumeRatio: Number(process.env.V122_HARD_MIN_VOLUME_RATIO || 0.40),
   oiRejectPct: Number(process.env.V122_OI_REJECT_PCT || -1.00),
   exceptionScore: Number(process.env.V122_EXCEPTION_SCORE || 82),
   exceptionVolumeRatio: Number(process.env.V122_EXCEPTION_VOLUME_RATIO || 1.00),
   aiEnabled: String(process.env.AI_ENABLED || 'true').toLowerCase() !== 'false',
-  aiMinConfidence: Number(process.env.AI_MIN_CONFIDENCE || 65),
+  aiMinConfidence: Number(process.env.AI_MIN_CONFIDENCE || 62),
   aiFailOpen: String(process.env.AI_FAIL_OPEN || 'false').toLowerCase() === 'true',
-  // V1.3.1 Free: no máximo 1 candidato por ciclo para poupar a cota gratuita.
-  aiMaxCandidates: Math.min(Number(process.env.AI_MAX_CANDIDATES || 1), 1),
+  // V1.5.7 FAST PAPER: até 2 candidatos por ciclo.
+  // O limite diário global continua protegendo a cota.
+  aiMaxCandidates: Math.min(
+    Math.max(Number(process.env.AI_MAX_CANDIDATES || 2), 1),
+    2
+  ),
+  aiBurstSecondCandidate:
+    String(process.env.AI_BURST_SECOND_CANDIDATE || 'true')
+      .toLowerCase() !== 'false',
   // Reserva algumas chamadas abaixo do teto diário do plano gratuito.
   aiDailyLimit: Math.min(Number(process.env.AI_DAILY_LIMIT || 45), 45),
   // 30 min para candidatos normais.
   aiMinGapMin: Math.max(Number(process.env.AI_MIN_GAP_MINUTES || 20), 1),
 
-  // V1.5.4: prioridade adaptativa para SCALP.
-  // NORMAL: usa o gap econômico de 20 min.
-  // SCALP_FORTE: score 85+ / vol 0.60x+ / OI +1.00%+ -> gap 5 min.
-  // SUPER_SCALP: score 90+ / vol 0.60x+ / OI +1.50%+ -> gap 2 min.
+  // V1.5.7 FAST PAPER: prioridade adaptativa mais agressiva.
+  // NORMAL: gap 20 min.
+  // SCALP_FORTE: score 85+ / vol 0.50x+ / OI +0.70%+ -> gap 3 min.
+  // SUPER_SCALP: score 90+ / vol 0.60x+ / OI +1.50%+ -> gap 1 min.
   aiPriorityEnabled:
     String(process.env.AI_PRIORITY_ENABLED || 'true').toLowerCase() !== 'false',
 
   aiPriorityScore: Number(process.env.AI_PRIORITY_SCORE || 85),
-  aiPriorityVolumeRatio: Number(process.env.AI_PRIORITY_VOLUME_RATIO || 0.60),
-  aiPriorityOiPct: Number(process.env.AI_PRIORITY_OI_PCT || 1.00),
+  aiPriorityVolumeRatio: Number(process.env.AI_PRIORITY_VOLUME_RATIO || 0.50),
+  aiPriorityOiPct: Number(process.env.AI_PRIORITY_OI_PCT || 0.70),
   aiPriorityGapMin: Math.max(
-    Number(process.env.AI_PRIORITY_GAP_MINUTES || 5),
+    Number(process.env.AI_PRIORITY_GAP_MINUTES || 3),
     1
   ),
 
@@ -95,7 +102,7 @@ const cfg = {
   aiSuperScalpOiPct:
     Number(process.env.AI_SUPER_SCALP_OI_PCT || 1.50),
   aiSuperScalpGapMin: Math.max(
-    Number(process.env.AI_SUPER_SCALP_GAP_MINUTES || 2),
+    Number(process.env.AI_SUPER_SCALP_GAP_MINUTES || 1),
     1
   ),
 
@@ -2382,9 +2389,9 @@ async function validateSignalsWithAI(signals) {
     };
   }
 
-  // V1.3.8:
+  // V1.5.7:
   // Analisa toda a fila para aproveitar TODOS os caches válidos.
-  // Porém só permite UMA chamada nova por scan.
+  // Permite até DUAS chamadas novas por scan no FAST PAPER.
   meta.selected = signals.length;
 
   const approved = [];
@@ -2430,14 +2437,55 @@ async function validateSignalsWithAI(signals) {
       meta.priorityEligible += 1;
     }
 
-    // Já usamos a única chamada nova permitida neste scan.
+    // Já usamos o máximo de chamadas novas permitido neste scan.
     // Continuamos o loop apenas para aproveitar caches posteriores.
     if (freshCallsUsed >= cfg.aiMaxCandidates) {
       meta.freshDeferred += 1;
       continue;
     }
 
-    const permission = aiCallPermission(s);
+    let permission = aiCallPermission(s);
+
+    // V1.5.7 FAST PAPER:
+    // se já analisamos 1 candidato neste scan, permitimos um segundo
+    // candidato imediatamente (até o máximo de 2), sem esperar o gap
+    // entre chamadas. Isso é apenas a fila de IA; os limites diário,
+    // de prioridade e de PAPER continuam valendo.
+    if (
+      !permission.allowed &&
+      cfg.aiBurstSecondCandidate &&
+      freshCallsUsed > 0 &&
+      freshCallsUsed < cfg.aiMaxCandidates &&
+      aiCallsToday < cfg.aiDailyLimit
+    ) {
+      const burstClass =
+        aiPriorityClass(s);
+
+      const fastQuotaOk =
+        burstClass === 'NORMAL' ||
+        aiPriorityCallsToday < cfg.aiPriorityDailyLimit;
+
+      if (fastQuotaOk) {
+        permission = {
+          allowed: true,
+          mode:
+            burstClass === 'NORMAL'
+              ? 'BURST_NORMAL'
+              : burstClass,
+          priorityEligible:
+            burstClass !== 'NORMAL',
+          priorityClass:
+            burstClass,
+          reason:
+            'segunda análise do mesmo scan (FAST PAPER)'
+        };
+
+        console.log(
+          `[ai] ${s.symbol}: BURST liberado como ${permission.mode} ` +
+          `(${freshCallsUsed + 1}/${cfg.aiMaxCandidates} neste scan)`
+        );
+      }
+    }
 
     if (!permission.allowed) {
       meta.skipped += 1;
@@ -2738,30 +2786,31 @@ async function doScan({
 
       aiInput = standardSignals;
     } else {
-      aiInput = preCandidates.slice(0, 1).map(s => ({
+      aiInput = preCandidates.slice(0, cfg.aiMaxCandidates).map(s => ({
         ...s,
         candidateTier: 'PRE_CANDIDATE'
       }));
     }
 
     if (aiInput.length) {
-      const first = aiInput[0];
-      const priorityClass =
-        aiPriorityClass(first);
+      for (const candidate of aiInput.slice(0, cfg.aiMaxCandidates)) {
+        const priorityClass =
+          aiPriorityClass(candidate);
 
-      const priorityLabel =
-        priorityClass === 'SUPER_SCALP'
-          ? '🚀 SUPER_SCALP'
-          : priorityClass === 'SCALP_STRONG'
-            ? '⚡ SCALP_FORTE'
-            : 'NORMAL';
+        const priorityLabel =
+          priorityClass === 'SUPER_SCALP'
+            ? '🚀 SUPER_SCALP'
+            : priorityClass === 'SCALP_STRONG'
+              ? '⚡ SCALP_FORTE'
+              : 'NORMAL';
 
-      console.log(
-        `[ai] candidato escolhido: ${first.symbol} ${first.side} · ` +
-        `score ${first.score} · vol ${adaptiveVolumeRatio(first).toFixed(2)}x · ` +
-        `OI ${Number(first.oiPct || 0).toFixed(2)}% · ` +
-        priorityLabel
-      );
+        console.log(
+          `[ai] candidato TOP: ${candidate.symbol} ${candidate.side} · ` +
+          `score ${candidate.score} · vol ${adaptiveVolumeRatio(candidate).toFixed(2)}x · ` +
+          `OI ${Number(candidate.oiPct || 0).toFixed(2)}% · ` +
+          priorityLabel
+        );
+      }
     }
 
     const aiResult = await validateSignalsWithAI(aiInput);
@@ -2918,7 +2967,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.5.6 FREE</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.5.7 FAST PAPER</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o próximo lote agora\n' +
       '/scheduler — ver rotação automática de 1 minuto\n' +
@@ -2954,13 +3003,16 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.5.6 FREE\n` +
+      `✅ Online — V1.5.7 FAST PAPER\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
+      `🔥 Modo: FAST PAPER V1.5.7\n` +
       `⏱ Scan automático: a cada ${cfg.intervalMin} min\n` +
       `🪙 Lote automático: ${cfg.scanBatchSize} moedas · pares /USDT\n` +
       `🔁 Universo: BTC/ETH/SOL prioritários + 21 moedas em rotação\n` +
       `⚡ Modo: SCALP 5m · alvo de duração 15min–3h\n` +
       `⭐ Score mínimo para sinal: ${cfg.minScore}\n` +
+      `🤖 Confiança mínima para liberar sinal/PAPER: ${cfg.aiMinConfidence}%\n` +
+      `🧠 Máx. candidatos IA por scan: ${cfg.aiMaxCandidates}\n` +
       `👀 Pré-candidato IA: ${cfg.preCandidateMinScore}–${cfg.minScore - 1}\n` +
       `💵 Volume mínimo 24h: $${Math.round(cfg.minVolume / 1e6)}M\n` +
       `📊 Volume para confirmar: ${cfg.minVolumeRatio.toFixed(2)}x\n` +
@@ -3349,7 +3401,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.5.6-free',
+    version: '1.5.7-fast-paper',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -3391,7 +3443,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.5.6 FREE pronto ✅');
+console.log('Crypto Futures Scanner V1.5.7 FAST PAPER pronto ✅');
 
 // Em rolling deploy o processo antigo do Render pode permanecer vivo por
 // alguns segundos. Um pequeno atraso evita duas instâncias consumindo a

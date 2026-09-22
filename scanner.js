@@ -1008,7 +1008,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.5.4: scheduler 1min + IA adaptativa SCALP_FORTE/SUPER_SCALP + paper scalp. ` +
+    `<i>V1.5.7: FAST PAPER · score 65 · 2 candidatos IA · scalp mais frequente. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }
