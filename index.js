@@ -34,7 +34,8 @@ import {
   paperResume,
   paperReset,
   paperStateInfo,
-  paperOpenSymbols
+  paperOpenSymbols,
+  paperHasOpenPosition
 } from './paper-trader.js';
 
 const cfg = {
@@ -66,7 +67,7 @@ const cfg = {
   aiEnabled: String(process.env.AI_ENABLED || 'true').toLowerCase() !== 'false',
   aiMinConfidence: Number(process.env.AI_MIN_CONFIDENCE || 62),
   aiFailOpen: String(process.env.AI_FAIL_OPEN || 'false').toLowerCase() === 'true',
-  // V1.5.7 FAST PAPER: até 2 candidatos por ciclo.
+  // V1.5.8 PROFIT PROTECT: até 2 candidatos por ciclo.
   // O limite diário global continua protegendo a cota.
   aiMaxCandidates: Math.min(
     Math.max(Number(process.env.AI_MAX_CANDIDATES || 2), 1),
@@ -80,7 +81,7 @@ const cfg = {
   // 30 min para candidatos normais.
   aiMinGapMin: Math.max(Number(process.env.AI_MIN_GAP_MINUTES || 20), 1),
 
-  // V1.5.7 FAST PAPER: prioridade adaptativa mais agressiva.
+  // V1.5.8 PROFIT PROTECT: prioridade adaptativa mais agressiva.
   // NORMAL: gap 20 min.
   // SCALP_FORTE: score 85+ / vol 0.50x+ / OI +0.70%+ -> gap 3 min.
   // SUPER_SCALP: score 90+ / vol 0.60x+ / OI +1.50%+ -> gap 1 min.
@@ -1524,7 +1525,44 @@ async function updateTrackedSignals(snapshots) {
   }
 }
 
+function detachTrackerForPaper(s) {
+  const k = trackKey(s);
+  const existing = activeSignals.get(k);
+
+  if (
+    existing &&
+    existing.signal?.side === s.side
+  ) {
+    activeSignals.delete(k);
+    addHistory(
+      existing,
+      'GESTÃO TRANSFERIDA AO PAPER'
+    );
+
+    console.log(
+      `[track] ${s.symbol} ${s.side}: tracker legado removido — ` +
+      `PAPER assumiu a gestão de STOP/TP`
+    );
+  }
+}
+
 async function trackSignal(s) {
+  // Se existe posição PAPER para este sinal, não cria acompanhamento
+  // paralelo. O PAPER é a fonte de verdade para TP/STOP e evita mensagens
+  // como "TP2/TP3 atingido" depois de a posição já ter sido encerrada.
+  if (
+    paperHasOpenPosition(
+      s.symbol,
+      s.side
+    )
+  ) {
+    console.log(
+      `[track] ${s.symbol} ${s.side}: não rastreado em paralelo — ` +
+      `posição PAPER ativa`
+    );
+    return;
+  }
+
   const k = trackKey(s);
   const existing = activeSignals.get(k);
 
@@ -2446,7 +2484,7 @@ async function validateSignalsWithAI(signals) {
 
     let permission = aiCallPermission(s);
 
-    // V1.5.7 FAST PAPER:
+    // V1.5.8 PROFIT PROTECT:
     // se já analisamos 1 candidato neste scan, permitimos um segundo
     // candidato imediatamente (até o máximo de 2), sem esperar o gap
     // entre chamadas. Isso é apenas a fila de IA; os limites diário,
@@ -2859,6 +2897,10 @@ async function doScan({
           `IA ${Math.round(signal.ai?.confidence || 0)}% · score ${signal.score}`
         );
 
+        // V1.5.8: PAPER passa a ser a única fonte de mensagens de TP/STOP
+        // para esta posição.
+        detachTrackerForPaper(signal);
+
         await notify(
           paperOpen.message
         );
@@ -2967,7 +3009,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.5.7 FAST PAPER</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.5.8 PROFIT PROTECT</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o próximo lote agora\n' +
       '/scheduler — ver rotação automática de 1 minuto\n' +
@@ -3003,9 +3045,10 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.5.7 FAST PAPER\n` +
+      `✅ Online — V1.5.8 PROFIT PROTECT\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
-      `🔥 Modo: FAST PAPER V1.5.7\n` +
+      `🛡 Modo: PROFIT PROTECT V1.5.8\n` +
+      `🔗 Tracker/PAPER: SINCRONIZADO · PAPER manda TP/STOP quando houver posição\n` +
       `⏱ Scan automático: a cada ${cfg.intervalMin} min\n` +
       `🪙 Lote automático: ${cfg.scanBatchSize} moedas · pares /USDT\n` +
       `🔁 Universo: BTC/ETH/SOL prioritários + 21 moedas em rotação\n` +
@@ -3401,7 +3444,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.5.7-fast-paper',
+    version: '1.5.8-profit-protect',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -3443,7 +3486,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.5.7 FAST PAPER pronto ✅');
+console.log('Crypto Futures Scanner V1.5.8 PROFIT PROTECT pronto ✅');
 
 // Em rolling deploy o processo antigo do Render pode permanecer vivo por
 // alguns segundos. Um pequeno atraso evita duas instâncias consumindo a

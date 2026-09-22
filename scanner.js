@@ -1008,7 +1008,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.5.7: FAST PAPER · score 65 · 2 candidatos IA · scalp mais frequente. ` +
+    `<i>V1.5.8: Profit Protect líquido + PAPER como fonte única de TP/STOP. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

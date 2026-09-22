@@ -79,6 +79,15 @@ export function paperConfig() {
     scalpStaleMin:
       numEnv('PAPER_SCALP_STALE_MINUTES', 60, 15, 360),
 
+    profitProtectEnabled:
+      String(process.env.PAPER_PROFIT_PROTECT_ENABLED || 'true')
+        .toLowerCase() !== 'false',
+
+    // Depois do TP1, o stop é calculado para que, se o restante sair nele,
+    // o trade completo cubra fee + slippage e ainda tente preservar este piso.
+    profitProtectBufferUsdc:
+      numEnv('PAPER_PROFIT_PROTECT_BUFFER_USDC', 0.02, 0, 10),
+
     statePath:
       process.env.PAPER_STATE_PATH ||
       path.resolve(process.cwd(), 'paper-state.json')
@@ -836,6 +845,112 @@ function positionCloseMessage(closed) {
   );
 }
 
+function profitProtectStopReference(
+  position,
+  targetNetUsdc = 0
+) {
+  const cfg = paperConfig();
+
+  if (
+    !cfg.profitProtectEnabled ||
+    !position ||
+    !(position.remainingQty > 0)
+  ) {
+    return Number(position?.entryFill || 0);
+  }
+
+  const qty =
+    Number(position.remainingQty || 0);
+
+  const entry =
+    Number(position.entryFill || 0);
+
+  const realizedGross =
+    Number(position.realizedGrossPnl || 0);
+
+  const feesPaid =
+    Number(position.entryFee || 0) +
+    Number(position.exitFees || 0);
+
+  const fee =
+    Number(cfg.feeRate || 0);
+
+  const slip =
+    Number(cfg.slippageBps || 0) /
+    10000;
+
+  let desiredExitFill;
+
+  if (position.side === 'LONG') {
+    // target =
+    // realizedGross + (exit-entry)*qty
+    // - feesPaid - exit*qty*fee
+    const numerator =
+      targetNetUsdc -
+      realizedGross +
+      entry * qty +
+      feesPaid;
+
+    desiredExitFill =
+      numerator /
+      (qty * (1 - fee));
+
+    // LONG: adverseFill(ref) = ref * (1-slip)
+    const ref =
+      desiredExitFill /
+      Math.max(1e-9, 1 - slip);
+
+    // Nunca deixa a proteção pós-TP1 pior que a própria entrada.
+    return Math.max(
+      entry,
+      ref
+    );
+  }
+
+  // SHORT:
+  // target =
+  // realizedGross + (entry-exit)*qty
+  // - feesPaid - exit*qty*fee
+  const numerator =
+    realizedGross +
+    entry * qty -
+    feesPaid -
+    targetNetUsdc;
+
+  desiredExitFill =
+    numerator /
+    (qty * (1 + fee));
+
+  // SHORT: adverseFill(ref) = ref * (1+slip)
+  const ref =
+    desiredExitFill /
+    (1 + slip);
+
+  // Nunca deixa a proteção pós-TP1 pior que a própria entrada.
+  return Math.min(
+    entry,
+    ref
+  );
+}
+
+function moreProtectiveStop(
+  position,
+  a,
+  b
+) {
+  if (position.side === 'LONG') {
+    return Math.max(
+      Number(a),
+      Number(b)
+    );
+  }
+
+  return Math.min(
+    Number(a),
+    Number(b)
+  );
+}
+
 function partialMessage(position, leg, levelName) {
   return (
     `🎯 <b>PAPER ${position.symbol} ${position.side}</b> — ${levelName}\n` +
@@ -1041,9 +1156,21 @@ function updateOnePosition(position, snap) {
 
     position.stage = 1;
 
-    // Depois do TP1, protege o restante no breakeven.
+    // V1.5.8 PROFIT PROTECT:
+    // breakeven líquido — leva em conta fee de entrada, fee de saída
+    // já paga, fee futura e slippage da saída restante.
+    const costProtectedStop =
+      profitProtectStopReference(
+        position,
+        cfg.profitProtectBufferUsdc
+      );
+
     position.stopCurrent =
-      position.entryFill;
+      moreProtectiveStop(
+        position,
+        position.entryFill,
+        costProtectedStop
+      );
 
     if (leg) {
       events.push(
@@ -1074,9 +1201,20 @@ function updateOnePosition(position, snap) {
 
     position.stage = 2;
 
-    // Depois do TP2, protege o restante no TP1.
+    // Depois do TP2, mantém pelo menos o TP1 como proteção,
+    // mas nunca afrouxa abaixo do piso líquido calculado.
+    const costProtectedStop =
+      profitProtectStopReference(
+        position,
+        cfg.profitProtectBufferUsdc
+      );
+
     position.stopCurrent =
-      position.tp1;
+      moreProtectiveStop(
+        position,
+        position.tp1,
+        costProtectedStop
+      );
 
     if (leg) {
       events.push(
@@ -1333,7 +1471,7 @@ export function paperStatusText() {
       : null;
 
   return [
-    '🔥 <b>PAPER TRADING — V1.5.7 FAST PAPER</b>',
+    '🛡 <b>PAPER TRADING — V1.5.8 PROFIT PROTECT</b>',
     '',
     `Status: ${cfg.enabled ? '✅ ATIVO' : '⛔ DESATIVADO'} · ${state.paused ? '⏸ PAUSADO' : '▶️ RODANDO'}`,
     `💰 Banca inicial: ${state.startingBalance.toFixed(2)} USDC`,
@@ -1348,6 +1486,7 @@ export function paperStatusText() {
     `⚖️ Risco por trade: ${cfg.riskPct.toFixed(2)}%`,
     `⚙️ Alavancagem simulada: ${cfg.leverage}x`,
     `⚡ Scalp: ${cfg.scalpMode ? 'ATIVO' : 'INATIVO'} · stale ${cfg.scalpStaleMin} min · máx ${cfg.maxHoldHours}h`,
+    `🛡 Profit Protect: ${cfg.profitProtectEnabled ? 'ATIVO' : 'INATIVO'} · piso pós-TP1 +${cfg.profitProtectBufferUsdc.toFixed(2)} USDC`,
     '',
     `📊 Trades fechados: ${stats.total}`,
     `✅ Wins: ${stats.wins} · 🛑 Losses: ${stats.losses} · ➖ Flat: ${stats.flat}`,
@@ -1477,4 +1616,56 @@ export function paperOpenSymbols() {
         .filter(Boolean)
     )
   ];
+}
+
+
+export function paperHasOpenPosition(symbol, side = null) {
+  const target =
+    String(symbol || '')
+      .toUpperCase();
+
+  const targetSide =
+    side == null
+      ? null
+      : String(side).toUpperCase();
+
+  return state.openPositions.some(p => {
+    const sameSymbol =
+      String(p.symbol || '').toUpperCase() === target ||
+      String(p.dataSymbol || '').toUpperCase() === target;
+
+    const sameSide =
+      targetSide == null ||
+      String(p.side || '').toUpperCase() === targetSide;
+
+    return sameSymbol && sameSide;
+  });
+}
+
+export function paperPositionSnapshot(symbol, side = null) {
+  const target =
+    String(symbol || '')
+      .toUpperCase();
+
+  const targetSide =
+    side == null
+      ? null
+      : String(side).toUpperCase();
+
+  const found =
+    state.openPositions.find(p => {
+      const sameSymbol =
+        String(p.symbol || '').toUpperCase() === target ||
+        String(p.dataSymbol || '').toUpperCase() === target;
+
+      const sameSide =
+        targetSide == null ||
+        String(p.side || '').toUpperCase() === targetSide;
+
+      return sameSymbol && sameSide;
+    });
+
+  return found
+    ? { ...found }
+    : null;
 }

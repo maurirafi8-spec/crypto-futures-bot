@@ -1,108 +1,87 @@
-CRYPTO FUTURES SCANNER V1.5.7 — FAST PAPER
+CRYPTO FUTURES SCANNER V1.5.8 — PROFIT PROTECT
 
-OBJETIVO
-Aumentar a frequência de PAPER TRADES curtos sem afrouxar o executor
-Hyperliquid real/testnet.
+BASE
+Mantém tudo da V1.5.7 FAST PAPER:
+- scan em lotes a cada 1 min;
+- score mínimo 65;
+- até 2 candidatos IA;
+- confiança PAPER 62%;
+- até 4 posições;
+- SCALP FORTE / SUPER SCALP;
+- TP1 30%, TP2 30%, TP3 restante;
+- slippage e taxas simuladas.
 
-MUDANÇAS DO FAST PAPER
+NOVIDADE 1 — BREAKEVEN LÍQUIDO
+Antes:
+depois do TP1 o stop ia exatamente para o preço de entrada.
 
-FILTRO TÉCNICO
-Score mínimo:
-70 -> 65
+Problema:
+preço de entrada puro não cobre necessariamente:
+- taxa de entrada;
+- taxa da parcial TP1;
+- futura taxa de saída;
+- slippage.
 
-Volume de confirmação:
-0.60x -> 0.50x
+Por isso XRP e LTC puderam bater TP1 e ainda terminar
+ligeiramente negativos no STOP posterior.
 
-IA / PAPER
-Confiança mínima para liberar sinal:
-65% -> 62%
+Agora:
+depois do TP1 o bot calcula um STOP de PROFIT PROTECT.
 
-Paper trader:
-confiança mínima 62%
-score mínimo 65
+O cálculo considera:
+- lucro bruto já realizado;
+- fee de entrada;
+- fees das parciais;
+- fee futura estimada;
+- slippage futuro;
+- quantidade restante.
 
-FILA IA
-Até 2 candidatos por scan.
+Piso padrão:
++0.02 USDC no trade completo, quando matematicamente possível
+e quando o restante sair no stop calculado.
 
-Se o primeiro candidato já consumiu uma chamada e o segundo estiver
-bloqueado apenas pelo gap, o FAST PAPER pode fazer uma segunda análise
-no mesmo scan.
+Variáveis:
+PAPER_PROFIT_PROTECT_ENABLED=true
+PAPER_PROFIT_PROTECT_BUFFER_USDC=0.02
 
-Os limites diários continuam ativos.
+Depois do TP2:
+o stop continua no mínimo no TP1, ou em nível ainda mais protetor
+se o cálculo líquido exigir.
 
-SCALP FORTE
-score >= 85
-volume >= 0.50x
-OI >= +0.70%
-gap: 3 min
+NOVIDADE 2 — TRACKER SINCRONIZADO COM PAPER
+Antes havia dois acompanhamentos:
+1. tracker do sinal;
+2. paper trader.
 
-SUPER SCALP
-score >= 90
-volume >= 0.60x
-OI >= +1.50%
-gap: 1 min
+Isso podia gerar:
+PAPER encerrado no STOP após TP1
+e mais tarde
+"TP2 atingido" / "TP3 atingido"
+pelo tracker antigo.
 
-PAPER TRADING
-Máximo de posições simultâneas:
-3 -> 4
+Agora:
+quando uma posição PAPER abre, o PAPER vira a fonte de verdade
+para mensagens de STOP/TP dessa operação.
 
-Mantido:
-risco 0.75% por trade
-2x simulado
-stop automático
-TP1 / TP2 / TP3
-stale exit 60 min
-máximo 3h por scalp
-limite diário de perda 3%
+O tracker paralelo não é criado para uma posição PAPER ativa.
+Se existir tracker antigo do mesmo sinal, ele é desligado quando
+o PAPER assume a gestão.
 
-EXECUÇÃO HYPERLIQUID
-NÃO foi afrouxada.
+RESULTADO ESPERADO
+Após TP1:
+- fecha 30%;
+- stop sobe para breakeven líquido/protegido;
+- se voltar no stop, o resultado total tende a ficar perto de
+  +0.02 USDC ou melhor, dentro das regras da simulação.
 
-Continua:
-confiança mínima 70%
-score mínimo 75
-e execução permanece desabilitada por padrão salvo configuração explícita.
+IMPORTANTE
+Isso é paper trading e não garante o mesmo fill em mercado real.
+Gap de preço, liquidez e execução real podem produzir resultado diferente.
 
-LIMITES DA IA
-Global: 45 chamadas/dia
-Fila rápida: 12/dia
-
-ATENÇÃO
-Com 2 candidatos por scan o bot pode consumir a cota de IA mais rápido.
-Isso é intencional no FAST PAPER, mas o teto diário permanece.
-
-VARIÁVEIS PADRÃO
-MIN_SCORE=65
-AI_MIN_CONFIDENCE=62
-AI_MAX_CANDIDATES=2
-AI_BURST_SECOND_CANDIDATE=true
-
-V122_VOLUME_CONFIRM_RATIO=0.50
-
-AI_PRIORITY_SCORE=85
-AI_PRIORITY_VOLUME_RATIO=0.50
-AI_PRIORITY_OI_PCT=0.70
-AI_PRIORITY_GAP_MINUTES=3
-
-AI_SUPER_SCALP_SCORE=90
-AI_SUPER_SCALP_VOLUME_RATIO=0.60
-AI_SUPER_SCALP_OI_PCT=1.50
-AI_SUPER_SCALP_GAP_MINUTES=1
-
-PAPER_MIN_AI_CONFIDENCE=62
-PAPER_MIN_SCORE=65
-PAPER_MAX_OPEN_POSITIONS=4
-
-TESTE
-/status
-/ia
-/scan
+COMANDOS
 /paper
-
-LOG ESPERADO QUANDO HOUVER VÁRIOS CANDIDATOS
-[ai] candidato TOP: ...
-[ai] candidato TOP: ...
-[ai] ... BURST liberado ... (2/2 neste scan)
-
-O bot continua exigindo decisão APPROVE para abrir PAPER.
-WAIT/WATCH não abre posição.
+/paperpos
+/papertrades
+/status
+/ativos
+/resultados
