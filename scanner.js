@@ -1577,7 +1577,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.6.4: Direction Balance LONG/SHORT + confirmação 1H + contexto BTC. ` +
+    `<i>V1.6.5: Direction Balance + Net R/R Guard no PAPER. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

@@ -94,6 +94,27 @@ export function paperConfig() {
         5
       ),
 
+    // V1.6.5 NET R/R GUARD
+    // O trade só abre se o lucro líquido projetado dos 3 TPs
+    // compensar o prejuízo líquido projetado do STOP.
+    netRrGuardEnabled:
+      String(process.env.PAPER_NET_RR_GUARD_ENABLED || 'true')
+        .toLowerCase() !== 'false',
+
+    minNetRR:
+      numEnv('PAPER_MIN_NET_RR', 1.50, 0.25, 10),
+
+    autoAdjustTargets:
+      String(process.env.PAPER_AUTO_ADJUST_TPS || 'true')
+        .toLowerCase() !== 'false',
+
+    maxTargetScale:
+      numEnv('PAPER_MAX_TP_SCALE', 4.00, 1, 10),
+
+    requireTp1NetProtectable:
+      String(process.env.PAPER_REQUIRE_TP1_NET_PROTECT || 'true')
+        .toLowerCase() !== 'false',
+
     statePath:
       process.env.PAPER_STATE_PATH ||
       path.resolve(process.cwd(), 'paper-state.json')
@@ -486,6 +507,392 @@ function validateLevels(signal, entryFill) {
   };
 }
 
+function projectedExitLeg({
+  side,
+  entryFill,
+  exitReference,
+  qty
+}) {
+  const cfg = paperConfig();
+
+  const exitFill =
+    adverseFill(
+      exitReference,
+      side,
+      false
+    );
+
+  const gross =
+    directionSign(side) *
+    (exitFill - entryFill) *
+    qty;
+
+  const fee =
+    exitFill *
+    qty *
+    cfg.feeRate;
+
+  return {
+    exitFill,
+    gross,
+    fee,
+    netBeforeEntryFee:
+      gross - fee
+  };
+}
+
+function projectedTradeEconomics({
+  side,
+  entryFill,
+  stop,
+  tp1,
+  tp2,
+  tp3,
+  qty = 1
+}) {
+  const cfg = paperConfig();
+
+  const entryFee =
+    entryFill *
+    qty *
+    cfg.feeRate;
+
+  const stopLeg =
+    projectedExitLeg({
+      side,
+      entryFill,
+      exitReference: stop,
+      qty
+    });
+
+  const stopNet =
+    stopLeg.gross -
+    stopLeg.fee -
+    entryFee;
+
+  const weights =
+    [0.30, 0.30, 0.40];
+
+  const targets =
+    [tp1, tp2, tp3];
+
+  let targetGross = 0;
+  let targetFees = 0;
+
+  for (
+    let i = 0;
+    i < targets.length;
+    i += 1
+  ) {
+    const leg =
+      projectedExitLeg({
+        side,
+        entryFill,
+        exitReference:
+          targets[i],
+        qty:
+          qty * weights[i]
+      });
+
+    targetGross +=
+      leg.gross;
+
+    targetFees +=
+      leg.fee;
+  }
+
+  const fullTpNet =
+    targetGross -
+    targetFees -
+    entryFee;
+
+  const stopLoss =
+    Math.max(
+      0,
+      -stopNet
+    );
+
+  const netRR =
+    stopLoss > 0
+      ? fullTpNet / stopLoss
+      : fullTpNet > 0
+        ? Infinity
+        : 0;
+
+  // Pós-TP1, o stop não pode ultrapassar o próprio TP1.
+  // Portanto, o melhor resultado líquido garantível naquele estágio
+  // é equivalente a toda a posição sair no preço de referência TP1.
+  const tp1AllExit =
+    projectedExitLeg({
+      side,
+      entryFill,
+      exitReference: tp1,
+      qty
+    });
+
+  const netIfAllExitAtTp1 =
+    tp1AllExit.gross -
+    tp1AllExit.fee -
+    entryFee;
+
+  const protectTargetNet =
+    entryFill *
+    qty *
+    cfg.profitProtectBufferPctNotional /
+    100;
+
+  return {
+    entryFee,
+    stopNet,
+    stopLoss,
+    fullTpNet,
+    netRR,
+    netIfAllExitAtTp1,
+    protectTargetNet,
+    tp1Protectable:
+      netIfAllExitAtTp1 + 1e-12 >=
+      protectTargetNet
+  };
+}
+
+function scaledTargets(
+  side,
+  entryFill,
+  levels,
+  scale
+) {
+  const adjust = target =>
+    entryFill +
+    (Number(target) - entryFill) *
+    scale;
+
+  return {
+    stop:
+      Number(levels.stop),
+    tp1:
+      adjust(levels.tp1),
+    tp2:
+      adjust(levels.tp2),
+    tp3:
+      adjust(levels.tp3)
+  };
+}
+
+function planMeetsNetGuard(
+  economics,
+  cfg
+) {
+  const rrOk =
+    !cfg.netRrGuardEnabled ||
+    (
+      economics.fullTpNet > 0 &&
+      economics.netRR >=
+        cfg.minNetRR
+    );
+
+  const tp1Ok =
+    !cfg.requireTp1NetProtectable ||
+    economics.tp1Protectable;
+
+  return rrOk && tp1Ok;
+}
+
+function prepareNetRRPlan({
+  side,
+  entryFill,
+  levels
+}) {
+  const cfg = paperConfig();
+
+  const originalEconomics =
+    projectedTradeEconomics({
+      side,
+      entryFill,
+      ...levels,
+      qty: 1
+    });
+
+  if (
+    planMeetsNetGuard(
+      originalEconomics,
+      cfg
+    )
+  ) {
+    return {
+      ok: true,
+      levels,
+      economics:
+        originalEconomics,
+      targetScale: 1,
+      adjusted: false,
+      originalEconomics
+    };
+  }
+
+  if (!cfg.autoAdjustTargets) {
+    return {
+      ok: false,
+      reason:
+        `R/R líquido ${Number(originalEconomics.netRR || 0).toFixed(2)} ` +
+        `< ${cfg.minNetRR.toFixed(2)} ou TP1 sem espaço para proteção líquida`,
+      economics:
+        originalEconomics,
+      targetScale: 1,
+      adjusted: false,
+      originalEconomics
+    };
+  }
+
+  const maxLevels =
+    scaledTargets(
+      side,
+      entryFill,
+      levels,
+      cfg.maxTargetScale
+    );
+
+  const maxEconomics =
+    projectedTradeEconomics({
+      side,
+      entryFill,
+      ...maxLevels,
+      qty: 1
+    });
+
+  if (
+    !planMeetsNetGuard(
+      maxEconomics,
+      cfg
+    )
+  ) {
+    return {
+      ok: false,
+      reason:
+        `R/R líquido insuficiente mesmo com TPs x${cfg.maxTargetScale.toFixed(2)} ` +
+        `(R/R ${Number(maxEconomics.netRR || 0).toFixed(2)})`,
+      economics:
+        maxEconomics,
+      targetScale:
+        cfg.maxTargetScale,
+      adjusted: false,
+      originalEconomics
+    };
+  }
+
+  // Busca o menor multiplicador que satisfaz as duas condições:
+  // R/R líquido mínimo e proteção líquida possível após TP1.
+  let low = 1;
+  let high =
+    cfg.maxTargetScale;
+
+  let bestScale =
+    high;
+
+  let bestLevels =
+    maxLevels;
+
+  let bestEconomics =
+    maxEconomics;
+
+  for (
+    let i = 0;
+    i < 36;
+    i += 1
+  ) {
+    const mid =
+      (low + high) / 2;
+
+    const candidateLevels =
+      scaledTargets(
+        side,
+        entryFill,
+        levels,
+        mid
+      );
+
+    const candidateEconomics =
+      projectedTradeEconomics({
+        side,
+        entryFill,
+        ...candidateLevels,
+        qty: 1
+      });
+
+    if (
+      planMeetsNetGuard(
+        candidateEconomics,
+        cfg
+      )
+    ) {
+      bestScale =
+        mid;
+
+      bestLevels =
+        candidateLevels;
+
+      bestEconomics =
+        candidateEconomics;
+
+      high =
+        mid;
+    } else {
+      low =
+        mid;
+    }
+  }
+
+  return {
+    ok: true,
+    levels:
+      bestLevels,
+    economics:
+      bestEconomics,
+    targetScale:
+      bestScale,
+    adjusted:
+      bestScale > 1.0001,
+    originalEconomics
+  };
+}
+
+export function paperNetRRPreview(signal) {
+  const rawEntry =
+    Number(signal?.entry);
+
+  if (
+    !Number.isFinite(rawEntry) ||
+    rawEntry <= 0
+  ) {
+    return {
+      ok: false,
+      reason: 'entrada inválida'
+    };
+  }
+
+  const entryFill =
+    adverseFill(
+      rawEntry,
+      signal.side,
+      true
+    );
+
+  const levels =
+    validateLevels(
+      signal,
+      entryFill
+    );
+
+  return {
+    entryFill,
+    ...prepareNetRRPlan({
+      side:
+        signal.side,
+      entryFill,
+      levels
+    })
+  };
+}
+
 export function maybeOpenPaperPosition(signal) {
   ensureDay();
 
@@ -520,21 +927,44 @@ export function maybeOpenPaperPosition(signal) {
         true
       );
 
-    const levels =
+    const originalLevels =
       validateLevels(
         signal,
         entryFill
       );
 
-    const stopDistance =
-      Math.abs(entryFill - levels.stop);
+    const netPlan =
+      prepareNetRRPlan({
+        side:
+          signal.side,
+        entryFill,
+        levels:
+          originalLevels
+      });
 
-    if (stopDistance <= 0) {
+    if (!netPlan.ok) {
       return {
         opened: false,
-        reason: 'distância do stop inválida'
+        reason:
+          `NET R/R GUARD: ${netPlan.reason}`
       };
     }
+
+    const levels =
+      validateLevels(
+        {
+          ...signal,
+          stop:
+            netPlan.levels.stop,
+          tp1:
+            netPlan.levels.tp1,
+          tp2:
+            netPlan.levels.tp2,
+          tp3:
+            netPlan.levels.tp3
+        },
+        entryFill
+      );
 
     const riskBudget =
       Math.max(
@@ -543,8 +973,35 @@ export function maybeOpenPaperPosition(signal) {
         cfg.riskPct / 100
       );
 
+    // V1.6.5:
+    // sizing baseado no prejuízo LÍQUIDO por unidade,
+    // incluindo taxa de entrada, taxa de saída e slippage.
+    const perUnitEconomics =
+      projectedTradeEconomics({
+        side:
+          signal.side,
+        entryFill,
+        ...levels,
+        qty: 1
+      });
+
+    const netRiskPerUnit =
+      perUnitEconomics.stopLoss;
+
+    if (
+      !Number.isFinite(netRiskPerUnit) ||
+      netRiskPerUnit <= 0
+    ) {
+      return {
+        opened: false,
+        reason:
+          'risco líquido do stop inválido'
+      };
+    }
+
     const qtyByRisk =
-      riskBudget / stopDistance;
+      riskBudget /
+      netRiskPerUnit;
 
     const maxMargin =
       state.balance *
@@ -654,6 +1111,18 @@ export function maybeOpenPaperPosition(signal) {
       riskBudget,
       entryFee,
 
+      // V1.6.5: economia projetada do trade já com custos.
+      targetScale:
+        netPlan.targetScale,
+      targetsAutoAdjusted:
+        netPlan.adjusted,
+      originalTp1:
+        originalLevels.tp1,
+      originalTp2:
+        originalLevels.tp2,
+      originalTp3:
+        originalLevels.tp3,
+
       stage: 0,
       realizedGrossPnl: 0,
       exitFees: 0,
@@ -661,6 +1130,42 @@ export function maybeOpenPaperPosition(signal) {
         rawEntry,
       exitLegs: []
     };
+
+    const actualEconomics =
+      projectedTradeEconomics({
+        side:
+          position.side,
+        entryFill:
+          position.entryFill,
+        stop:
+          position.stopInitial,
+        tp1:
+          position.tp1,
+        tp2:
+          position.tp2,
+        tp3:
+          position.tp3,
+        qty:
+          position.initialQty
+      });
+
+    position.projectedStopNetUsdc =
+      actualEconomics.stopNet;
+
+    position.projectedStopLossUsdc =
+      actualEconomics.stopLoss;
+
+    position.projectedFullTpNetUsdc =
+      actualEconomics.fullTpNet;
+
+    position.projectedNetRR =
+      actualEconomics.netRR;
+
+    position.projectedTp1ProtectNetUsdc =
+      actualEconomics.netIfAllExitAtTp1;
+
+    position.tp1NetProtectable =
+      actualEconomics.tp1Protectable;
 
     state.openPositions.push(position);
     state.seenSignalKeys.push(key);
@@ -687,8 +1192,12 @@ export function maybeOpenPaperPosition(signal) {
         `💰 Entrada simulada: ${round(entryFill)}\n` +
         `🛑 Stop: ${round(position.stopCurrent)}\n` +
         `🎯 TP1 ${round(position.tp1)} · TP2 ${round(position.tp2)} · TP3 ${round(position.tp3)}\n` +
+        `${position.targetsAutoAdjusted ? `🧮 TPs autoajustados: x${position.targetScale.toFixed(2)} para respeitar R/R líquido\n` : ''}` +
         `📦 Notional: ${notional.toFixed(2)} USDC · Margem: ${margin.toFixed(2)} USDC · ${cfg.leverage}x\n` +
-        `⚖️ Risco-alvo: ${riskBudget.toFixed(2)} USDC (${cfg.riskPct.toFixed(1)}%)\n` +
+        `🛑 Risco líquido projetado no STOP: -${position.projectedStopLossUsdc.toFixed(3)} USDC\n` +
+        `🏆 Lucro líquido projetado TP1+TP2+TP3: +${position.projectedFullTpNetUsdc.toFixed(3)} USDC\n` +
+        `⚖️ R/R líquido projetado: ${Number(position.projectedNetRR).toFixed(2)} · mínimo ${cfg.minNetRR.toFixed(2)}\n` +
+        `🎚 Teto de risco da banca: ${riskBudget.toFixed(3)} USDC (${cfg.riskPct.toFixed(2)}%)\n` +
         `💸 Taxa de entrada simulada: ${entryFee.toFixed(4)} USDC`
     };
   } catch (error) {
@@ -1639,7 +2148,7 @@ export function paperStatusText() {
       : null;
 
   return [
-    '⚖️ <b>PAPER TRADING — V1.6.3 MODERATE MARGIN</b>',
+    '🧮 <b>PAPER TRADING — V1.6.5 NET R/R GUARD</b>',
     '',
     `Status: ${cfg.enabled ? '✅ ATIVO' : '⛔ DESATIVADO'} · ${state.paused ? '⏸ PAUSADO' : '▶️ RODANDO'}`,
     `💰 Banca inicial: ${state.startingBalance.toFixed(2)} USDC`,
@@ -1656,6 +2165,8 @@ export function paperStatusText() {
     `⚡ Scalp: ${cfg.scalpMode ? 'ATIVO' : 'INATIVO'} · stale ${cfg.scalpStaleMin} min · máx ${cfg.maxHoldHours}h`,
     `🛡 Profit Protect: ${cfg.profitProtectEnabled ? 'ATIVO' : 'INATIVO'} · buffer ${cfg.profitProtectBufferPctNotional.toFixed(2)}% do notional`,
     `⚖️ Candle STOP+TP: critério MODERADO`,
+    `🧮 Net R/R Guard: ${cfg.netRrGuardEnabled ? 'ATIVO' : 'INATIVO'} · mínimo ${cfg.minNetRR.toFixed(2)}x`,
+    `🎯 Autoajuste TPs: ${cfg.autoAdjustTargets ? 'ATIVO' : 'INATIVO'} · máximo x${cfg.maxTargetScale.toFixed(2)}`,
     '',
     `📊 Trades fechados: ${stats.total}`,
     `✅ Wins: ${stats.wins} · 🛑 Losses: ${stats.losses} · ➖ Flat: ${stats.flat}`,
@@ -1705,6 +2216,8 @@ export function paperPositionsText() {
       `Entrada ${round(p.entryFill)} · Mark ${round(mark)}\n` +
       `Stop atual ${round(p.stopCurrent)}\n` +
       `TP1 ${round(p.tp1)} · TP2 ${round(p.tp2)} · TP3 ${round(p.tp3)}\n` +
+      `⚖️ R/R líquido projetado ${Number(p.projectedNetRR || 0).toFixed(2)} · ` +
+      `STOP -${Number(p.projectedStopLossUsdc || 0).toFixed(3)} / TP total +${Number(p.projectedFullTpNetUsdc || 0).toFixed(3)} USDC\n` +
       `📦 Restante ${(p.remainingQty / p.initialQty * 100).toFixed(0)}% · ` +
       `PnL não realizado ${unrealized >= 0 ? '+' : ''}${unrealized.toFixed(2)} USDC`
     );
