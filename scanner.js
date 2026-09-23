@@ -1577,7 +1577,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.6.6: Direction Balance + Net R/R Guard + Gemini rescue ampliado. ` +
+    `<i>V1.6.7: perfil agressivo 15–20/dia + Direction Balance + Net R/R Guard. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

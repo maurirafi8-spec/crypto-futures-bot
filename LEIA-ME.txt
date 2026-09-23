@@ -1,28 +1,111 @@
-CRYPTO FUTURES SCANNER V1.6.6 — GEMINI RESCUE ALL
+CRYPTO FUTURES SCANNER V1.6.7 — AGGRESSIVE 15–20
 
-CORREÇÃO
-O Gemini agora também assume quando OpenRouter principal + rescue falham por:
-- finish=length
-- tool call ausente
-- resposta vazia
-- content=null / choices=0
-- erro de parser / JSON inválido
-- decisão inválida
+OBJETIVO
+Aumentar a frequência do PAPER para mirar aproximadamente
+15 a 20 entradas por dia.
 
-Mantido fallback também para:
-- 429 / free-models-per-day
-- timeout
-- fetch failed
-- HTTP 5xx
+IMPORTANTE
+15–20 é META, não garantia.
+Se o mercado não oferecer setups que passem IA + NET R/R,
+o bot pode fazer menos.
 
-Sem fallback automático em:
-401, 402 e 403.
+FILTRO TÉCNICO
+Score mínimo: 65 -> 62
+Pré-candidato: 60 -> 58
+Volume confirmação: 0.50x -> 0.45x
+Piso absoluto volume: 0.40x -> 0.35x
+OI confirmação: +0.50% -> +0.25%
+Exception score: 82 -> 80
+Exception volume: 1.00x -> 0.85x
 
-LOG ESPERADO
-[ai] fallback Gemini acionado após OpenRouter: ...
-Depois o histórico deve registrar GEMINI FALLBACK.
+DIREÇÃO
+Edge mínimo: 6 -> 4
+1H deixa de ser BLOQUEIO obrigatório.
+Ele continua valendo +20 pontos no placar direcional,
+então continua muito importante, mas não impede sozinho um scalp
+forte de 5m/15m.
+
+IA
+Confiança mínima geral: 62% -> 60%
+Até 3 candidatos novos por scan
+Limite interno IA: 80/dia
+NORMAL: gap 8 min
+SCALP FORTE:
+  score 80+
+  volume 0.45x+
+  OI +0.40%+
+  gap 2 min
+SUPER SCALP:
+  score 88+
+  volume 0.55x+
+  OI +1.00%+
+  gap 1 min
+Prioridade rápida: até 30/dia
+
+PAPER
+Score mínimo: 62
+IA mínima: 60%
+Máximo posições simultâneas: 5
+Cooldown por moeda: 10 min
+Stale scalp: 40 min
+Tempo máximo scalp: 2h
+
+META/CAP
+Meta mínima: 15 entradas/dia
+Cap máximo: 20 entradas/dia
+
+Ao chegar em 20 entradas no dia:
+novas entradas ficam bloqueadas até virar o dia.
+
+PROTEÇÃO CONTRA DUPLICAÇÃO
+1 posição por moeda ao mesmo tempo.
+
+Exemplo:
+TRX SHORT aberto
+=> outro TRX LONG/SHORT fica bloqueado até o primeiro fechar.
+
+Depois do fechamento:
+10 min de cooldown antes de nova entrada na mesma moeda.
+
+UNIVERSO
+BTC / ETH / SOL prioritários
++ 30 moedas em rotação.
+
+Adicionadas:
+APT, SEI, TIA, PEPE, WIF, JUP, FET, RENDER, TAO.
 
 MANTIDO
-Net R/R Guard, R/R líquido mínimo 1.50, autoajuste de TPs,
-banca 50 USDC, margem 15%, 2x, Direction Balance,
-Profit Protect, critério MODERADO e Confidence Guard.
+- banca 50 USDC
+- margem máxima 15%
+- 2x
+- risco máximo 0.75%
+- limite diário de perda 3%
+- NET R/R Guard 1.50
+- autoajuste de TPs
+- Profit Protect
+- Direction Balance LONG/SHORT
+- contexto BTC
+- critério MODERADO STOP+TP
+- OpenRouter + Gemini fallback
+- Confidence Guard
+
+VARIÁVEIS PRINCIPAIS
+MIN_SCORE=62
+PRE_CANDIDATE_MIN_SCORE=58
+DIRECTION_MIN_EDGE=4
+DIRECTION_REQUIRE_1H=false
+
+AI_MIN_CONFIDENCE=60
+AI_MAX_CANDIDATES=3
+AI_DAILY_LIMIT=80
+AI_MIN_GAP_MINUTES=8
+
+PAPER_MIN_SCORE=62
+PAPER_MIN_AI_CONFIDENCE=60
+PAPER_MAX_OPEN_POSITIONS=5
+PAPER_COOLDOWN_MINUTES=10
+PAPER_SCALP_STALE_MINUTES=40
+PAPER_MAX_HOLD_HOURS=2
+PAPER_TARGET_TRADES_MIN=15
+PAPER_MAX_TRADES_PER_DAY=20
+PAPER_ONE_POSITION_PER_SYMBOL=true

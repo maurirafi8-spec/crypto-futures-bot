@@ -57,63 +57,63 @@ const cfg = {
     Math.max(Number(process.env.V133_TOP_MARKETS || 12), 1),
     12
   ),
-  minScore: Number(process.env.MIN_SCORE || 65),
-  preCandidateMinScore: Number(process.env.PRE_CANDIDATE_MIN_SCORE || 60),
+  minScore: Number(process.env.MIN_SCORE || 62),
+  preCandidateMinScore: Number(process.env.PRE_CANDIDATE_MIN_SCORE || 58),
   minVolume: Number(process.env.MIN_QUOTE_VOLUME_USDT || 20_000_000),
   cooldownMin: Number(process.env.COOLDOWN_MINUTES || 90),
-  minVolumeRatio: Number(process.env.V122_VOLUME_CONFIRM_RATIO || 0.50),
-  minOiPct: Number(process.env.V122_OI_CONFIRM_PCT || 0.50),
-  hardMinVolumeRatio: Number(process.env.V122_HARD_MIN_VOLUME_RATIO || 0.40),
+  minVolumeRatio: Number(process.env.V122_VOLUME_CONFIRM_RATIO || 0.45),
+  minOiPct: Number(process.env.V122_OI_CONFIRM_PCT || 0.25),
+  hardMinVolumeRatio: Number(process.env.V122_HARD_MIN_VOLUME_RATIO || 0.35),
   oiRejectPct: Number(process.env.V122_OI_REJECT_PCT || -1.00),
-  exceptionScore: Number(process.env.V122_EXCEPTION_SCORE || 82),
-  exceptionVolumeRatio: Number(process.env.V122_EXCEPTION_VOLUME_RATIO || 1.00),
+  exceptionScore: Number(process.env.V122_EXCEPTION_SCORE || 80),
+  exceptionVolumeRatio: Number(process.env.V122_EXCEPTION_VOLUME_RATIO || 0.85),
   minDirectionEdge:
     Math.max(
-      Number(process.env.DIRECTION_MIN_EDGE || 6),
+      Number(process.env.DIRECTION_MIN_EDGE || 4),
       0
     ),
   require1hConfirmation:
     String(
-      process.env.DIRECTION_REQUIRE_1H || 'true'
+      process.env.DIRECTION_REQUIRE_1H || 'false'
     ).toLowerCase() !== 'false',
   aiEnabled: String(process.env.AI_ENABLED || 'true').toLowerCase() !== 'false',
-  aiMinConfidence: Number(process.env.AI_MIN_CONFIDENCE || 62),
+  aiMinConfidence: Number(process.env.AI_MIN_CONFIDENCE || 60),
   aiFailOpen: String(process.env.AI_FAIL_OPEN || 'false').toLowerCase() === 'true',
-  // V1.6.6 GEMINI RESCUE ALL: até 2 candidatos por ciclo.
+  // V1.6.7 AGGRESSIVE 15-20: até 2 candidatos por ciclo.
   // O limite diário global continua protegendo a cota.
   aiMaxCandidates: Math.min(
-    Math.max(Number(process.env.AI_MAX_CANDIDATES || 2), 1),
-    2
+    Math.max(Number(process.env.AI_MAX_CANDIDATES || 3), 1),
+    3
   ),
   aiBurstSecondCandidate:
     String(process.env.AI_BURST_SECOND_CANDIDATE || 'true')
       .toLowerCase() !== 'false',
   // Reserva algumas chamadas abaixo do teto diário do plano gratuito.
-  aiDailyLimit: Math.min(Number(process.env.AI_DAILY_LIMIT || 45), 45),
+  aiDailyLimit: Math.min(Math.max(Number(process.env.AI_DAILY_LIMIT || 80), 1), 90),
   // 30 min para candidatos normais.
-  aiMinGapMin: Math.max(Number(process.env.AI_MIN_GAP_MINUTES || 20), 1),
+  aiMinGapMin: Math.max(Number(process.env.AI_MIN_GAP_MINUTES || 8), 1),
 
-  // V1.6.6 GEMINI RESCUE ALL: prioridade adaptativa mais agressiva.
+  // V1.6.7 AGGRESSIVE 15-20: prioridade adaptativa mais agressiva.
   // NORMAL: gap 20 min.
   // SCALP_FORTE: score 85+ / vol 0.50x+ / OI +0.70%+ -> gap 3 min.
   // SUPER_SCALP: score 90+ / vol 0.60x+ / OI +1.50%+ -> gap 1 min.
   aiPriorityEnabled:
     String(process.env.AI_PRIORITY_ENABLED || 'true').toLowerCase() !== 'false',
 
-  aiPriorityScore: Number(process.env.AI_PRIORITY_SCORE || 85),
-  aiPriorityVolumeRatio: Number(process.env.AI_PRIORITY_VOLUME_RATIO || 0.50),
-  aiPriorityOiPct: Number(process.env.AI_PRIORITY_OI_PCT || 0.70),
+  aiPriorityScore: Number(process.env.AI_PRIORITY_SCORE || 80),
+  aiPriorityVolumeRatio: Number(process.env.AI_PRIORITY_VOLUME_RATIO || 0.45),
+  aiPriorityOiPct: Number(process.env.AI_PRIORITY_OI_PCT || 0.40),
   aiPriorityGapMin: Math.max(
-    Number(process.env.AI_PRIORITY_GAP_MINUTES || 3),
+    Number(process.env.AI_PRIORITY_GAP_MINUTES || 2),
     1
   ),
 
   aiSuperScalpScore:
-    Number(process.env.AI_SUPER_SCALP_SCORE || 90),
+    Number(process.env.AI_SUPER_SCALP_SCORE || 88),
   aiSuperScalpVolumeRatio:
-    Number(process.env.AI_SUPER_SCALP_VOLUME_RATIO || 0.60),
+    Number(process.env.AI_SUPER_SCALP_VOLUME_RATIO || 0.55),
   aiSuperScalpOiPct:
-    Number(process.env.AI_SUPER_SCALP_OI_PCT || 1.50),
+    Number(process.env.AI_SUPER_SCALP_OI_PCT || 1.00),
   aiSuperScalpGapMin: Math.max(
     Number(process.env.AI_SUPER_SCALP_GAP_MINUTES || 1),
     1
@@ -122,20 +122,20 @@ const cfg = {
   // SCALP_FORTE + SUPER_SCALP compartilham este teto.
   // O limite global de 45 requests/dia continua soberano.
   aiPriorityDailyLimit: Math.min(
-    Math.max(Number(process.env.AI_PRIORITY_DAILY_LIMIT || 12), 0),
-    20
+    Math.max(Number(process.env.AI_PRIORITY_DAILY_LIMIT || 30), 0),
+    40
   ),
 
   // Cache normal.
-  aiCacheMin: Math.max(Number(process.env.AI_CACHE_MINUTES || 30), 1),
+  aiCacheMin: Math.max(Number(process.env.AI_CACHE_MINUTES || 10), 1),
 
   // Cache curto para mercado rápido.
   aiPriorityCacheMin: Math.max(
-    Number(process.env.AI_PRIORITY_CACHE_MINUTES || 5),
+    Number(process.env.AI_PRIORITY_CACHE_MINUTES || 3),
     1
   ),
   aiSuperScalpCacheMin: Math.max(
-    Number(process.env.AI_SUPER_SCALP_CACHE_MINUTES || 2),
+    Number(process.env.AI_SUPER_SCALP_CACHE_MINUTES || 1),
     1
   ),
 
@@ -148,11 +148,11 @@ const cfg = {
     5
   ),
   aiWaitRecheckDailyLimit: Math.min(
-    Math.max(Number(process.env.AI_WAIT_RECHECK_DAILY_LIMIT || 8), 0),
-    20
+    Math.max(Number(process.env.AI_WAIT_RECHECK_DAILY_LIMIT || 16), 0),
+    30
   ),
   aiWaitRecheckMaxAttempts: Math.min(
-    Math.max(Number(process.env.AI_WAIT_RECHECK_MAX_ATTEMPTS || 3), 1),
+    Math.max(Number(process.env.AI_WAIT_RECHECK_MAX_ATTEMPTS || 4), 1),
     6
   ),
   aiWaitRecheckMinConfidence: Math.max(
@@ -271,7 +271,16 @@ const ROTATION_SCAN_BASES = [
   'TRX',
   'FIL',
   'ARB',
-  'OP'
+  'OP',
+  'APT',
+  'SEI',
+  'TIA',
+  'PEPE',
+  'WIF',
+  'JUP',
+  'FET',
+  'RENDER',
+  'TAO'
 ];
 
 let scanCoreCursor = 0;
@@ -2610,7 +2619,7 @@ async function validateSignalsWithAI(signals) {
 
     let permission = aiCallPermission(s);
 
-    // V1.6.6 GEMINI RESCUE ALL:
+    // V1.6.7 AGGRESSIVE 15-20:
     // se já analisamos 1 candidato neste scan, permitimos um segundo
     // candidato imediatamente (até o máximo de 2), sem esperar o gap
     // entre chamadas. Isso é apenas a fila de IA; os limites diário,
@@ -3146,7 +3155,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.6.6 GEMINI RESCUE ALL</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.6.7 AGGRESSIVE 15-20</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o próximo lote agora\n' +
       '/scheduler — ver rotação automática de 1 minuto\n' +
@@ -3182,7 +3191,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.6.6 GEMINI RESCUE ALL\n` +
+      `✅ Online — V1.6.7 AGGRESSIVE 15-20\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🛡 Modo: CONFIDENCE GUARD V1.5.9\n` +
       `🤖 APPROVE exige confidence válida; ausente/0% vira WAIT\n` +
@@ -3192,8 +3201,9 @@ async function handleMessage(msg) {
       `🚦 OpenRouter circuit: ${openRouterCircuitStatus().blocked ? `PAUSADO ~${openRouterCircuitStatus().remainingMin}m` : 'NORMAL'}\n` +
       `⏱ Scan automático: a cada ${cfg.intervalMin} min\n` +
       `🪙 Lote automático: ${cfg.scanBatchSize} moedas · pares /USDT\n` +
-      `🔁 Universo: BTC/ETH/SOL prioritários + 21 moedas em rotação\n` +
+      `🔁 Universo: BTC/ETH/SOL prioritários + 30 moedas em rotação\n` +
       `⚡ Modo: SCALP 5m · alvo de duração 15min–3h\n` +
+      `🔥 Perfil: AGRESSIVO · alvo 15–20 PAPER trades/dia\n` +
       `⭐ Score mínimo para sinal: ${cfg.minScore}\n` +
       `⚖️ Direction Balance: ATIVO · LONG/SHORT simétricos\n` +
       `↔️ Edge direcional mínimo: ${cfg.minDirectionEdge} pontos\n` +
@@ -3589,7 +3599,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.6.6-gemini-rescue-all',
+    version: '1.6.7-aggressive-15-20',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -3631,7 +3641,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.6.6 GEMINI RESCUE ALL pronto ✅');
+console.log('Crypto Futures Scanner V1.6.7 AGGRESSIVE 15-20 pronto ✅');
 
 // Em rolling deploy o processo antigo do Render pode permanecer vivo por
 // alguns segundos. Um pequeno atraso evita duas instâncias consumindo a

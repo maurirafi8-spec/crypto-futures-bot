@@ -46,16 +46,26 @@ export function paperConfig() {
       numEnv('PAPER_MAX_MARGIN_PCT', 15, 1, 100),
 
     maxOpenPositions:
-      intEnv('PAPER_MAX_OPEN_POSITIONS', 4, 1, 20),
+      intEnv('PAPER_MAX_OPEN_POSITIONS', 5, 1, 20),
+
+    targetTradesPerDayMin:
+      intEnv('PAPER_TARGET_TRADES_MIN', 15, 1, 100),
+
+    maxTradesPerDay:
+      intEnv('PAPER_MAX_TRADES_PER_DAY', 20, 1, 100),
+
+    onePositionPerSymbol:
+      String(process.env.PAPER_ONE_POSITION_PER_SYMBOL || 'true')
+        .toLowerCase() !== 'false',
 
     minNotional:
       numEnv('PAPER_MIN_NOTIONAL_USDC', 10, 1, 10000),
 
     minAiConfidence:
-      numEnv('PAPER_MIN_AI_CONFIDENCE', 62, 0, 100),
+      numEnv('PAPER_MIN_AI_CONFIDENCE', 60, 0, 100),
 
     minScore:
-      numEnv('PAPER_MIN_SCORE', 65, 0, 100),
+      numEnv('PAPER_MIN_SCORE', 62, 0, 100),
 
     feeRate:
       numEnv('PAPER_FEE_RATE', 0.00045, 0, 0.01),
@@ -67,17 +77,17 @@ export function paperConfig() {
       numEnv('PAPER_DAILY_LOSS_LIMIT_PCT', 3, 0.1, 50),
 
     cooldownMin:
-      numEnv('PAPER_COOLDOWN_MINUTES', 30, 0, 1440),
+      numEnv('PAPER_COOLDOWN_MINUTES', 10, 0, 1440),
 
     maxHoldHours:
-      numEnv('PAPER_MAX_HOLD_HOURS', 3, 0.5, 720),
+      numEnv('PAPER_MAX_HOLD_HOURS', 2, 0.5, 720),
 
     scalpMode:
       String(process.env.PAPER_SCALP_MODE || 'true')
         .toLowerCase() !== 'false',
 
     scalpStaleMin:
-      numEnv('PAPER_SCALP_STALE_MINUTES', 60, 15, 360),
+      numEnv('PAPER_SCALP_STALE_MINUTES', 40, 15, 360),
 
     profitProtectEnabled:
       String(process.env.PAPER_PROFIT_PROTECT_ENABLED || 'true')
@@ -350,12 +360,69 @@ function isDailyLossLocked() {
   );
 }
 
+function todayEntryCount() {
+  ensureDay();
+
+  const today =
+    state.day?.key ||
+    dayKey();
+
+  const openToday =
+    state.openPositions.filter(position =>
+      dayKey(position.openedAt) === today
+    ).length;
+
+  return (
+    Number(state.day?.trades || 0) +
+    openToday
+  );
+}
+
+function sameSymbolOpen(signal) {
+  const symbol =
+    String(signal?.symbol || '')
+      .toUpperCase();
+
+  if (!symbol) {
+    return false;
+  }
+
+  return state.openPositions.some(position =>
+    String(position.symbol || '')
+      .toUpperCase() === symbol
+  );
+}
+
 function cooldownBlocked(signal) {
   const cfg = paperConfig();
-  const last =
+
+  if (cfg.cooldownMin <= 0) {
+    return false;
+  }
+
+  const symbol =
+    String(signal?.symbol || '')
+      .toUpperCase();
+
+  const lastOpen =
     Number(state.lastOpenAt?.[signal.symbol] || 0);
 
-  if (!last || cfg.cooldownMin <= 0) {
+  const lastClosed =
+    state.closedTrades.find(trade =>
+      String(trade.symbol || '')
+        .toUpperCase() === symbol
+    );
+
+  const lastClose =
+    Number(lastClosed?.closedAt || 0);
+
+  const last =
+    Math.max(
+      lastOpen,
+      lastClose
+    );
+
+  if (!last) {
     return false;
   }
 
@@ -424,6 +491,32 @@ function eligibility(signal) {
       reason:
         `limite de posições ` +
         `${state.openPositions.length}/${cfg.maxOpenPositions}`
+    };
+  }
+
+  if (
+    cfg.onePositionPerSymbol &&
+    sameSymbolOpen(signal)
+  ) {
+    return {
+      ok: false,
+      reason:
+        `já existe posição aberta em ${signal.symbol}`
+    };
+  }
+
+  const entriesToday =
+    todayEntryCount();
+
+  if (
+    entriesToday >=
+    cfg.maxTradesPerDay
+  ) {
+    return {
+      ok: false,
+      reason:
+        `limite diário de entradas ` +
+        `${entriesToday}/${cfg.maxTradesPerDay}`
     };
   }
 
@@ -2148,7 +2241,7 @@ export function paperStatusText() {
       : null;
 
   return [
-    '🧮 <b>PAPER TRADING — V1.6.5 NET R/R GUARD</b>',
+    '🔥 <b>PAPER TRADING — V1.6.7 AGGRESSIVE 15–20</b>',
     '',
     `Status: ${cfg.enabled ? '✅ ATIVO' : '⛔ DESATIVADO'} · ${state.paused ? '⏸ PAUSADO' : '▶️ RODANDO'}`,
     `💰 Banca inicial: ${state.startingBalance.toFixed(2)} USDC`,
@@ -2158,6 +2251,8 @@ export function paperStatusText() {
     `💵 Retorno total: ${pnlFromStart >= 0 ? '+' : ''}${pnlFromStart.toFixed(2)} USDC (${returnPct >= 0 ? '+' : ''}${returnPct.toFixed(2)}%)`,
     '',
     `📌 Posições abertas: ${state.openPositions.length}/${cfg.maxOpenPositions}`,
+    `🔥 Meta diária: ${cfg.targetTradesPerDayMin}–${cfg.maxTradesPerDay} entradas · hoje ${todayEntryCount()}/${cfg.maxTradesPerDay}`,
+    `🔒 1 posição por moeda: ${cfg.onePositionPerSymbol ? 'ATIVO' : 'INATIVO'}`,
     `🔒 Margem usada: ${used.toFixed(2)} USDC`,
     `💳 Disponível: ${available.toFixed(2)} USDC`,
     `⚖️ Risco por trade: ${cfg.riskPct.toFixed(2)}%`,
