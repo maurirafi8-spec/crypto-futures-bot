@@ -1577,7 +1577,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.6.5: Direction Balance + Net R/R Guard no PAPER. ` +
+    `<i>V1.6.6: Direction Balance + Net R/R Guard + Gemini rescue ampliado. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

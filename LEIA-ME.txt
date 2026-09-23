@@ -1,95 +1,28 @@
-CRYPTO FUTURES SCANNER V1.6.5 — NET R/R GUARD
+CRYPTO FUTURES SCANNER V1.6.6 — GEMINI RESCUE ALL
 
-PROBLEMA QUE CORRIGE
-Com banca de 50 USDC, alguns scalps tinham:
-- STOP líquido maior que o lucro máximo dos 3 TPs;
-- TP1 tão perto que nem cobria taxas + slippage;
-- mensagem "risco-alvo" que mostrava o orçamento de risco,
-  não o prejuízo líquido real daquela posição.
+CORREÇÃO
+O Gemini agora também assume quando OpenRouter principal + rescue falham por:
+- finish=length
+- tool call ausente
+- resposta vazia
+- content=null / choices=0
+- erro de parser / JSON inválido
+- decisão inválida
 
-NOVA REGRA
-Antes de abrir PAPER, o bot calcula:
+Mantido fallback também para:
+- 429 / free-models-per-day
+- timeout
+- fetch failed
+- HTTP 5xx
 
-1. perda líquida se bater STOP;
-2. lucro líquido se completar TP1 + TP2 + TP3;
-3. taxas de entrada e saída;
-4. slippage de entrada e saída;
-5. R/R líquido final.
+Sem fallback automático em:
+401, 402 e 403.
 
-PADRÃO
-PAPER_MIN_NET_RR=1.50
-
-Exemplo:
-STOP líquido: -0.07 USDC
-TPs líquidos: +0.11 USDC
-R/R: 1.57
-=> PERMITIDO
-
-Se:
-STOP líquido: -0.07
-TPs líquidos: +0.02
-R/R: 0.29
-=> NÃO abre desse jeito.
-
-AUTOAJUSTE DOS TPs
-PAPER_AUTO_ADJUST_TPS=true
-PAPER_MAX_TP_SCALE=4.00
-
-Se os TPs originais não dão R/R 1.50,
-o bot afasta os três TPs proporcionalmente e procura
-o MENOR multiplicador que satisfaça:
-
-- R/R líquido >= 1.50;
-- TP1 com espaço suficiente para Profit Protect líquido.
-
-Se nem com TPs x4.00 ficar aceitável:
-trade rejeitado pelo NET R/R GUARD.
-
-EXEMPLO
-TPs originais podem virar:
-x1.00 -> R/R 0.70
-x1.80 -> R/R 1.05
-x2.60 -> R/R 1.52
-=> abre com TPs x2.60.
-
-PROFIT PROTECT
-Também verifica se o TP1 permite cobrir:
-- taxa de entrada;
-- taxa do TP1;
-- futura taxa de saída;
-- slippage;
-- buffer proporcional.
-
-Se o TP1 original for curto demais,
-o autoajuste o afasta.
-
-RISCO REAL
-O sizing por risco agora usa a perda líquida por unidade,
-não apenas a distância bruta até o stop.
-
-A mensagem de abertura mostra:
-- risco líquido projetado no STOP;
-- lucro líquido projetado nos 3 TPs;
-- R/R líquido;
-- teto de risco da banca separadamente.
+LOG ESPERADO
+[ai] fallback Gemini acionado após OpenRouter: ...
+Depois o histórico deve registrar GEMINI FALLBACK.
 
 MANTIDO
-- banca 50 USDC
-- margem máxima 15%
-- 2x
-- risco máximo 0.75%
-- até 4 posições PAPER
-- Direction Balance LONG/SHORT
-- 1H confirma direção
-- contexto BTC
-- Profit Protect proporcional
-- critério MODERADO STOP+TP
-- Dual AI OpenRouter + Gemini
-- Confidence Guard
-
-VARIÁVEIS
-PAPER_NET_RR_GUARD_ENABLED=true
-PAPER_MIN_NET_RR=1.50
-PAPER_AUTO_ADJUST_TPS=true
-PAPER_MAX_TP_SCALE=4.00
-PAPER_REQUIRE_TP1_NET_PROTECT=true
+Net R/R Guard, R/R líquido mínimo 1.50, autoajuste de TPs,
+banca 50 USDC, margem 15%, 2x, Direction Balance,
+Profit Protect, critério MODERADO e Confidence Guard.

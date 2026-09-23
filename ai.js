@@ -496,7 +496,7 @@ async function fetchOpenRouter({ apiKey, body, timeoutMs }) {
         'HTTP-Referer':
           process.env.OPENROUTER_SITE_URL ||
           'https://crypto-futures-bot.onrender.com',
-        'X-Title': 'Crypto Futures Scanner V1.6.0 Free'
+        'X-Title': 'Crypto Futures Scanner V1.6.6 Free'
       },
       body: JSON.stringify(body),
       signal: controller.signal
@@ -1180,7 +1180,15 @@ function shouldUseGeminiAfter(error) {
       .join(' ')
       .toLowerCase();
 
-  return (
+  if (
+    status === 401 ||
+    status === 402 ||
+    status === 403
+  ) {
+    return false;
+  }
+
+  const providerOrTransportFailure =
     status === 429 ||
     status === 408 ||
     status >= 500 ||
@@ -1188,7 +1196,30 @@ function shouldUseGeminiAfter(error) {
     text.includes('rate limit') ||
     text.includes('free-models-per-day') ||
     text.includes('timeout') ||
-    text.includes('fetch failed')
+    text.includes('fetch failed');
+
+  const unusableModelResponse =
+    text.includes('finish=length') ||
+    text.includes('finish = length') ||
+    text.includes('atingiu o limite') ||
+    text.includes('limite antes de entregar') ||
+    text.includes('tool call') ||
+    text.includes('tools=0') ||
+    text.includes('resposta vazia') ||
+    text.includes('conteúdo vazio') ||
+    text.includes('content=null') ||
+    text.includes('parser') ||
+    text.includes('parse') ||
+    text.includes('json inválido') ||
+    text.includes('json invalido') ||
+    text.includes('decisão inválida') ||
+    text.includes('decisao invalida') ||
+    text.includes('invalid decision') ||
+    text.includes('choices=0');
+
+  return (
+    providerOrTransportFailure ||
+    unusableModelResponse
   );
 }
 
@@ -1580,6 +1611,11 @@ export async function analyzeSignalWithAI(
     ) {
       throw error;
     }
+
+    console.log(
+      `[ai] fallback Gemini acionado após OpenRouter: ` +
+      `${String(error?.message || 'falha desconhecida').replace(/\s+/g, ' ').slice(0, 220)}`
+    );
 
     return analyzeSignalWithGemini(
       signal,
