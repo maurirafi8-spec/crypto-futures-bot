@@ -1,44 +1,130 @@
-CRYPTO FUTURES SCANNER V1.6.3 — MODERATE MARGIN
+CRYPTO FUTURES SCANNER V1.6.4 — DIRECTION BALANCE
 
-MUDANÇA PRINCIPAL
-Margem máxima por trade:
-10% da banca -> 15% da banca
+OBJETIVO
+Corrigir o viés observado no paper:
+8 LONG / 0 SHORT.
 
-Com banca de 50 USDC:
-10% = 5.00 USDC de margem
-15% = 7.50 USDC de margem
+IMPORTANTE
+A V1.6.4 NÃO força 50/50.
+Se o mercado estiver realmente bullish, ainda pode haver mais LONG.
+O objetivo é remover o viés estrutural e permitir SHORT com os mesmos pesos.
 
-Com alavancagem 2x:
-notional máximo aproximado:
-5.00 x 2 = 10 USDC
-7.50 x 2 = 15 USDC
+1) LONG E SHORT SIMÉTRICOS
+Os mesmos pontos são usados espelhados:
 
-POR QUE 15%
-É um meio-termo moderado:
-- aumenta o tamanho das posições;
-- continua deixando boa parte da banca livre;
-- com 4 posições no teto, 4 x 7.50 = 30 USDC de margem;
-- ainda sobrariam 20 USDC livres, antes de PnL/taxas.
+1H estrutura:
+LONG +20 / SHORT +20
 
-RISCO POR TRADE
-Continua 0.75% da banca.
+15m estrutura:
+LONG +18 / SHORT +18
 
-Com 50 USDC:
-50 x 0.75% = 0.375 USDC de risco-alvo máximo.
+5m estrutura:
+LONG +14 / SHORT +14
 
-A margem máxima é só um teto.
-Se o cálculo de risco exigir menos margem por causa do stop,
-o bot usa menos.
+RSI 5m:
+51–69 LONG +10
+31–49 SHORT +10
+
+MACD 5m:
+positivo LONG +10
+negativo SHORT +10
+
+Volume forte:
+segue a estrutura 5m, +10
+
+OI positivo:
+segue a estrutura 5m, +10
+
+MACD 15m:
++4 para o lado correspondente
+
+4H:
++6 para o lado correspondente
+
+2) SEM DESEMPATE AUTOMÁTICO PARA LONG
+Antes havia:
+long >= short ? LONG : SHORT
+
+Agora:
+- maior placar vence;
+- empate usa estrutura 1H;
+- depois 15m;
+- depois momentum 5m;
+- se tudo estiver neutro, fica NEUTRAL.
+
+3) EDGE DIRECIONAL
+Padrão:
+DIRECTION_MIN_EDGE=6
+
+Exemplo:
+LONG 82 x SHORT 55
+edge 27 -> ok
+
+LONG 70 x SHORT 67
+edge 3 -> rejeitado como direção pouco definida.
+
+4) 1H CONFIRMA A DIREÇÃO
+Padrão:
+DIRECTION_REQUIRE_1H=true
+
+LONG:
+preço > EMA20 > EMA50 em 1H
+
+SHORT:
+preço < EMA20 < EMA50 em 1H
+
+Isso evita usar só um movimento rápido de 5m contra a tendência principal.
+
+5) CONTEXTO BTC
+O bot mantém o contexto BTC por até 10 minutos entre os lotes.
+
+Para altcoins:
+BTC alinhado com o lado:
++2 a +4 pontos
+
+BTC contrário:
+-7 a -12 pontos
+
+BTC misto/dividido:
+-4 pontos
+
+A regra é simétrica:
+BTC bullish prejudica SHORT;
+BTC bearish prejudica LONG.
+
+Assim o bot NÃO cria SHORT artificialmente.
+Ele apenas deixa os dois lados competir com as mesmas regras.
+
+6) IA
+A IA recebe:
+- longScore
+- shortScore
+- directionEdge
+- confirmação 1H
+- ajuste BTC
+
+E o prompt manda explicitamente não favorecer LONG.
 
 MANTIDO
 - banca 50 USDC
-- 2x
-- até 4 posições
+- margem máxima 15%
+- alavancagem 2x
+- risco 0.75%
 - Profit Protect proporcional
-- critério MODERADO em candle STOP+TP
+- critério MODERADO STOP+TP
+- Dual AI OpenRouter + Gemini
 - Confidence Guard
-- OpenRouter + Gemini fallback
-- scan 1 min em lotes
+- scan automático a cada 1 min
+- até 4 posições PAPER
 
-VARIÁVEL
-PAPER_MAX_MARGIN_PCT=15
+VARIÁVEIS
+DIRECTION_MIN_EDGE=6
+DIRECTION_REQUIRE_1H=true
+
+TESTE NO LOG
+[direction] aprovados: LONG X · SHORT Y · edge mín 6 · 1H obrigatório
+
+No sinal:
+Direção: LONG XX x SHORT YY · edge ZZ
+1H confirma LONG/SHORT: SIM
+Ajuste BTC: ...

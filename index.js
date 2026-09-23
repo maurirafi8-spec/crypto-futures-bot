@@ -67,10 +67,19 @@ const cfg = {
   oiRejectPct: Number(process.env.V122_OI_REJECT_PCT || -1.00),
   exceptionScore: Number(process.env.V122_EXCEPTION_SCORE || 82),
   exceptionVolumeRatio: Number(process.env.V122_EXCEPTION_VOLUME_RATIO || 1.00),
+  minDirectionEdge:
+    Math.max(
+      Number(process.env.DIRECTION_MIN_EDGE || 6),
+      0
+    ),
+  require1hConfirmation:
+    String(
+      process.env.DIRECTION_REQUIRE_1H || 'true'
+    ).toLowerCase() !== 'false',
   aiEnabled: String(process.env.AI_ENABLED || 'true').toLowerCase() !== 'false',
   aiMinConfidence: Number(process.env.AI_MIN_CONFIDENCE || 62),
   aiFailOpen: String(process.env.AI_FAIL_OPEN || 'false').toLowerCase() === 'true',
-  // V1.6.3 MODERATE MARGIN: até 2 candidatos por ciclo.
+  // V1.6.4 DIRECTION BALANCE: até 2 candidatos por ciclo.
   // O limite diário global continua protegendo a cota.
   aiMaxCandidates: Math.min(
     Math.max(Number(process.env.AI_MAX_CANDIDATES || 2), 1),
@@ -84,7 +93,7 @@ const cfg = {
   // 30 min para candidatos normais.
   aiMinGapMin: Math.max(Number(process.env.AI_MIN_GAP_MINUTES || 20), 1),
 
-  // V1.6.3 MODERATE MARGIN: prioridade adaptativa mais agressiva.
+  // V1.6.4 DIRECTION BALANCE: prioridade adaptativa mais agressiva.
   // NORMAL: gap 20 min.
   // SCALP_FORTE: score 85+ / vol 0.50x+ / OI +0.70%+ -> gap 3 min.
   // SUPER_SCALP: score 90+ / vol 0.60x+ / OI +1.50%+ -> gap 1 min.
@@ -2601,7 +2610,7 @@ async function validateSignalsWithAI(signals) {
 
     let permission = aiCallPermission(s);
 
-    // V1.6.3 MODERATE MARGIN:
+    // V1.6.4 DIRECTION BALANCE:
     // se já analisamos 1 candidato neste scan, permitimos um segundo
     // candidato imediatamente (até o máximo de 2), sem esperar o gap
     // entre chamadas. Isso é apenas a fila de IA; os limites diário,
@@ -2887,7 +2896,9 @@ async function doScan({
       hardMinVolumeRatio: cfg.hardMinVolumeRatio,
       oiRejectPct: cfg.oiRejectPct,
       exceptionScore: cfg.exceptionScore,
-      exceptionVolumeRatio: cfg.exceptionVolumeRatio
+      exceptionVolumeRatio: cfg.exceptionVolumeRatio,
+      minDirectionEdge: cfg.minDirectionEdge,
+      require1hConfirmation: cfg.require1hConfirmation
     });
 
     // Atualiza primeiro as posições paper usando somente candle fechado.
@@ -2904,6 +2915,14 @@ async function doScan({
     console.log(
       `[scan] ${mathSignals.length} sinais matemáticos >= ${cfg.minScore}; ` +
       `${preCandidates.length} pré-candidato(s) >= ${cfg.preCandidateMinScore}`
+    );
+
+    console.log(
+      `[direction] aprovados: ` +
+      `LONG ${mathSignals.filter(s => s.side === 'LONG').length} · ` +
+      `SHORT ${mathSignals.filter(s => s.side === 'SHORT').length} · ` +
+      `edge mín ${cfg.minDirectionEdge} · ` +
+      `1H ${cfg.require1hConfirmation ? 'obrigatório' : 'flexível'}`
     );
 
     // V1.3.7.1:
@@ -3127,7 +3146,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.6.3 MODERATE MARGIN</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.6.4 DIRECTION BALANCE</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o próximo lote agora\n' +
       '/scheduler — ver rotação automática de 1 minuto\n' +
@@ -3163,7 +3182,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.6.3 MODERATE MARGIN\n` +
+      `✅ Online — V1.6.4 DIRECTION BALANCE\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🛡 Modo: CONFIDENCE GUARD V1.5.9\n` +
       `🤖 APPROVE exige confidence válida; ausente/0% vira WAIT\n` +
@@ -3176,6 +3195,10 @@ async function handleMessage(msg) {
       `🔁 Universo: BTC/ETH/SOL prioritários + 21 moedas em rotação\n` +
       `⚡ Modo: SCALP 5m · alvo de duração 15min–3h\n` +
       `⭐ Score mínimo para sinal: ${cfg.minScore}\n` +
+      `⚖️ Direction Balance: ATIVO · LONG/SHORT simétricos\n` +
+      `↔️ Edge direcional mínimo: ${cfg.minDirectionEdge} pontos\n` +
+      `🕐 Confirmação 1H: ${cfg.require1hConfirmation ? 'OBRIGATÓRIA' : 'FLEXÍVEL'}\n` +
+      `₿ Contexto BTC: ajuste simétrico em alts · cache máx 10 min\n` +
       `🤖 Confiança mínima para liberar sinal/PAPER: ${cfg.aiMinConfidence}%\n` +
       `🧠 Máx. candidatos IA por scan: ${cfg.aiMaxCandidates}\n` +
       `👀 Pré-candidato IA: ${cfg.preCandidateMinScore}–${cfg.minScore - 1}\n` +
@@ -3566,7 +3589,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.6.3-moderate-margin',
+    version: '1.6.4-direction-balance',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -3608,7 +3631,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.6.3 MODERATE MARGIN pronto ✅');
+console.log('Crypto Futures Scanner V1.6.4 DIRECTION BALANCE pronto ✅');
 
 // Em rolling deploy o processo antigo do Render pode permanecer vivo por
 // alguns segundos. Um pequeno atraso evita duas instâncias consumindo a

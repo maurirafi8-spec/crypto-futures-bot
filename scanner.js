@@ -40,6 +40,13 @@ const ROTATING_BASES = [
 
 let marketRotationCursor = 0;
 
+// V1.6.4: contexto BTC persiste entre os lotes de 1 minuto.
+// Assim uma altcoin pode usar o último BTC mesmo quando BTC não está
+// no lote atual.
+let cachedBtcContext = null;
+let cachedBtcContextAt = 0;
+const BTC_CONTEXT_MAX_AGE_MS = 10 * 60 * 1000;
+
 const EXCHANGE_PRIORITY = [
   'BINANCE',
   'BYBIT',
@@ -190,10 +197,232 @@ function fmt(value, digits = 2, fallback = '—') {
     : fallback;
 }
 
-function scoreSignal(t5, t15, t1h, t4h, oiPct) {
-  const rsi5 = finiteNumber(t5?.rsi, 50);
-  const vol5 = finiteNumber(t5?.volumeRatio, 0);
-  const oi = finiteNumber(oiPct, 0);
+function directionalStructure(tf) {
+  if (
+    tf?.price > tf?.ema20 &&
+    tf?.ema20 > tf?.ema50
+  ) {
+    return 'LONG';
+  }
+
+  if (
+    tf?.price < tf?.ema20 &&
+    tf?.ema20 < tf?.ema50
+  ) {
+    return 'SHORT';
+  }
+
+  return 'MIXED';
+}
+
+function buildBtcContext({
+  t5,
+  t15,
+  t1h,
+  t4h,
+  oiPct,
+  change24h = 0,
+  side = null,
+  score = null
+}) {
+  return {
+    side,
+    score,
+    change24hPct:
+      finiteNumber(change24h, 0),
+    trend5m:
+      directionalStructure(t5) === 'LONG'
+        ? 'BULLISH'
+        : directionalStructure(t5) === 'SHORT'
+          ? 'BEARISH'
+          : 'MIXED',
+    trend15m:
+      directionalStructure(t15) === 'LONG'
+        ? 'BULLISH'
+        : directionalStructure(t15) === 'SHORT'
+          ? 'BEARISH'
+          : 'MIXED',
+    trend1h:
+      directionalStructure(t1h) === 'LONG'
+        ? 'BULLISH'
+        : directionalStructure(t1h) === 'SHORT'
+          ? 'BEARISH'
+          : 'MIXED',
+    trend4h:
+      directionalStructure(t4h) === 'LONG'
+        ? 'BULLISH'
+        : directionalStructure(t4h) === 'SHORT'
+          ? 'BEARISH'
+          : 'MIXED',
+    rsi5m:
+      finiteNumber(t5?.rsi, null),
+    rsi15m:
+      finiteNumber(t15?.rsi, null),
+    volumeRatio5m:
+      finiteNumber(t5?.volumeRatio, null),
+    openInterestChangePct:
+      finiteNumber(oiPct, 0),
+    fundingRatePct: null,
+    cached: false,
+    ageMin: 0
+  };
+}
+
+function freshBtcContext(nowMs = Date.now()) {
+  if (
+    !cachedBtcContext ||
+    !cachedBtcContextAt
+  ) {
+    return null;
+  }
+
+  const ageMs =
+    nowMs - cachedBtcContextAt;
+
+  if (
+    ageMs < 0 ||
+    ageMs > BTC_CONTEXT_MAX_AGE_MS
+  ) {
+    return null;
+  }
+
+  return {
+    ...cachedBtcContext,
+    cached:
+      ageMs > 15_000,
+    ageMin:
+      ageMs / 60_000
+  };
+}
+
+function btcDirectionalAdjustment(
+  side,
+  symbol,
+  btcContext
+) {
+  const isBtc =
+    String(symbol || '')
+      .toUpperCase()
+      .startsWith('BTC');
+
+  if (
+    isBtc ||
+    !btcContext
+  ) {
+    return {
+      points: 0,
+      reason: ''
+    };
+  }
+
+  const aligned =
+    side === 'LONG'
+      ? 'BULLISH'
+      : 'BEARISH';
+
+  const opposite =
+    side === 'LONG'
+      ? 'BEARISH'
+      : 'BULLISH';
+
+  const t15 =
+    String(
+      btcContext.trend15m ||
+      'MIXED'
+    ).toUpperCase();
+
+  const t1h =
+    String(
+      btcContext.trend1h ||
+      'MIXED'
+    ).toUpperCase();
+
+  const alignedCount =
+    [t15, t1h]
+      .filter(x => x === aligned)
+      .length;
+
+  const oppositeCount =
+    [t15, t1h]
+      .filter(x => x === opposite)
+      .length;
+
+  if (alignedCount === 2) {
+    return {
+      points: 4,
+      reason:
+        `BTC 15m/1h alinhado com ${side} (+4)`
+    };
+  }
+
+  if (
+    alignedCount === 1 &&
+    oppositeCount === 0
+  ) {
+    return {
+      points: 2,
+      reason:
+        `BTC parcialmente alinhado com ${side} (+2)`
+    };
+  }
+
+  if (oppositeCount === 2) {
+    return {
+      points: -12,
+      reason:
+        `BTC 15m/1h contrário a ${side} (-12)`
+    };
+  }
+
+  if (
+    oppositeCount === 1 &&
+    alignedCount === 0
+  ) {
+    return {
+      points: -7,
+      reason:
+        `BTC parcialmente contrário a ${side} (-7)`
+    };
+  }
+
+  if (
+    oppositeCount === 1 &&
+    alignedCount === 1
+  ) {
+    return {
+      points: -4,
+      reason:
+        `BTC dividido contra ${side} (-4)`
+    };
+  }
+
+  return {
+    points: -4,
+    reason:
+      `BTC 15m/1h misto (-4)`
+  };
+}
+
+function scoreSignal(
+  t5,
+  t15,
+  t1h,
+  t4h,
+  oiPct,
+  symbol = '',
+  btcContext = null
+) {
+  const rsi5 =
+    finiteNumber(t5?.rsi, 50);
+
+  const vol5 =
+    finiteNumber(
+      t5?.volumeRatio,
+      0
+    );
+
+  const oi =
+    finiteNumber(oiPct, 0);
 
   let long = 0;
   let short = 0;
@@ -201,7 +430,11 @@ function scoreSignal(t5, t15, t1h, t4h, oiPct) {
   const whyLong = [];
   const whyShort = [];
 
-  const add = (side, points, reason) => {
+  const add = (
+    side,
+    points,
+    reason
+  ) => {
     if (side === 'LONG') {
       long += points;
       whyLong.push(reason);
@@ -211,92 +444,311 @@ function scoreSignal(t5, t15, t1h, t4h, oiPct) {
     }
   };
 
-  // V1.5.0 SCALP:
-  // 5m / 15m / 1h mandam no sinal.
-  // 4h vira contexto secundário, não o motor principal.
-  if (t1h.bullish) add('LONG', 18, '1H em tendência de alta');
-  if (t1h.bearish) add('SHORT', 18, '1H em tendência de baixa');
+  // V1.6.4 DIRECTION BALANCE:
+  // LONG e SHORT recebem exatamente os mesmos pesos espelhados.
+  // 5m/15m = timing; 1h = confirmação principal; 4h = contexto.
+  const structure5 =
+    directionalStructure(t5);
 
-  if (
-    t15.price > t15.ema20 &&
-    t15.ema20 > t15.ema50
-  ) {
-    add('LONG', 18, '15m acima das EMAs');
+  const structure15 =
+    directionalStructure(t15);
+
+  const structure1h =
+    directionalStructure(t1h);
+
+  const structure4h =
+    directionalStructure(t4h);
+
+  if (structure1h === 'LONG') {
+    add(
+      'LONG',
+      20,
+      '1H confirma tendência de alta'
+    );
+  }
+
+  if (structure1h === 'SHORT') {
+    add(
+      'SHORT',
+      20,
+      '1H confirma tendência de baixa'
+    );
+  }
+
+  if (structure15 === 'LONG') {
+    add(
+      'LONG',
+      18,
+      '15m acima das EMAs'
+    );
+  }
+
+  if (structure15 === 'SHORT') {
+    add(
+      'SHORT',
+      18,
+      '15m abaixo das EMAs'
+    );
+  }
+
+  if (structure5 === 'LONG') {
+    add(
+      'LONG',
+      14,
+      '5m acima das EMAs'
+    );
+  }
+
+  if (structure5 === 'SHORT') {
+    add(
+      'SHORT',
+      14,
+      '5m abaixo das EMAs'
+    );
   }
 
   if (
-    t15.price < t15.ema20 &&
-    t15.ema20 < t15.ema50
+    rsi5 >= 51 &&
+    rsi5 <= 69
   ) {
-    add('SHORT', 18, '15m abaixo das EMAs');
+    add(
+      'LONG',
+      10,
+      `RSI 5m ${rsi5.toFixed(1)}`
+    );
   }
 
   if (
-    t5.price > t5.ema20 &&
-    t5.ema20 > t5.ema50
+    rsi5 <= 49 &&
+    rsi5 >= 31
   ) {
-    add('LONG', 14, '5m acima das EMAs');
-  }
-
-  if (
-    t5.price < t5.ema20 &&
-    t5.ema20 < t5.ema50
-  ) {
-    add('SHORT', 14, '5m abaixo das EMAs');
-  }
-
-  if (rsi5 >= 51 && rsi5 <= 69) {
-    add('LONG', 10, `RSI 5m ${rsi5.toFixed(1)}`);
-  }
-
-  if (rsi5 <= 49 && rsi5 >= 31) {
-    add('SHORT', 10, `RSI 5m ${rsi5.toFixed(1)}`);
+    add(
+      'SHORT',
+      10,
+      `RSI 5m ${rsi5.toFixed(1)}`
+    );
   }
 
   if (t5.macdHist > 0) {
-    add('LONG', 10, 'MACD 5m comprador');
+    add(
+      'LONG',
+      10,
+      'MACD 5m comprador'
+    );
   }
 
   if (t5.macdHist < 0) {
-    add('SHORT', 10, 'MACD 5m vendedor');
+    add(
+      'SHORT',
+      10,
+      'MACD 5m vendedor'
+    );
   }
 
   if (vol5 >= 1.10) {
-    if (t5.price > t5.ema20) {
-      add('LONG', 10, `Volume 5m ${vol5.toFixed(2)}x`);
+    if (structure5 === 'LONG') {
+      add(
+        'LONG',
+        10,
+        `Volume 5m ${vol5.toFixed(2)}x`
+      );
     }
 
-    if (t5.price < t5.ema20) {
-      add('SHORT', 10, `Volume 5m ${vol5.toFixed(2)}x`);
+    if (structure5 === 'SHORT') {
+      add(
+        'SHORT',
+        10,
+        `Volume 5m ${vol5.toFixed(2)}x`
+      );
     }
   }
 
   if (oi >= 0.50) {
-    if (t5.price > t5.ema20) {
-      add('LONG', 10, `OI +${oi.toFixed(2)}%`);
+    if (structure5 === 'LONG') {
+      add(
+        'LONG',
+        10,
+        `OI +${oi.toFixed(2)}%`
+      );
     }
 
-    if (t5.price < t5.ema20) {
-      add('SHORT', 10, `OI +${oi.toFixed(2)}%`);
+    if (structure5 === 'SHORT') {
+      add(
+        'SHORT',
+        10,
+        `OI +${oi.toFixed(2)}%`
+      );
     }
   }
 
-  if (t15.macdHist > 0) add('LONG', 4, 'MACD 15m comprador');
-  if (t15.macdHist < 0) add('SHORT', 4, 'MACD 15m vendedor');
+  if (t15.macdHist > 0) {
+    add(
+      'LONG',
+      4,
+      'MACD 15m comprador'
+    );
+  }
 
-  if (t4h.bullish) add('LONG', 6, '4H favorável');
-  if (t4h.bearish) add('SHORT', 6, '4H favorável');
+  if (t15.macdHist < 0) {
+    add(
+      'SHORT',
+      4,
+      'MACD 15m vendedor'
+    );
+  }
 
-  const side = long >= short ? 'LONG' : 'SHORT';
+  if (structure4h === 'LONG') {
+    add(
+      'LONG',
+      6,
+      '4H favorável'
+    );
+  }
+
+  if (structure4h === 'SHORT') {
+    add(
+      'SHORT',
+      6,
+      '4H favorável'
+    );
+  }
+
+  const rawLongScore = long;
+  const rawShortScore = short;
+
+  const btcLong =
+    btcDirectionalAdjustment(
+      'LONG',
+      symbol,
+      btcContext
+    );
+
+  const btcShort =
+    btcDirectionalAdjustment(
+      'SHORT',
+      symbol,
+      btcContext
+    );
+
+  long += btcLong.points;
+  short += btcShort.points;
+
+  // Sem desempate "LONG >=".
+  // Em empate usa primeiro a estrutura 1H, depois 15m, depois momentum 5m.
+  let side;
+
+  if (long > short) {
+    side = 'LONG';
+  } else if (short > long) {
+    side = 'SHORT';
+  } else if (structure1h !== 'MIXED') {
+    side = structure1h;
+  } else if (structure15 !== 'MIXED') {
+    side = structure15;
+  } else if (t5.macdHist > 0) {
+    side = 'LONG';
+  } else if (t5.macdHist < 0) {
+    side = 'SHORT';
+  } else {
+    side =
+      rsi5 > 50
+        ? 'LONG'
+        : rsi5 < 50
+          ? 'SHORT'
+          : 'NEUTRAL';
+  }
+
+  const selectedScore =
+    side === 'LONG'
+      ? long
+      : side === 'SHORT'
+        ? short
+        : 0;
+
+  const directionEdge =
+    Math.abs(long - short);
+
+  const oneHourConfirmed =
+    side !== 'NEUTRAL' &&
+    structure1h === side;
+
+  const btcSelected =
+    side === 'LONG'
+      ? btcLong
+      : side === 'SHORT'
+        ? btcShort
+        : {
+            points: 0,
+            reason: ''
+          };
+
+  const reasons =
+    side === 'LONG'
+      ? [...whyLong]
+      : side === 'SHORT'
+        ? [...whyShort]
+        : ['Direção neutra'];
+
+  if (btcSelected.reason) {
+    reasons.push(
+      btcSelected.reason
+    );
+  }
 
   return {
     side,
-    score: Math.min(100, Math.max(long, short)),
-    reasons:
-      side === 'LONG'
-        ? whyLong
-        : whyShort
+    score:
+      Math.min(
+        100,
+        Math.max(
+          0,
+          Math.round(selectedScore)
+        )
+      ),
+    rawLongScore,
+    rawShortScore,
+    longScore:
+      Math.max(
+        0,
+        Math.round(long)
+      ),
+    shortScore:
+      Math.max(
+        0,
+        Math.round(short)
+      ),
+    directionEdge:
+      Math.round(directionEdge),
+    oneHourConfirmed,
+    structure5,
+    structure15,
+    structure1h,
+    structure4h,
+    btcScoreAdjustment:
+      btcSelected.points,
+    reasons
   };
+}
+
+// Export simples para teste/diagnóstico da lógica direcional.
+export function directionScoreSnapshot({
+  t5,
+  t15,
+  t1h,
+  t4h,
+  oiPct = 0,
+  symbol = 'TESTUSDT',
+  btcContext = null
+}) {
+  return scoreSignal(
+    t5,
+    t15,
+    t1h,
+    t4h,
+    oiPct,
+    symbol,
+    btcContext
+  );
 }
 
 function confirmationStatus(
@@ -529,7 +981,9 @@ export async function scanMarket({
   hardMinVolumeRatio = 0.40,
   oiRejectPct = -1.00,
   exceptionScore = 82,
-  exceptionVolumeRatio = 1.00
+  exceptionVolumeRatio = 1.00,
+  minDirectionEdge = 6,
+  require1hConfirmation = true
 } = {}) {
   const [marketList, exchangeList] = await Promise.all([
     futureMarkets(),
@@ -707,14 +1161,54 @@ export async function scanMarket({
 
       const fundingRate = null;
 
+      const isBtcMarket =
+        String(
+          market.base_asset || ''
+        ).toUpperCase() === 'BTC';
+
+      let btcContextForScore =
+        freshBtcContext(
+          nowMs
+        );
+
+      // Quando BTC está no lote, atualiza o contexto antes de pontuar
+      // as altcoins que vierem depois dele.
+      if (isBtcMarket) {
+        btcContextForScore =
+          buildBtcContext({
+            t5,
+            t15,
+            t1h,
+            t4h,
+            oiPct,
+            change24h
+          });
+
+        cachedBtcContext =
+          btcContextForScore;
+
+        cachedBtcContextAt =
+          nowMs;
+      }
+
       const sig =
         scoreSignal(
           t5,
           t15,
           t1h,
           t4h,
-          oiPct
+          oiPct,
+          displaySymbol,
+          btcContextForScore
         );
+
+      if (isBtcMarket) {
+        cachedBtcContext = {
+          ...btcContextForScore,
+          side: sig.side,
+          score: sig.score
+        };
+      }
 
       const confirmation = confirmationStatus(
         t5,
@@ -735,16 +1229,33 @@ export async function scanMarket({
         );
 
       const volume24hOk = quoteVolume24h >= minQuoteVolume;
-      const scoreOk = sig.score >= minScore;
+      const scoreOk =
+        sig.score >= minScore;
+
+      const directionEdgeOk =
+        sig.directionEdge >= minDirectionEdge;
+
+      const oneHourConfirmationOk =
+        !require1hConfirmation ||
+        sig.oneHourConfirmed;
+
+      const directionalSideOk =
+        sig.side === 'LONG' ||
+        sig.side === 'SHORT';
+
       const isPreCandidate =
         volume24hOk &&
+        directionalSideOk &&
         sig.score >= preCandidateMinScore &&
         sig.score < minScore;
 
       const mathApproved =
         volume24hOk &&
         scoreOk &&
-        confirmation.confirmed;
+        confirmation.confirmed &&
+        directionalSideOk &&
+        directionEdgeOk &&
+        oneHourConfirmationOk;
 
       // V1.3.3: guarda TODOS os motivos de rejeição.
       const rejectionReasons = [];
@@ -758,6 +1269,30 @@ export async function scanMarket({
       if (!scoreOk) {
         rejectionReasons.push(
           `Score ${sig.score} abaixo do mínimo ${minScore}`
+        );
+      }
+
+      if (!directionalSideOk) {
+        rejectionReasons.push(
+          'Direção neutra: LONG e SHORT sem vantagem suficiente'
+        );
+      }
+
+      if (
+        directionalSideOk &&
+        !directionEdgeOk
+      ) {
+        rejectionReasons.push(
+          `Vantagem direcional ${sig.directionEdge} abaixo do mínimo ${minDirectionEdge} (LONG ${sig.longScore} x SHORT ${sig.shortScore})`
+        );
+      }
+
+      if (
+        directionalSideOk &&
+        !oneHourConfirmationOk
+      ) {
+        rejectionReasons.push(
+          `1H não confirma ${sig.side} (estrutura 1H: ${sig.structure1h})`
         );
       }
 
@@ -809,6 +1344,8 @@ export async function scanMarket({
         t4h,
         oiPct,
         fundingRate,
+        btcContextUsed:
+          btcContextForScore,
         candlePolicy: 'CLOSED_ONLY',
         nearApproved,
         candidateTier: mathApproved
@@ -823,6 +1360,9 @@ export async function scanMarket({
           scoreOk,
           preCandidate: isPreCandidate,
           confirmationOk: confirmation.confirmed,
+          directionalSideOk,
+          directionEdgeOk,
+          oneHourConfirmationOk,
           mathApproved
         },
         rejectionReasons,
@@ -843,32 +1383,39 @@ export async function scanMarket({
     }
   }
 
-  const btc = allResults.find(r =>
-    String(r.symbol).toUpperCase().startsWith('BTC')
-  );
+  const btc =
+    allResults.find(r =>
+      String(r.symbol)
+        .toUpperCase()
+        .startsWith('BTC')
+    );
 
-  const btcContext = btc
-    ? {
+  if (btc) {
+    cachedBtcContext = {
+      ...buildBtcContext({
+        t5: btc.t5,
+        t15: btc.t15,
+        t1h: btc.t1h,
+        t4h: btc.t4h,
+        oiPct: btc.oiPct,
+        change24h: btc.change24h,
         side: btc.side,
-        score: btc.score,
-        change24hPct: Number(fmt(btc.change24h, 3, '0')),
-        trend5m: btc.t5?.bullish ? 'BULLISH' : btc.t5?.bearish ? 'BEARISH' : 'MIXED',
-        trend15m: btc.t15?.bullish ? 'BULLISH' : btc.t15?.bearish ? 'BEARISH' : 'MIXED',
-        trend1h: btc.t1h?.bullish ? 'BULLISH' : btc.t1h?.bearish ? 'BEARISH' : 'MIXED',
-        trend4h: btc.t4h?.bullish ? 'BULLISH' : btc.t4h?.bearish ? 'BEARISH' : 'MIXED',
-        rsi5m: finiteNumber(btc.t5?.rsi, null),
-        rsi15m: finiteNumber(btc.t15?.rsi, null),
-        volumeRatio5m: finiteNumber(btc.t5?.volumeRatio, null),
-        openInterestChangePct: finiteNumber(btc.oiPct, 0),
-        fundingRatePct:
-          btc.fundingRate == null
-            ? null
-            : finiteNumber(btc.fundingRate, null)
-      }
-    : null;
+        score: btc.score
+      }),
+      side: btc.side,
+      score: btc.score
+    };
+
+    cachedBtcContextAt =
+      Date.now();
+  }
+
+  const btcContext =
+    freshBtcContext();
 
   for (const r of allResults) {
-    r.btcContext = btcContext;
+    r.btcContext =
+      btcContext;
   }
 
   const signals = allResults
@@ -927,6 +1474,20 @@ export async function scanMarket({
       selectedMarkets: markets.length,
       analyzedMarkets: allResults.length,
       mathApproved: signals.length,
+      directionStats: {
+        longApproved:
+          signals.filter(
+            r => r.side === 'LONG'
+          ).length,
+        shortApproved:
+          signals.filter(
+            r => r.side === 'SHORT'
+          ).length,
+        minDirectionEdge,
+        require1hConfirmation,
+        btcContextAgeMin:
+          btcContext?.ageMin ?? null
+      },
       preCandidateMinScore,
       closedCandlePolicy: true,
       nearApproved: rejected.filter(r => r.nearApproved),
@@ -938,6 +1499,11 @@ export async function scanMarket({
         volumeRatio: r.t5.volumeRatio,
         oiPct: r.oiPct,
         quoteVolume: r.quoteVolume,
+        longScore: r.longScore,
+        shortScore: r.shortScore,
+        directionEdge: r.directionEdge,
+        oneHourConfirmed: r.oneHourConfirmed,
+        btcScoreAdjustment: r.btcScoreAdjustment,
         reasons: r.rejectionReasons,
         reason: r.rejectionReason || 'Pré-candidato'
       })),
@@ -974,6 +1540,9 @@ export function signalText(s) {
     `${emoji} <b>${s.symbol} — ${s.side}</b>\n` +
     `🏦 ${s.exchange}\n` +
     `⭐ Score: <b>${s.score}/100</b>\n` +
+    `⚖️ Direção: LONG ${s.longScore ?? '—'} x SHORT ${s.shortScore ?? '—'} · edge ${s.directionEdge ?? '—'}\n` +
+    `🕐 1H confirma ${s.side}: ${s.oneHourConfirmed ? 'SIM' : 'NÃO'}\n` +
+    `${s.btcScoreAdjustment ? `₿ Ajuste BTC: ${s.btcScoreAdjustment > 0 ? '+' : ''}${s.btcScoreAdjustment}\n` : ''}` +
     `💪 Força: <b>${signalStrength(s.score)}</b>\n` +
     `🔎 Confirmação: <b>${s.confirmation.label}</b>\n` +
     (s.ai
@@ -1008,7 +1577,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.6.3: margem moderada 15% + Profit Protect proporcional. ` +
+    `<i>V1.6.4: Direction Balance LONG/SHORT + confirmação 1H + contexto BTC. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }
