@@ -1,113 +1,111 @@
-CRYPTO FUTURES SCANNER V1.6.9 — SMART STOP
+CRYPTO FUTURES SCANNER V1.7.0 — QUALITY AGGRESSIVE
 
 OBJETIVO
-Dar mais espaço para o scalp respirar sem aumentar o risco percentual da banca.
+Melhorar a qualidade das entradas depois que a versão agressiva
+começou a aceitar setups fracos demais.
 
-PROBLEMA ANTERIOR
-O stop-base era aproximadamente:
-1.00 ATR
-piso 0.25% do preço
-teto 1.20% do preço
+META
+8–12 PAPER trades/dia em condições normais.
+Cap máximo: 15 entradas/dia.
+A quantidade não é garantida.
 
-Isso podia ficar apertado em altcoins e ser atingido por ruído normal do 5m.
+FILTRO DE ENTRADA
+Score mínimo: 70
+Pré-candidatos/watch: 62–69
+IA mínima PAPER: 68%
+Edge direcional: 6+
+1H obrigatório
 
-SMART STOP
-Agora o stop combina:
+MOMENTUM BUNDLE
+Para entrar, por padrão os três confirmam juntos:
+- Volume 5m >= 0.50x
+- OI >= +0.50%
+- MACD 5m alinhado com LONG/SHORT
 
-1. ESTRUTURA
-LONG:
-abaixo da mínima dos últimos 10 candles fechados de 5m.
+ANTI-CHASE
+Bloqueia entrada quando o preço já correu demais sem reteste.
+Usa:
+- distância até EMA20 em ATR
+- corpo do último candle em ATR
+- reteste da EMA20
 
-SHORT:
-acima da máxima dos últimos 10 candles fechados de 5m.
+REGIME BTC 1H+4H
+Alt LONG contra BTC bearish 1H+4H: bloqueia.
+Alt SHORT contra BTC bullish 1H+4H: bloqueia.
 
-2. BUFFER
-Depois da estrutura é acrescentado:
-0.25 ATR
+Exceção apenas se:
+score >= 85
+volume >= 0.80x
+OI >= +1.00%
+edge >= 12
 
-3. PISO
-O stop não fica mais perto que:
-1.25 ATR
+LOSS BRAKE
+Após 2 perdas consecutivas, por 45 min:
+score mínimo +8
+confiança IA +5%
 
-4. TETO
-O stop normalmente não passa de:
-2.00 ATR
-e existe teto absoluto de 2.50% do preço.
+Normal:
+score 70 / IA 68%
 
-Isso evita transformar um scalp em swing quando o último topo/fundo estiver muito distante.
+Brake:
+score 78 / IA 73%
 
-MODOS QUE APARECEM NO SINAL
-STRUCTURE_ATR
-A estrutura ficou dentro da faixa normal.
+STALE INTELIGENTE
+Aos 40m:
+se progresso < 0.25R e momentum deteriorou, fecha.
 
-ATR_MIN
-O topo/fundo estava perto demais; o bot afastou para o mínimo de ATR.
+Se momentum continua:
+mantém a posição.
 
-ATR_CAP
-A estrutura estava longe demais; o bot limitou o stop.
+Aos 75m:
+se ainda não avançou 0.25R, fecha.
 
-ATR_FALLBACK
-Não havia estrutura válida e foi usado ATR.
-
-TPs
-Como o stop ficou mais largo, os TPs-base também mudaram:
-
-TP1 = 0.90R
-TP2 = 1.40R
-TP3 = 2.10R
-
-O NET R/R GUARD continua ativo com mínimo 1.50 líquido.
-Se taxas + slippage fizerem o R/R ficar abaixo de 1.50,
-o autoajuste dos TPs ainda pode afastá-los.
-
-RISCO DA BANCA
-NÃO foi aumentado.
-
-Continua:
-risco máximo = 0.75% da banca.
-
-O sizing do PAPER usa o risco líquido real.
-Logo:
-
-stop mais longe
-=> quantidade/notional menor quando necessário
-
-stop mais perto
-=> quantidade maior, respeitando margem e limites
-
-PROFIT PROTECT
-Mantido.
-
-Depois do TP1:
-o stop restante usa breakeven líquido + buffer de custos,
-não simplesmente o preço bruto de entrada.
-
-Depois do TP2:
-trava lucro com proteção mais forte.
+PAPER
+Máximo 4 posições simultâneas
+Cooldown 15 min
+Meta 8–12
+Cap 15
+1 posição por moeda
 
 MANTIDO
-- banca 50 USDC
-- margem máxima 15%
-- alavancagem 2x
-- risco 0.75%
-- Net R/R mínimo 1.50
-- perfil agressivo 15–20 entradas/dia
-- cap 20 entradas/dia
-- 5 posições simultâneas
-- uma posição por moeda
-- Direction Balance
-- Gemini Rescue All
-- HOLD AI
-- Profit Protect
-- critério MODERADO STOP+TP
+Banca 50 USDC
+Risco 0.75%
+Margem 15%
+Alavancagem 2x
+Net R/R 1.50
+Smart Stop 1.25–2 ATR
+Profit Protect
+Direction Balance
+Gemini Rescue All
+HOLD AI
 
-VARIÁVEIS OPCIONAIS
-SMART_STOP_LOOKBACK_CANDLES=10
-SMART_STOP_MIN_ATR=1.25
-SMART_STOP_MAX_ATR=2.00
-SMART_STOP_STRUCTURE_BUFFER_ATR=0.25
-SMART_STOP_MIN_PCT=0.35
-SMART_STOP_MAX_PCT=2.50
-SMART_STOP_TP1_R=0.90
-SMART_STOP_TP2_R=1.40
-SMART_STOP_TP3_R=2.10
+ENV OPCIONAL
+MIN_SCORE=70
+PRE_CANDIDATE_MIN_SCORE=62
+V122_VOLUME_CONFIRM_RATIO=0.50
+V122_OI_CONFIRM_PCT=0.50
+DIRECTION_MIN_EDGE=6
+DIRECTION_REQUIRE_1H=true
+AI_MIN_CONFIDENCE=68
+
+QUALITY_REQUIRE_MOMENTUM_BUNDLE=true
+QUALITY_ANTI_CHASE_ENABLED=true
+QUALITY_BTC_REGIME_GUARD=true
+
+PAPER_MIN_SCORE=70
+PAPER_MIN_AI_CONFIDENCE=68
+PAPER_MAX_OPEN_POSITIONS=4
+PAPER_TARGET_TRADES_MIN=8
+PAPER_MAX_TRADES_PER_DAY=15
+PAPER_COOLDOWN_MINUTES=15
+
+PAPER_SCALP_STALE_MINUTES=40
+PAPER_SCALP_STALE_MAX_MINUTES=75
+PAPER_SCALP_STALE_MIN_PROGRESS_R=0.25
+PAPER_SCALP_STALE_MIN_VOLUME_RATIO=0.45
+
+PAPER_LOSS_BRAKE_ENABLED=true
+PAPER_LOSS_BRAKE_CONSECUTIVE=2
+PAPER_LOSS_BRAKE_MINUTES=45
+PAPER_LOSS_BRAKE_SCORE_BOOST=8
+PAPER_LOSS_BRAKE_AI_BOOST=5

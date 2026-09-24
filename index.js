@@ -65,41 +65,57 @@ const cfg = {
     Math.max(Number(process.env.V133_TOP_MARKETS || 12), 1),
     12
   ),
-  minScore: Number(process.env.MIN_SCORE || 62),
-  preCandidateMinScore: Number(process.env.PRE_CANDIDATE_MIN_SCORE || 58),
+  minScore: Number(process.env.MIN_SCORE || 70),
+  preCandidateMinScore: Number(process.env.PRE_CANDIDATE_MIN_SCORE || 62),
   minVolume: Number(process.env.MIN_QUOTE_VOLUME_USDT || 20_000_000),
   cooldownMin: Number(process.env.COOLDOWN_MINUTES || 90),
-  minVolumeRatio: Number(process.env.V122_VOLUME_CONFIRM_RATIO || 0.45),
-  minOiPct: Number(process.env.V122_OI_CONFIRM_PCT || 0.25),
-  hardMinVolumeRatio: Number(process.env.V122_HARD_MIN_VOLUME_RATIO || 0.35),
+  minVolumeRatio: Number(process.env.V122_VOLUME_CONFIRM_RATIO || 0.50),
+  minOiPct: Number(process.env.V122_OI_CONFIRM_PCT || 0.50),
+  hardMinVolumeRatio: Number(process.env.V122_HARD_MIN_VOLUME_RATIO || 0.40),
   oiRejectPct: Number(process.env.V122_OI_REJECT_PCT || -1.00),
-  exceptionScore: Number(process.env.V122_EXCEPTION_SCORE || 80),
-  exceptionVolumeRatio: Number(process.env.V122_EXCEPTION_VOLUME_RATIO || 0.85),
+  exceptionScore: Number(process.env.V122_EXCEPTION_SCORE || 85),
+  exceptionVolumeRatio: Number(process.env.V122_EXCEPTION_VOLUME_RATIO || 0.90),
   minDirectionEdge:
     Math.max(
-      Number(process.env.DIRECTION_MIN_EDGE || 4),
+      Number(process.env.DIRECTION_MIN_EDGE || 6),
       0
     ),
   require1hConfirmation:
     String(
-      process.env.DIRECTION_REQUIRE_1H || 'false'
+      process.env.DIRECTION_REQUIRE_1H || 'true'
     ).toLowerCase() !== 'false',
+
+  requireMomentumBundle:
+    String(
+      process.env.QUALITY_REQUIRE_MOMENTUM_BUNDLE || 'true'
+    ).toLowerCase() !== 'false',
+
+  antiChaseEnabled:
+    String(
+      process.env.QUALITY_ANTI_CHASE_ENABLED || 'true'
+    ).toLowerCase() !== 'false',
+
+  btcRegimeGuardEnabled:
+    String(
+      process.env.QUALITY_BTC_REGIME_GUARD || 'true'
+    ).toLowerCase() !== 'false',
+
   aiEnabled: String(process.env.AI_ENABLED || 'true').toLowerCase() !== 'false',
-  aiMinConfidence: Number(process.env.AI_MIN_CONFIDENCE || 60),
+  aiMinConfidence: Number(process.env.AI_MIN_CONFIDENCE || 68),
   aiFailOpen: String(process.env.AI_FAIL_OPEN || 'false').toLowerCase() === 'true',
   // V1.6.8 HOLD AI: até 2 candidatos por ciclo.
   // O limite diário global continua protegendo a cota.
   aiMaxCandidates: Math.min(
-    Math.max(Number(process.env.AI_MAX_CANDIDATES || 3), 1),
-    3
+    Math.max(Number(process.env.AI_MAX_CANDIDATES || 2), 1),
+    2
   ),
   aiBurstSecondCandidate:
     String(process.env.AI_BURST_SECOND_CANDIDATE || 'true')
       .toLowerCase() !== 'false',
   // Reserva algumas chamadas abaixo do teto diário do plano gratuito.
-  aiDailyLimit: Math.min(Math.max(Number(process.env.AI_DAILY_LIMIT || 80), 1), 90),
+  aiDailyLimit: Math.min(Math.max(Number(process.env.AI_DAILY_LIMIT || 60), 1), 75),
   // 30 min para candidatos normais.
-  aiMinGapMin: Math.max(Number(process.env.AI_MIN_GAP_MINUTES || 8), 1),
+  aiMinGapMin: Math.max(Number(process.env.AI_MIN_GAP_MINUTES || 10), 1),
 
   // V1.6.8 HOLD AI: prioridade adaptativa mais agressiva.
   // NORMAL: gap 20 min.
@@ -108,20 +124,20 @@ const cfg = {
   aiPriorityEnabled:
     String(process.env.AI_PRIORITY_ENABLED || 'true').toLowerCase() !== 'false',
 
-  aiPriorityScore: Number(process.env.AI_PRIORITY_SCORE || 80),
-  aiPriorityVolumeRatio: Number(process.env.AI_PRIORITY_VOLUME_RATIO || 0.45),
-  aiPriorityOiPct: Number(process.env.AI_PRIORITY_OI_PCT || 0.40),
+  aiPriorityScore: Number(process.env.AI_PRIORITY_SCORE || 85),
+  aiPriorityVolumeRatio: Number(process.env.AI_PRIORITY_VOLUME_RATIO || 0.55),
+  aiPriorityOiPct: Number(process.env.AI_PRIORITY_OI_PCT || 0.70),
   aiPriorityGapMin: Math.max(
-    Number(process.env.AI_PRIORITY_GAP_MINUTES || 2),
+    Number(process.env.AI_PRIORITY_GAP_MINUTES || 3),
     1
   ),
 
   aiSuperScalpScore:
-    Number(process.env.AI_SUPER_SCALP_SCORE || 88),
+    Number(process.env.AI_SUPER_SCALP_SCORE || 90),
   aiSuperScalpVolumeRatio:
-    Number(process.env.AI_SUPER_SCALP_VOLUME_RATIO || 0.55),
+    Number(process.env.AI_SUPER_SCALP_VOLUME_RATIO || 0.65),
   aiSuperScalpOiPct:
-    Number(process.env.AI_SUPER_SCALP_OI_PCT || 1.00),
+    Number(process.env.AI_SUPER_SCALP_OI_PCT || 1.50),
   aiSuperScalpGapMin: Math.max(
     Number(process.env.AI_SUPER_SCALP_GAP_MINUTES || 1),
     1
@@ -130,12 +146,12 @@ const cfg = {
   // SCALP_FORTE + SUPER_SCALP compartilham este teto.
   // O limite global de 45 requests/dia continua soberano.
   aiPriorityDailyLimit: Math.min(
-    Math.max(Number(process.env.AI_PRIORITY_DAILY_LIMIT || 30), 0),
-    40
+    Math.max(Number(process.env.AI_PRIORITY_DAILY_LIMIT || 20), 0),
+    30
   ),
 
   // Cache normal.
-  aiCacheMin: Math.max(Number(process.env.AI_CACHE_MINUTES || 10), 1),
+  aiCacheMin: Math.max(Number(process.env.AI_CACHE_MINUTES || 15), 1),
 
   // Cache curto para mercado rápido.
   aiPriorityCacheMin: Math.max(
@@ -2915,7 +2931,10 @@ async function doScan({
       exceptionScore: cfg.exceptionScore,
       exceptionVolumeRatio: cfg.exceptionVolumeRatio,
       minDirectionEdge: cfg.minDirectionEdge,
-      require1hConfirmation: cfg.require1hConfirmation
+      require1hConfirmation: cfg.require1hConfirmation,
+      requireMomentumBundle: cfg.requireMomentumBundle,
+      antiChaseEnabled: cfg.antiChaseEnabled,
+      btcRegimeGuardEnabled: cfg.btcRegimeGuardEnabled
     });
 
     // Atualiza primeiro as posições paper usando somente candle fechado.
@@ -3164,7 +3183,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.6.9 SMART STOP</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.7.0 QUALITY AGGRESSIVE</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o próximo lote agora\n' +
       '/scheduler — ver rotação automática de 1 minuto\n' +
@@ -3203,7 +3222,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.6.9 SMART STOP\n` +
+      `✅ Online — V1.7.0 QUALITY AGGRESSIVE\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🛡 Modo: CONFIDENCE GUARD V1.5.9\n` +
       `🤖 APPROVE exige confidence válida; ausente/0% vira WAIT\n` +
@@ -3217,11 +3236,14 @@ async function handleMessage(msg) {
       `⚡ Modo: SCALP 5m · alvo de duração 15min–3h\n` +
       `🧠 Smart Stop: estrutura 5m + 0.25 ATR · faixa 1.25–2.00 ATR\n` +
       `🎯 TPs-base: 0.90R / 1.40R / 2.10R · Net R/R continua >= 1.50\n` +
-      `🔥 Perfil: AGRESSIVO · alvo 15–20 PAPER trades/dia\n` +
+      `🎯 Perfil: QUALITY AGGRESSIVE · alvo 8–12 PAPER trades/dia · cap 15\n` +
       `⭐ Score mínimo para sinal: ${cfg.minScore}\n` +
       `⚖️ Direction Balance: ATIVO · LONG/SHORT simétricos\n` +
       `↔️ Edge direcional mínimo: ${cfg.minDirectionEdge} pontos\n` +
       `🕐 Confirmação 1H: ${cfg.require1hConfirmation ? 'OBRIGATÓRIA' : 'FLEXÍVEL'}\n` +
+      `🚦 Momentum: ${cfg.requireMomentumBundle ? 'volume + OI + MACD obrigatórios' : 'flexível'}\n` +
+      `🛑 Anti-chase/reteste: ${cfg.antiChaseEnabled ? 'ATIVO' : 'INATIVO'}\n` +
+      `₿ Regime BTC 1H+4H: ${cfg.btcRegimeGuardEnabled ? 'ATIVO' : 'INATIVO'}\n` +
       `₿ Contexto BTC: ajuste simétrico em alts · cache máx 10 min\n` +
       `🤖 Confiança mínima para liberar sinal/PAPER: ${cfg.aiMinConfidence}%\n` +
       `🧠 Máx. candidatos IA por scan: ${cfg.aiMaxCandidates}\n` +
@@ -3639,7 +3661,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.6.9-smart-stop',
+    version: '1.7.0-quality-aggressive',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -3687,7 +3709,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.6.9 SMART STOP pronto ✅');
+console.log('Crypto Futures Scanner V1.7.0 QUALITY AGGRESSIVE pronto ✅');
 
 // Em rolling deploy o processo antigo do Render pode permanecer vivo por
 // alguns segundos. Um pequeno atraso evita duas instâncias consumindo a

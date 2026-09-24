@@ -808,6 +808,260 @@ function confirmationStatus(
   };
 }
 
+
+function momentumBundleStatus(
+  side,
+  t5,
+  oiPct,
+  minVolumeRatio,
+  minOiPct
+) {
+  const volumeRatio =
+    finiteNumber(t5?.volumeRatio, 0);
+
+  const oi =
+    finiteNumber(oiPct, 0);
+
+  const macdHist =
+    finiteNumber(t5?.macdHist, 0);
+
+  const volumeOk =
+    volumeRatio >= minVolumeRatio;
+
+  const oiOk =
+    oi >= minOiPct;
+
+  const macdOk =
+    side === 'LONG'
+      ? macdHist > 0
+      : side === 'SHORT'
+        ? macdHist < 0
+        : false;
+
+  return {
+    confirmed:
+      volumeOk &&
+      oiOk &&
+      macdOk,
+    volumeOk,
+    oiOk,
+    macdOk,
+    volumeRatio,
+    oiPct: oi,
+    macdHist
+  };
+}
+
+function antiChaseStatus(
+  side,
+  t5,
+  candles5m = []
+) {
+  const price =
+    finiteNumber(t5?.price, 0);
+
+  const atrValue =
+    Math.max(
+      finiteNumber(t5?.atr, 0),
+      price * 0.001
+    );
+
+  const ema20 =
+    finiteNumber(t5?.ema20, price);
+
+  const lastCandle =
+    candles5m?.[candles5m.length - 1] || null;
+
+  if (
+    !lastCandle ||
+    atrValue <= 0 ||
+    price <= 0
+  ) {
+    return {
+      ok: true,
+      stretched: false,
+      extreme: false,
+      retest: false,
+      distanceAtr: 0,
+      bodyAtr: 0,
+      reason: 'dados insuficientes; anti-chase neutro'
+    };
+  }
+
+  const directionalBody =
+    side === 'LONG'
+      ? Number(lastCandle.close) - Number(lastCandle.open)
+      : Number(lastCandle.open) - Number(lastCandle.close);
+
+  const bodyAtr =
+    Math.max(
+      0,
+      directionalBody / atrValue
+    );
+
+  const distanceAtr =
+    Math.abs(
+      price - ema20
+    ) / atrValue;
+
+  const retest =
+    side === 'LONG'
+      ? Number(lastCandle.low) <= ema20 + atrValue * 0.35
+      : side === 'SHORT'
+        ? Number(lastCandle.high) >= ema20 - atrValue * 0.35
+        : false;
+
+  const stretched =
+    distanceAtr >= 1.25 ||
+    bodyAtr >= 1.00;
+
+  const extreme =
+    distanceAtr >= 1.75 ||
+    bodyAtr >= 1.40;
+
+  const ok =
+    !extreme &&
+    (
+      !stretched ||
+      retest
+    );
+
+  return {
+    ok,
+    stretched,
+    extreme,
+    retest,
+    distanceAtr,
+    bodyAtr,
+    reason:
+      ok
+        ? retest
+          ? 'reteste/EMA20 confirmado'
+          : 'entrada não esticada'
+        : `movimento esticado sem reteste (${distanceAtr.toFixed(2)} ATR da EMA20; corpo ${bodyAtr.toFixed(2)} ATR)`
+  };
+}
+
+function btcRegimeGuardStatus({
+  side,
+  symbol,
+  btcContext,
+  score,
+  volumeRatio,
+  oiPct,
+  directionEdge
+}) {
+  const isBtc =
+    String(symbol || '')
+      .toUpperCase()
+      .startsWith('BTC');
+
+  if (
+    isBtc ||
+    !btcContext
+  ) {
+    return {
+      ok: true,
+      strongAligned: false,
+      strongOpposite: false,
+      exceptional: false,
+      regime:
+        isBtc
+          ? 'BTC_SELF'
+          : 'UNKNOWN'
+    };
+  }
+
+  const aligned =
+    side === 'LONG'
+      ? 'BULLISH'
+      : 'BEARISH';
+
+  const opposite =
+    side === 'LONG'
+      ? 'BEARISH'
+      : 'BULLISH';
+
+  const t1h =
+    String(btcContext.trend1h || 'MIXED')
+      .toUpperCase();
+
+  const t4h =
+    String(btcContext.trend4h || 'MIXED')
+      .toUpperCase();
+
+  const strongAligned =
+    t1h === aligned &&
+    t4h === aligned;
+
+  const strongOpposite =
+    t1h === opposite &&
+    t4h === opposite;
+
+  const exceptional =
+    Number(score || 0) >= 85 &&
+    Number(volumeRatio || 0) >= 0.80 &&
+    Number(oiPct || 0) >= 1.00 &&
+    Number(directionEdge || 0) >= 12;
+
+  return {
+    ok:
+      !strongOpposite ||
+      exceptional,
+    strongAligned,
+    strongOpposite,
+    exceptional,
+    regime:
+      strongAligned
+        ? 'ALIGNED'
+        : strongOpposite
+          ? 'OPPOSITE'
+          : 'MIXED',
+    t1h,
+    t4h
+  };
+}
+
+export function qualityEntryPreview({
+  side,
+  symbol = 'TESTUSDT',
+  t5,
+  candles5m = [],
+  oiPct = 0,
+  minVolumeRatio = 0.50,
+  minOiPct = 0.50,
+  btcContext = null,
+  score = 70,
+  directionEdge = 6
+}) {
+  return {
+    momentum:
+      momentumBundleStatus(
+        side,
+        t5,
+        oiPct,
+        minVolumeRatio,
+        minOiPct
+      ),
+    antiChase:
+      antiChaseStatus(
+        side,
+        t5,
+        candles5m
+      ),
+    btcRegime:
+      btcRegimeGuardStatus({
+        side,
+        symbol,
+        btcContext,
+        score,
+        volumeRatio: t5?.volumeRatio,
+        oiPct,
+        directionEdge
+      })
+  };
+}
+
 function smartStopConfig() {
   const numberEnv = (
     name,
@@ -1297,7 +1551,10 @@ export async function scanMarket({
   exceptionScore = 82,
   exceptionVolumeRatio = 1.00,
   minDirectionEdge = 6,
-  require1hConfirmation = true
+  require1hConfirmation = true,
+  requireMomentumBundle = true,
+  antiChaseEnabled = true,
+  btcRegimeGuardEnabled = true
 } = {}) {
   const [marketList, exchangeList] = await Promise.all([
     futureMarkets(),
@@ -1558,6 +1815,45 @@ export async function scanMarket({
         sig.side === 'LONG' ||
         sig.side === 'SHORT';
 
+      const momentum =
+        momentumBundleStatus(
+          sig.side,
+          t5,
+          oiPct,
+          minVolumeRatio,
+          minOiPct
+        );
+
+      const momentumOk =
+        !requireMomentumBundle ||
+        momentum.confirmed;
+
+      const antiChase =
+        antiChaseStatus(
+          sig.side,
+          t5,
+          c5
+        );
+
+      const antiChaseOk =
+        !antiChaseEnabled ||
+        antiChase.ok;
+
+      const btcRegime =
+        btcRegimeGuardStatus({
+          side: sig.side,
+          symbol: displaySymbol,
+          btcContext: btcContextForScore,
+          score: sig.score,
+          volumeRatio: t5?.volumeRatio,
+          oiPct,
+          directionEdge: sig.directionEdge
+        });
+
+      const btcRegimeOk =
+        !btcRegimeGuardEnabled ||
+        btcRegime.ok;
+
       const isPreCandidate =
         volume24hOk &&
         directionalSideOk &&
@@ -1570,7 +1866,10 @@ export async function scanMarket({
         confirmation.confirmed &&
         directionalSideOk &&
         directionEdgeOk &&
-        oneHourConfirmationOk;
+        oneHourConfirmationOk &&
+        momentumOk &&
+        antiChaseOk &&
+        btcRegimeOk;
 
       // V1.3.3: guarda TODOS os motivos de rejeição.
       const rejectionReasons = [];
@@ -1608,6 +1907,53 @@ export async function scanMarket({
       ) {
         rejectionReasons.push(
           `1H não confirma ${sig.side} (estrutura 1H: ${sig.structure1h})`
+        );
+      }
+
+      if (
+        requireMomentumBundle &&
+        !momentum.confirmed
+      ) {
+        const missing = [];
+
+        if (!momentum.volumeOk) {
+          missing.push(
+            `volume ${momentum.volumeRatio.toFixed(2)}x < ${minVolumeRatio.toFixed(2)}x`
+          );
+        }
+
+        if (!momentum.oiOk) {
+          missing.push(
+            `OI ${momentum.oiPct >= 0 ? '+' : ''}${momentum.oiPct.toFixed(2)}% < +${minOiPct.toFixed(2)}%`
+          );
+        }
+
+        if (!momentum.macdOk) {
+          missing.push(
+            `MACD 5m não confirma ${sig.side}`
+          );
+        }
+
+        rejectionReasons.push(
+          `Momentum incompleto: ${missing.join(' · ')}`
+        );
+      }
+
+      if (
+        antiChaseEnabled &&
+        !antiChase.ok
+      ) {
+        rejectionReasons.push(
+          `Anti-chase: ${antiChase.reason}`
+        );
+      }
+
+      if (
+        btcRegimeGuardEnabled &&
+        !btcRegime.ok
+      ) {
+        rejectionReasons.push(
+          `Regime BTC 1H+4H contrário a ${sig.side}; exige setup excepcional (score 85+, vol 0.80x+, OI +1.00%+, edge 12+)`
         );
       }
 
@@ -1661,6 +2007,9 @@ export async function scanMarket({
         fundingRate,
         btcContextUsed:
           btcContextForScore,
+        momentum,
+        antiChase,
+        btcRegime,
         candlePolicy: 'CLOSED_ONLY',
         nearApproved,
         candidateTier: mathApproved
@@ -1678,6 +2027,9 @@ export async function scanMarket({
           directionalSideOk,
           directionEdgeOk,
           oneHourConfirmationOk,
+          momentumOk,
+          antiChaseOk,
+          btcRegimeOk,
           mathApproved
         },
         rejectionReasons,
@@ -1860,6 +2212,9 @@ export function signalText(s) {
     `${s.btcScoreAdjustment ? `₿ Ajuste BTC: ${s.btcScoreAdjustment > 0 ? '+' : ''}${s.btcScoreAdjustment}\n` : ''}` +
     `💪 Força: <b>${signalStrength(s.score)}</b>\n` +
     `🔎 Confirmação: <b>${s.confirmation.label}</b>\n` +
+    `${s.momentum ? `🚦 Momentum: ${s.momentum.confirmed ? 'OK' : 'FALHOU'} · Vol ${fmt(s.momentum.volumeRatio, 2)}x · OI ${s.momentum.oiPct >= 0 ? '+' : ''}${fmt(s.momentum.oiPct, 2)}% · MACD ${s.momentum.macdOk ? 'OK' : 'NÃO'}\n` : ''}` +
+    `${s.antiChase ? `🛑 Anti-chase: ${s.antiChase.ok ? 'OK' : 'BLOQUEIO'} · ${s.antiChase.reason}\n` : ''}` +
+    `${s.btcRegime ? `₿ Regime BTC 1H+4H: ${s.btcRegime.regime}${s.btcRegime.exceptional ? ' · EXCEÇÃO FORTE' : ''}\n` : ''}` +
     (s.ai
       ? `🤖 IA: <b>${s.ai.decision}</b> · Confiança ${Math.round(s.ai.confidence)}% · ` +
         `${s.ai.style} · Risco ${s.ai.risk}\n` +
@@ -1894,7 +2249,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.6.9: Smart Stop por estrutura + ATR, com risco da banca preservado. ` +
+    `<i>V1.7.0: Quality Aggressive — momentum completo, anti-chase, BTC 1H+4H e Smart Stop. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

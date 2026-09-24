@@ -160,7 +160,9 @@ function systemPrompt() {
     'Dê maior peso para 5m, 15m e 1h. Use 4h apenas como contexto e risco, sem exigir alinhamento perfeito.',
     'Trate LONG e SHORT de forma totalmente simétrica. Não favoreça LONG por padrão.',
     'O lado enviado já passou por um placar LONG x SHORT; confirme se 1h sustenta esse lado.',
-    'Considere o contexto BTC: se estiver claramente contrário ao lado da altcoin, aumente a cautela.',
+    'Considere o contexto BTC: se 1H e 4H do BTC estiverem claramente contrários ao lado da altcoin, exija evidência excepcional.',
+    'Não aprove entrada perseguindo candle já esticado; prefira pullback/reteste com momentum ainda válido.',
+    'Para APPROVE, dê preferência a volume, OI e MACD confirmando juntos. Se momentum estiver incompleto, use WAIT/REJECT.',
     'Analise confluência multi-timeframe, volume relativo, Open Interest, RSI, MACD, stop e contexto do BTC. Funding pode estar ausente.',
     'STANDARD pode receber APPROVE, WATCH, WAIT ou REJECT.',
     'PRE_CANDIDATE nunca pode receber APPROVE.',
@@ -496,7 +498,7 @@ async function fetchOpenRouter({ apiKey, body, timeoutMs }) {
         'HTTP-Referer':
           process.env.OPENROUTER_SITE_URL ||
           'https://crypto-futures-bot.onrender.com',
-        'X-Title': 'Crypto Futures Scanner V1.6.9 Free'
+        'X-Title': 'Crypto Futures Scanner V1.7.0 Free'
       },
       body: JSON.stringify(body),
       signal: controller.signal
