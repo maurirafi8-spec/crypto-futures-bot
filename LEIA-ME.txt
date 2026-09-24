@@ -1,111 +1,113 @@
-CRYPTO FUTURES SCANNER V1.6.7 — AGGRESSIVE 15–20
+CRYPTO FUTURES SCANNER V1.6.9 — SMART STOP
 
 OBJETIVO
-Aumentar a frequência do PAPER para mirar aproximadamente
-15 a 20 entradas por dia.
+Dar mais espaço para o scalp respirar sem aumentar o risco percentual da banca.
 
-IMPORTANTE
-15–20 é META, não garantia.
-Se o mercado não oferecer setups que passem IA + NET R/R,
-o bot pode fazer menos.
+PROBLEMA ANTERIOR
+O stop-base era aproximadamente:
+1.00 ATR
+piso 0.25% do preço
+teto 1.20% do preço
 
-FILTRO TÉCNICO
-Score mínimo: 65 -> 62
-Pré-candidato: 60 -> 58
-Volume confirmação: 0.50x -> 0.45x
-Piso absoluto volume: 0.40x -> 0.35x
-OI confirmação: +0.50% -> +0.25%
-Exception score: 82 -> 80
-Exception volume: 1.00x -> 0.85x
+Isso podia ficar apertado em altcoins e ser atingido por ruído normal do 5m.
 
-DIREÇÃO
-Edge mínimo: 6 -> 4
-1H deixa de ser BLOQUEIO obrigatório.
-Ele continua valendo +20 pontos no placar direcional,
-então continua muito importante, mas não impede sozinho um scalp
-forte de 5m/15m.
+SMART STOP
+Agora o stop combina:
 
-IA
-Confiança mínima geral: 62% -> 60%
-Até 3 candidatos novos por scan
-Limite interno IA: 80/dia
-NORMAL: gap 8 min
-SCALP FORTE:
-  score 80+
-  volume 0.45x+
-  OI +0.40%+
-  gap 2 min
-SUPER SCALP:
-  score 88+
-  volume 0.55x+
-  OI +1.00%+
-  gap 1 min
-Prioridade rápida: até 30/dia
+1. ESTRUTURA
+LONG:
+abaixo da mínima dos últimos 10 candles fechados de 5m.
 
-PAPER
-Score mínimo: 62
-IA mínima: 60%
-Máximo posições simultâneas: 5
-Cooldown por moeda: 10 min
-Stale scalp: 40 min
-Tempo máximo scalp: 2h
+SHORT:
+acima da máxima dos últimos 10 candles fechados de 5m.
 
-META/CAP
-Meta mínima: 15 entradas/dia
-Cap máximo: 20 entradas/dia
+2. BUFFER
+Depois da estrutura é acrescentado:
+0.25 ATR
 
-Ao chegar em 20 entradas no dia:
-novas entradas ficam bloqueadas até virar o dia.
+3. PISO
+O stop não fica mais perto que:
+1.25 ATR
 
-PROTEÇÃO CONTRA DUPLICAÇÃO
-1 posição por moeda ao mesmo tempo.
+4. TETO
+O stop normalmente não passa de:
+2.00 ATR
+e existe teto absoluto de 2.50% do preço.
 
-Exemplo:
-TRX SHORT aberto
-=> outro TRX LONG/SHORT fica bloqueado até o primeiro fechar.
+Isso evita transformar um scalp em swing quando o último topo/fundo estiver muito distante.
 
-Depois do fechamento:
-10 min de cooldown antes de nova entrada na mesma moeda.
+MODOS QUE APARECEM NO SINAL
+STRUCTURE_ATR
+A estrutura ficou dentro da faixa normal.
 
-UNIVERSO
-BTC / ETH / SOL prioritários
-+ 30 moedas em rotação.
+ATR_MIN
+O topo/fundo estava perto demais; o bot afastou para o mínimo de ATR.
 
-Adicionadas:
-APT, SEI, TIA, PEPE, WIF, JUP, FET, RENDER, TAO.
+ATR_CAP
+A estrutura estava longe demais; o bot limitou o stop.
+
+ATR_FALLBACK
+Não havia estrutura válida e foi usado ATR.
+
+TPs
+Como o stop ficou mais largo, os TPs-base também mudaram:
+
+TP1 = 0.90R
+TP2 = 1.40R
+TP3 = 2.10R
+
+O NET R/R GUARD continua ativo com mínimo 1.50 líquido.
+Se taxas + slippage fizerem o R/R ficar abaixo de 1.50,
+o autoajuste dos TPs ainda pode afastá-los.
+
+RISCO DA BANCA
+NÃO foi aumentado.
+
+Continua:
+risco máximo = 0.75% da banca.
+
+O sizing do PAPER usa o risco líquido real.
+Logo:
+
+stop mais longe
+=> quantidade/notional menor quando necessário
+
+stop mais perto
+=> quantidade maior, respeitando margem e limites
+
+PROFIT PROTECT
+Mantido.
+
+Depois do TP1:
+o stop restante usa breakeven líquido + buffer de custos,
+não simplesmente o preço bruto de entrada.
+
+Depois do TP2:
+trava lucro com proteção mais forte.
 
 MANTIDO
 - banca 50 USDC
 - margem máxima 15%
-- 2x
-- risco máximo 0.75%
-- limite diário de perda 3%
-- NET R/R Guard 1.50
-- autoajuste de TPs
+- alavancagem 2x
+- risco 0.75%
+- Net R/R mínimo 1.50
+- perfil agressivo 15–20 entradas/dia
+- cap 20 entradas/dia
+- 5 posições simultâneas
+- uma posição por moeda
+- Direction Balance
+- Gemini Rescue All
+- HOLD AI
 - Profit Protect
-- Direction Balance LONG/SHORT
-- contexto BTC
 - critério MODERADO STOP+TP
-- OpenRouter + Gemini fallback
-- Confidence Guard
 
-VARIÁVEIS PRINCIPAIS
-MIN_SCORE=62
-PRE_CANDIDATE_MIN_SCORE=58
-DIRECTION_MIN_EDGE=4
-DIRECTION_REQUIRE_1H=false
-
-AI_MIN_CONFIDENCE=60
-AI_MAX_CANDIDATES=3
-AI_DAILY_LIMIT=80
-AI_MIN_GAP_MINUTES=8
-
-PAPER_MIN_SCORE=62
-PAPER_MIN_AI_CONFIDENCE=60
-PAPER_MAX_OPEN_POSITIONS=5
-PAPER_COOLDOWN_MINUTES=10
-PAPER_SCALP_STALE_MINUTES=40
-PAPER_MAX_HOLD_HOURS=2
-PAPER_TARGET_TRADES_MIN=15
-PAPER_MAX_TRADES_PER_DAY=20
-PAPER_ONE_POSITION_PER_SYMBOL=true
+VARIÁVEIS OPCIONAIS
+SMART_STOP_LOOKBACK_CANDLES=10
+SMART_STOP_MIN_ATR=1.25
+SMART_STOP_MAX_ATR=2.00
+SMART_STOP_STRUCTURE_BUFFER_ATR=0.25
+SMART_STOP_MIN_PCT=0.35
+SMART_STOP_MAX_PCT=2.50
+SMART_STOP_TP1_R=0.90
+SMART_STOP_TP2_R=1.40
+SMART_STOP_TP3_R=2.10

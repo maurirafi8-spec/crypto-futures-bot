@@ -496,7 +496,7 @@ async function fetchOpenRouter({ apiKey, body, timeoutMs }) {
         'HTTP-Referer':
           process.env.OPENROUTER_SITE_URL ||
           'https://crypto-futures-bot.onrender.com',
-        'X-Title': 'Crypto Futures Scanner V1.6.7 Free'
+        'X-Title': 'Crypto Futures Scanner V1.6.9 Free'
       },
       body: JSON.stringify(body),
       signal: controller.signal
@@ -1632,4 +1632,94 @@ export async function analyzeSignalWithAI(
       }
     );
   }
+}
+
+// ============================================================
+// V1.6.8 HOLD AI
+// ============================================================
+function parseLooseJson(content) {
+  if (content && typeof content === 'object' && !Array.isArray(content)) return content;
+  if (content == null || String(content).trim() === '') throw new Error('Resposta HOLD vazia');
+  const raw = String(content).trim().replace(/^```json\s*/i,'').replace(/^```\s*/i,'').replace(/\s*```$/i,'').trim();
+  try { return JSON.parse(raw); } catch {}
+  const first=raw.indexOf('{'), lastIndex=raw.lastIndexOf('}');
+  if(first!==-1 && lastIndex>first) return JSON.parse(raw.slice(first,lastIndex+1));
+  throw new Error('Resposta HOLD sem JSON válido');
+}
+
+function normalizeHoldAiResponse(obj, requestedAssets) {
+  const actions=new Set(['BUY_NOW','ACCUMULATE','WAIT_CORRECTION','AVOID']);
+  const risks=new Set(['LOW','MEDIUM','HIGH']);
+  const wanted=new Set(requestedAssets.map(x=>String(x.symbol).toUpperCase()));
+  const assets=[];
+  for(const item of Array.isArray(obj?.assets)?obj.assets:[]) {
+    const symbol=String(item?.symbol||'').toUpperCase();
+    if(!wanted.has(symbol)) continue;
+    const action=String(item?.action||'').toUpperCase();
+    const risk=String(item?.risk||'').toUpperCase();
+    const c=Number(item?.confidence);
+    assets.push({
+      symbol,
+      action:actions.has(action)?action:'WAIT_CORRECTION',
+      confidence:Number.isFinite(c)?clamp(c,0,100):null,
+      risk:risks.has(risk)?risk:'MEDIUM',
+      reason:String(item?.reason||'').replace(/\s+/g,' ').trim().slice(0,240)
+    });
+  }
+  if(!assets.length) throw new Error('IA HOLD não retornou nenhum ativo válido');
+  return {summary:String(obj?.summary||'').replace(/\s+/g,' ').trim().slice(0,320),assets};
+}
+
+function holdSystemPrompt(){return [
+  'Você analisa uma carteira de criptomoedas para HOLD de médio/longo prazo.',
+  'Não é futures: não use alavancagem, SHORT ou stop curto de scalp.',
+  'Use SOMENTE os dados técnicos enviados. Não invente notícias, fundamentos, preços ou indicadores.',
+  '4H serve para timing; 1D é tendência principal; 1W é contexto estrutural.',
+  'As zonas já foram calculadas deterministicamente: não altere números nem invente novas zonas.',
+  'Escolha uma ação por ativo: BUY_NOW, ACCUMULATE, WAIT_CORRECTION ou AVOID.',
+  'BUY_NOW = estrutura boa e timing adequado para iniciar uma parcela.',
+  'ACCUMULATE = estrutura aceitável para compras parceladas nas zonas.',
+  'WAIT_CORRECTION = interessante, porém esticado/misto ou com timing ruim.',
+  'AVOID = estrutura 1D/1W fraca ou risco técnico alto.',
+  'Confiança entre 0 e 100. Risco LOW, MEDIUM ou HIGH.',
+  'Em incerteza, prefira ACCUMULATE ou WAIT_CORRECTION a BUY_NOW.'
+].join(' ');}
+
+function holdPrompt(assets){return holdSystemPrompt()+'\nRetorne SOMENTE JSON puro no formato:\n{"summary":"texto curto","assets":[{"symbol":"BTC","action":"BUY_NOW|ACCUMULATE|WAIT_CORRECTION|AVOID","confidence":0,"risk":"LOW|MEDIUM|HIGH","reason":"texto curto"}]}\nRetorne um item para cada símbolo enviado.\nDados:\n'+JSON.stringify({horizon:'medium_long_term_hold',assets});}
+
+async function requestHoldGemini(assets,options={}){
+  const apiKey=process.env.GEMINI_API_KEY;if(!apiKey)throw new Error('GEMINI_API_KEY não configurada');
+  const model=process.env.HOLD_GEMINI_MODEL||geminiFallbackModel();
+  const timeoutMs=Number(options.timeoutMs||process.env.HOLD_AI_TIMEOUT_MS||45000);
+  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs);
+  try{
+    const url=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+    const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':apiKey},body:JSON.stringify({contents:[{role:'user',parts:[{text:holdPrompt(assets)}]}],generationConfig:{temperature:0,maxOutputTokens:intEnv('HOLD_GEMINI_MAX_TOKENS',2048,512,4096),responseMimeType:'application/json'}}),signal:controller.signal});
+    const rawBody=await response.text();let data=null;try{data=rawBody?JSON.parse(rawBody):null;}catch{}
+    if(!response.ok)throw new Error(`Gemini HOLD HTTP ${response.status}: `+String(data?.error?.message||rawBody||'erro').replace(/\s+/g,' ').slice(0,300));
+    const candidate=data?.candidates?.[0];const text=(candidate?.content?.parts||[]).map(p=>p?.text||'').join('').trim();
+    return {...normalizeHoldAiResponse(parseLooseJson(text),assets),source:'GEMINI',model};
+  }catch(error){if(error?.name==='AbortError')throw new Error('Gemini HOLD timeout');throw error;}finally{clearTimeout(timer);}
+}
+
+async function requestHoldOpenRouter(assets,options={}){
+  const apiKey=process.env.OPENROUTER_API_KEY;if(!apiKey)throw new Error('OPENROUTER_API_KEY não configurada');
+  const circuit=openRouterCircuitInfo();if(circuit.blocked)throw new Error(`OpenRouter pausado pelo circuit breaker (${circuit.remainingMin}m)`);
+  const model=process.env.HOLD_OPENROUTER_MODEL||aiRescueModel();const timeoutMs=Number(options.timeoutMs||process.env.HOLD_AI_TIMEOUT_MS||45000);
+  const body={model,temperature:0,max_tokens:intEnv('HOLD_OPENROUTER_MAX_TOKENS',2048,512,4096),response_format:{type:'json_object'},messages:[{role:'system',content:holdSystemPrompt()},{role:'user',content:holdPrompt(assets)}],provider:{allow_fallbacks:true}};
+  try{const {data}=await fetchOpenRouter({apiKey,body,timeoutMs});const text=contentPartsToText(data?.choices?.[0]?.message?.content);return {...normalizeHoldAiResponse(parseLooseJson(text),assets),source:'OPENROUTER',model:data?.model||model};}
+  catch(error){armOpenRouterCircuit(error);throw error;}
+}
+
+export async function analyzeHoldPortfolioWithAI(assets,options={}){
+  if(!Array.isArray(assets)||!assets.length)throw new Error('Carteira HOLD vazia');
+  if(geminiFallbackConfigured()){
+    try{return await requestHoldGemini(assets,options);}catch(geminiError){
+      if(!process.env.OPENROUTER_API_KEY)throw geminiError;
+      console.log(`[hold-ai] Gemini falhou; tentando OpenRouter: ${String(geminiError?.message||geminiError).replace(/\s+/g,' ').slice(0,220)}`);
+      return requestHoldOpenRouter(assets,options);
+    }
+  }
+  if(process.env.OPENROUTER_API_KEY)return requestHoldOpenRouter(assets,options);
+  throw new Error('Nenhuma IA configurada para HOLD');
 }

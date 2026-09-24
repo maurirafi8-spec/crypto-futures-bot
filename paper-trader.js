@@ -1171,6 +1171,21 @@ export function maybeOpenPaperPosition(signal) {
       tradeStyle:
         signal.tradeStyle || 'SCALP_5M',
 
+      smartStopMode:
+        signal.stopMode || null,
+      smartStopAtrMultiple:
+        Number.isFinite(Number(signal.stopAtrMultiple))
+          ? Number(signal.stopAtrMultiple)
+          : null,
+      smartStopPct:
+        Number.isFinite(Number(signal.stopPct))
+          ? Number(signal.stopPct)
+          : null,
+      smartStopStructure:
+        Number.isFinite(Number(signal.structurePrice))
+          ? Number(signal.structurePrice)
+          : null,
+
       openedAt: Date.now(),
       openBarTime:
         Number(signal.t5?.openTime ?? signal.t15?.openTime ?? 0),
@@ -1284,6 +1299,9 @@ export function maybeOpenPaperPosition(signal) {
         `⭐ Score ${position.score} · 🤖 IA ${Math.round(position.aiConfidence)}%\n` +
         `💰 Entrada simulada: ${round(entryFill)}\n` +
         `🛑 Stop: ${round(position.stopCurrent)}\n` +
+        `${position.smartStopMode ? `🧠 Smart Stop: ${position.smartStopMode}` +
+          `${Number.isFinite(position.smartStopAtrMultiple) ? ` · ${position.smartStopAtrMultiple.toFixed(2)} ATR` : ''}` +
+          `${Number.isFinite(position.smartStopPct) ? ` · ${position.smartStopPct.toFixed(2)}%` : ''}\n` : ''}` +
         `🎯 TP1 ${round(position.tp1)} · TP2 ${round(position.tp2)} · TP3 ${round(position.tp3)}\n` +
         `${position.targetsAutoAdjusted ? `🧮 TPs autoajustados: x${position.targetScale.toFixed(2)} para respeitar R/R líquido\n` : ''}` +
         `📦 Notional: ${notional.toFixed(2)} USDC · Margem: ${margin.toFixed(2)} USDC · ${cfg.leverage}x\n` +
@@ -2241,7 +2259,7 @@ export function paperStatusText() {
       : null;
 
   return [
-    '🔥 <b>PAPER TRADING — V1.6.7 AGGRESSIVE 15–20</b>',
+    '🧠 <b>PAPER TRADING — V1.6.9 SMART STOP</b>',
     '',
     `Status: ${cfg.enabled ? '✅ ATIVO' : '⛔ DESATIVADO'} · ${state.paused ? '⏸ PAUSADO' : '▶️ RODANDO'}`,
     `💰 Banca inicial: ${state.startingBalance.toFixed(2)} USDC`,
@@ -2258,6 +2276,7 @@ export function paperStatusText() {
     `⚖️ Risco por trade: ${cfg.riskPct.toFixed(2)}%`,
     `⚙️ Alavancagem simulada: ${cfg.leverage}x`,
     `⚡ Scalp: ${cfg.scalpMode ? 'ATIVO' : 'INATIVO'} · stale ${cfg.scalpStaleMin} min · máx ${cfg.maxHoldHours}h`,
+    `🧠 Smart Stop: estrutura 5m + ATR · alvo 1.25–2.00 ATR`,
     `🛡 Profit Protect: ${cfg.profitProtectEnabled ? 'ATIVO' : 'INATIVO'} · buffer ${cfg.profitProtectBufferPctNotional.toFixed(2)}% do notional`,
     `⚖️ Candle STOP+TP: critério MODERADO`,
     `🧮 Net R/R Guard: ${cfg.netRrGuardEnabled ? 'ATIVO' : 'INATIVO'} · mínimo ${cfg.minNetRR.toFixed(2)}x`,

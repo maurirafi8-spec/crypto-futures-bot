@@ -40,6 +40,14 @@ import {
   paperOpenSymbols,
   paperHasOpenPosition
 } from './paper-trader.js';
+import {
+  analyzeHoldPortfolio,
+  formatHoldMessages,
+  holdHelpText,
+  parseHoldBases,
+  defaultHoldBases,
+  holdConfig
+} from './hold.js';
 
 const cfg = {
   token: process.env.BOT_TOKEN,
@@ -79,7 +87,7 @@ const cfg = {
   aiEnabled: String(process.env.AI_ENABLED || 'true').toLowerCase() !== 'false',
   aiMinConfidence: Number(process.env.AI_MIN_CONFIDENCE || 60),
   aiFailOpen: String(process.env.AI_FAIL_OPEN || 'false').toLowerCase() === 'true',
-  // V1.6.7 AGGRESSIVE 15-20: até 2 candidatos por ciclo.
+  // V1.6.8 HOLD AI: até 2 candidatos por ciclo.
   // O limite diário global continua protegendo a cota.
   aiMaxCandidates: Math.min(
     Math.max(Number(process.env.AI_MAX_CANDIDATES || 3), 1),
@@ -93,7 +101,7 @@ const cfg = {
   // 30 min para candidatos normais.
   aiMinGapMin: Math.max(Number(process.env.AI_MIN_GAP_MINUTES || 8), 1),
 
-  // V1.6.7 AGGRESSIVE 15-20: prioridade adaptativa mais agressiva.
+  // V1.6.8 HOLD AI: prioridade adaptativa mais agressiva.
   // NORMAL: gap 20 min.
   // SCALP_FORTE: score 85+ / vol 0.50x+ / OI +0.70%+ -> gap 3 min.
   // SUPER_SCALP: score 90+ / vol 0.60x+ / OI +1.50%+ -> gap 1 min.
@@ -2619,7 +2627,7 @@ async function validateSignalsWithAI(signals) {
 
     let permission = aiCallPermission(s);
 
-    // V1.6.7 AGGRESSIVE 15-20:
+    // V1.6.8 HOLD AI:
     // se já analisamos 1 candidato neste scan, permitimos um segundo
     // candidato imediatamente (até o máximo de 2), sem esperar o gap
     // entre chamadas. Isso é apenas a fila de IA; os limites diário,
@@ -3147,7 +3155,8 @@ async function doScan({
 
 async function handleMessage(msg) {
   const text = (msg.text || '').trim();
-  if (!text.startsWith('/')) return;
+  const plainHoldCommand = /^HOLD(?:\s|$)/i.test(text);
+  if (!text.startsWith('/') && !plainHoldCommand) return;
 
   activeChatId = String(msg.chat.id);
 
@@ -3155,7 +3164,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.6.7 AGGRESSIVE 15-20</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.6.9 SMART STOP</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o próximo lote agora\n' +
       '/scheduler — ver rotação automática de 1 minuto\n' +
@@ -3165,6 +3174,9 @@ async function handleMessage(msg) {
       '/resultados — últimos resultados acompanhados\n' +
       '/ia — últimas decisões do Analista IA\n' +
       '/debug — diagnóstico do último scan\n' +
+      '/hold — analisar BTC ETH SOL LINK AVAX para HOLD\n' +
+      '/hold BTC ETH SOL — analisar carteira personalizada\n' +
+      '/holdhelp — ajuda do modo HOLD AI\n' +
       '/hyper — testar Hyperliquid Testnet\n' +
       '/hagent — verificar Agent/API Wallet\n' +
       '/harm — armar ordens assinadas TESTNET\n' +
@@ -3191,7 +3203,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.6.7 AGGRESSIVE 15-20\n` +
+      `✅ Online — V1.6.9 SMART STOP\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🛡 Modo: CONFIDENCE GUARD V1.5.9\n` +
       `🤖 APPROVE exige confidence válida; ausente/0% vira WAIT\n` +
@@ -3203,6 +3215,8 @@ async function handleMessage(msg) {
       `🪙 Lote automático: ${cfg.scanBatchSize} moedas · pares /USDT\n` +
       `🔁 Universo: BTC/ETH/SOL prioritários + 30 moedas em rotação\n` +
       `⚡ Modo: SCALP 5m · alvo de duração 15min–3h\n` +
+      `🧠 Smart Stop: estrutura 5m + 0.25 ATR · faixa 1.25–2.00 ATR\n` +
+      `🎯 TPs-base: 0.90R / 1.40R / 2.10R · Net R/R continua >= 1.50\n` +
       `🔥 Perfil: AGRESSIVO · alvo 15–20 PAPER trades/dia\n` +
       `⭐ Score mínimo para sinal: ${cfg.minScore}\n` +
       `⚖️ Direction Balance: ATIVO · LONG/SHORT simétricos\n` +
@@ -3221,6 +3235,8 @@ async function handleMessage(msg) {
       `🧊 Cooldown: ${cfg.cooldownMin} min\n` +
       `📡 Dados: Coinalyze\n` +
       `🕯 Candles: SOMENTE FECHADOS\n` +
+      `🧠 HOLD AI: ATIVO · padrão ${defaultHoldBases().join('/')} · máx ${holdConfig().maxAssets} ativos\n` +
+      `📅 HOLD: 4H timing · 1D tendência · 1W contexto · cache ${holdConfig().cacheMin}m\n` +
       `🤖 IA: ${aiEnabledNow() ? 'ATIVA' : 'INATIVA'}\n` +
       `🧠 Modelo: ${aiEnabledNow() ? aiModel() : '—'}\n` +
       `✅ Confiança mínima IA: ${cfg.aiMinConfidence}%\n` +
@@ -3265,6 +3281,30 @@ async function handleMessage(msg) {
     await sendMessage(cfg.token, activeChatId, aiHistoryText());
   } else if (text.startsWith('/debug')) {
     await sendMessage(cfg.token, activeChatId, lastScanDebugText());
+  } else if (text.startsWith('/holdhelp')) {
+    await sendMessage(cfg.token, activeChatId, holdHelpText());
+  } else if (text.startsWith('/hold') || plainHoldCommand) {
+    const holdBases = parseHoldBases(text);
+    await sendMessage(
+      cfg.token,
+      activeChatId,
+      `🧠 <b>HOLD AI analisando...</b>\n${holdBases.join(' · ')}\n\n` +
+      `Buscando 4H, 1D e 1W + zonas de compra. Nenhuma ordem será aberta.`
+    );
+    try {
+      const holdResult = await analyzeHoldPortfolio(holdBases);
+      const holdMessages = formatHoldMessages(holdResult);
+      for (const holdMessage of holdMessages) {
+        await sendMessage(cfg.token, activeChatId, holdMessage);
+      }
+    } catch (error) {
+      console.error('[hold]', error);
+      await sendMessage(
+        cfg.token,
+        activeChatId,
+        `⚠️ HOLD AI falhou: ${String(error?.message || error).replace(/[<>&]/g, '').slice(0, 500)}`
+      );
+    }
   } else if (text.startsWith('/paperreset')) {
     const parts = text.trim().split(/\s+/);
 
@@ -3599,7 +3639,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.6.7-aggressive-15-20',
+    version: '1.6.9-smart-stop',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -3632,6 +3672,12 @@ http.createServer((req, res) => {
     hyperliquidExecutions: hyperExecutionHistory.length,
     hyperliquidMainnetUnlocked: false,
     paperTrading: paperStateInfo(),
+    holdAI: {
+      enabled: true,
+      defaultAssets: defaultHoldBases(),
+      maxAssets: holdConfig().maxAssets,
+      cacheMinutes: holdConfig().cacheMin
+    },
     pendingAI: pendingAiCandidate
       ? `${pendingAiCandidate.symbol}:${pendingAiCandidate.side}`
       : null,
@@ -3641,7 +3687,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.6.7 AGGRESSIVE 15-20 pronto ✅');
+console.log('Crypto Futures Scanner V1.6.9 SMART STOP pronto ✅');
 
 // Em rolling deploy o processo antigo do Render pode permanecer vivo por
 // alguns segundos. Um pequeno atraso evita duas instâncias consumindo a

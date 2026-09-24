@@ -808,40 +808,354 @@ function confirmationStatus(
   };
 }
 
-function buildLevels(side, price, atrValue) {
-  // Scalp: stop mais curto e alvos próximos.
-  // Piso evita stop microscópico; teto evita transformar scalp em swing.
-  const atrRisk =
-    Number(atrValue || 0) * 1.0;
+function smartStopConfig() {
+  const numberEnv = (
+    name,
+    fallback,
+    min,
+    max
+  ) => {
+    const n =
+      Number(
+        process.env[name] ??
+        fallback
+      );
 
-  const risk =
+    if (!Number.isFinite(n)) {
+      return fallback;
+    }
+
+    return Math.max(
+      min,
+      Math.min(
+        max,
+        n
+      )
+    );
+  };
+
+  return {
+    lookback:
+      Math.trunc(
+        numberEnv(
+          'SMART_STOP_LOOKBACK_CANDLES',
+          10,
+          5,
+          24
+        )
+      ),
+
+    minAtr:
+      numberEnv(
+        'SMART_STOP_MIN_ATR',
+        1.25,
+        0.80,
+        3.00
+      ),
+
+    maxAtr:
+      numberEnv(
+        'SMART_STOP_MAX_ATR',
+        2.00,
+        1.00,
+        4.00
+      ),
+
+    bufferAtr:
+      numberEnv(
+        'SMART_STOP_STRUCTURE_BUFFER_ATR',
+        0.25,
+        0,
+        1.00
+      ),
+
+    minPct:
+      numberEnv(
+        'SMART_STOP_MIN_PCT',
+        0.35,
+        0.10,
+        3.00
+      ),
+
+    maxPct:
+      numberEnv(
+        'SMART_STOP_MAX_PCT',
+        2.50,
+        0.50,
+        6.00
+      ),
+
+    tp1R:
+      numberEnv(
+        'SMART_STOP_TP1_R',
+        0.90,
+        0.50,
+        3.00
+      ),
+
+    tp2R:
+      numberEnv(
+        'SMART_STOP_TP2_R',
+        1.40,
+        0.80,
+        4.00
+      ),
+
+    tp3R:
+      numberEnv(
+        'SMART_STOP_TP3_R',
+        2.10,
+        1.00,
+        6.00
+      )
+  };
+}
+
+function recentStructurePrice(
+  side,
+  candles5m,
+  lookback
+) {
+  const recent =
+    (
+      candles5m || []
+    )
+      .slice(
+        -lookback
+      )
+      .filter(c =>
+        Number.isFinite(
+          Number(c?.low)
+        ) &&
+        Number.isFinite(
+          Number(c?.high)
+        )
+      );
+
+  if (!recent.length) {
+    return null;
+  }
+
+  if (side === 'LONG') {
+    return Math.min(
+      ...recent.map(
+        c => Number(c.low)
+      )
+    );
+  }
+
+  return Math.max(
+    ...recent.map(
+      c => Number(c.high)
+    )
+  );
+}
+
+function buildLevels(
+  side,
+  price,
+  atrValue,
+  candles5m = []
+) {
+  const cfg =
+    smartStopConfig();
+
+  const px =
+    Number(price);
+
+  const rawAtr =
+    Number(atrValue);
+
+  const safeAtr =
+    Number.isFinite(rawAtr) &&
+    rawAtr > 0
+      ? rawAtr
+      : px * 0.0025;
+
+  const structure =
+    recentStructurePrice(
+      side,
+      candles5m,
+      cfg.lookback
+    );
+
+  const buffer =
+    safeAtr *
+    cfg.bufferAtr;
+
+  let structureStop = null;
+  let structureRisk = null;
+
+  if (
+    Number.isFinite(
+      structure
+    )
+  ) {
+    structureStop =
+      side === 'LONG'
+        ? structure -
+          buffer
+        : structure +
+          buffer;
+
+    structureRisk =
+      Math.abs(
+        px -
+        structureStop
+      );
+  }
+
+  // Piso principal: 1.25 ATR.
+  // Assim um ruído normal de 5m não tira o trade tão facilmente.
+  const minRisk =
     Math.min(
       Math.max(
-        atrRisk,
-        price * 0.0025
+        safeAtr *
+          cfg.minAtr,
+        px *
+          cfg.minPct /
+          100
       ),
-      price * 0.012
+      px *
+        cfg.maxPct /
+        100
     );
+
+  // Teto evita que um fundo/topo muito distante transforme scalp em swing.
+  const maxRisk =
+    Math.max(
+      minRisk,
+      Math.min(
+        safeAtr *
+          cfg.maxAtr,
+        px *
+          cfg.maxPct /
+          100
+      )
+    );
+
+  const desiredRisk =
+    Number.isFinite(
+      structureRisk
+    ) &&
+    structureRisk > 0
+      ? structureRisk
+      : minRisk;
+
+  const risk =
+    Math.max(
+      minRisk,
+      Math.min(
+        maxRisk,
+        desiredRisk
+      )
+    );
+
+  const stop =
+    side === 'LONG'
+      ? px - risk
+      : px + risk;
+
+  const stopMode =
+    !Number.isFinite(
+      structureRisk
+    )
+      ? 'ATR_FALLBACK'
+      : structureRisk <
+          minRisk
+        ? 'ATR_MIN'
+        : structureRisk >
+            maxRisk
+          ? 'ATR_CAP'
+          : 'STRUCTURE_ATR';
 
   if (side === 'LONG') {
     return {
-      entry: price,
-      stop: price - risk,
-      tp1: price + risk * 0.70,
-      tp2: price + risk * 1.10,
-      tp3: price + risk * 1.60,
-      tradeStyle: 'SCALP_5M'
+      entry:
+        px,
+      stop,
+      tp1:
+        px +
+        risk *
+          cfg.tp1R,
+      tp2:
+        px +
+        risk *
+          cfg.tp2R,
+      tp3:
+        px +
+        risk *
+          cfg.tp3R,
+      tradeStyle:
+        'SCALP_5M_SMART_STOP',
+      stopMode,
+      stopAtrMultiple:
+        safeAtr > 0
+          ? risk /
+            safeAtr
+          : null,
+      stopPct:
+        px > 0
+          ? risk /
+            px *
+            100
+          : null,
+      structurePrice:
+        structure,
+      structureLookback:
+        cfg.lookback
     };
   }
 
   return {
-    entry: price,
-    stop: price + risk,
-    tp1: price - risk * 0.70,
-    tp2: price - risk * 1.10,
-    tp3: price - risk * 1.60,
-    tradeStyle: 'SCALP_5M'
+    entry:
+      px,
+    stop,
+    tp1:
+      px -
+      risk *
+        cfg.tp1R,
+    tp2:
+      px -
+      risk *
+        cfg.tp2R,
+    tp3:
+      px -
+      risk *
+        cfg.tp3R,
+    tradeStyle:
+      'SCALP_5M_SMART_STOP',
+    stopMode,
+    stopAtrMultiple:
+      safeAtr > 0
+        ? risk /
+          safeAtr
+        : null,
+    stopPct:
+      px > 0
+        ? risk /
+          px *
+          100
+        : null,
+    structurePrice:
+      structure,
+    structureLookback:
+      cfg.lookback
   };
+}
+
+export function smartStopPreview({
+  side,
+  price,
+  atrValue,
+  candles5m = []
+}) {
+  return buildLevels(
+    side,
+    price,
+    atrValue,
+    candles5m
+  );
 }
 
 function bestMarketForBase(
@@ -1225,7 +1539,8 @@ export async function scanMarket({
         buildLevels(
           sig.side,
           t5.price,
-          t5.atr
+          t5.atr,
+          c5
         );
 
       const volume24hOk = quoteVolume24h >= minQuoteVolume;
@@ -1563,7 +1878,9 @@ export function signalText(s) {
 
     `💰 Entrada: <b>${n(s.entry)}</b>\n` +
     `🛑 Stop: <b>${n(s.stop)}</b>\n` +
-    `📐 Stop: ${stopPct.toFixed(2)}% do preço\n\n` +
+    `📐 Stop: ${stopPct.toFixed(2)}% do preço` +
+    `${Number.isFinite(Number(s.stopAtrMultiple)) ? ` · ${Number(s.stopAtrMultiple).toFixed(2)} ATR` : ''}\n` +
+    `${s.stopMode ? `🧠 Smart Stop: ${s.stopMode}${Number.isFinite(Number(s.structurePrice)) ? ` · estrutura ${n(s.structurePrice)}` : ''}\n` : ''}\n` +
 
     `🎯 TP1: ${n(s.tp1)} — 1:${rr1.toFixed(1)}\n` +
     `🎯 TP2: ${n(s.tp2)} — 1:${rr2.toFixed(1)}\n` +
@@ -1577,7 +1894,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.6.7: perfil agressivo 15–20/dia + Direction Balance + Net R/R Guard. ` +
+    `<i>V1.6.9: Smart Stop por estrutura + ATR, com risco da banca preservado. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }
