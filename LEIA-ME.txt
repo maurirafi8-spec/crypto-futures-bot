@@ -1,111 +1,61 @@
-CRYPTO FUTURES SCANNER V1.7.0 — QUALITY AGGRESSIVE
+CRYPTO FUTURES SCANNER V1.7.1 — TELEGRAM SAFE
 
-OBJETIVO
-Melhorar a qualidade das entradas depois que a versão agressiva
-começou a aceitar setups fracos demais.
+CORREÇÃO
+A V1.7.0 podia concluir o scan normalmente e falhar apenas na hora
+de enviar a resposta ao Telegram.
 
-META
-8–12 PAPER trades/dia em condições normais.
-Cap máximo: 15 entradas/dia.
-A quantidade não é garantida.
+Exemplo:
+Telegram 400
+Bad Request: can't parse entities
+Unsupported start tag
 
-FILTRO DE ENTRADA
-Score mínimo: 70
-Pré-candidatos/watch: 62–69
-IA mínima PAPER: 68%
-Edge direcional: 6+
-1H obrigatório
+CAUSA
+Os novos motivos do filtro Quality Aggressive podiam conter:
+volume 0.42x < 0.50x
+OI +0.20% < +0.50%
 
-MOMENTUM BUNDLE
-Para entrar, por padrão os três confirmam juntos:
-- Volume 5m >= 0.50x
-- OI >= +0.50%
-- MACD 5m alinhado com LONG/SHORT
+Como o bot usa parse_mode=HTML, o Telegram interpreta "<" como
+início de uma tag HTML.
 
-ANTI-CHASE
-Bloqueia entrada quando o preço já correu demais sem reteste.
-Usa:
-- distância até EMA20 em ATR
-- corpo do último candle em ATR
-- reteste da EMA20
+CORRIGIDO EM DUAS CAMADAS
 
-REGIME BTC 1H+4H
-Alt LONG contra BTC bearish 1H+4H: bloqueia.
-Alt SHORT contra BTC bullish 1H+4H: bloqueia.
+1) FONTE
+Os motivos agora usam:
+"abaixo de"
+em vez do caractere "<".
 
-Exceção apenas se:
-score >= 85
-volume >= 0.80x
-OI >= +1.00%
-edge >= 12
+Além disso os motivos dinâmicos exibidos em /scan e /debug
+são escapados para HTML seguro.
 
-LOSS BRAKE
-Após 2 perdas consecutivas, por 45 min:
-score mínimo +8
-confiança IA +5%
+2) FALLBACK TELEGRAM
+Se qualquer mensagem futura ainda produzir:
+can't parse entities
+Unsupported start tag
+Unsupported end tag
 
-Normal:
-score 70 / IA 68%
+o bot automaticamente tenta novamente em TEXTO PURO,
+sem parse_mode HTML.
 
-Brake:
-score 78 / IA 73%
+Resultado:
+um problema de formatação não derruba mais o scan inteiro.
 
-STALE INTELIGENTE
-Aos 40m:
-se progresso < 0.25R e momentum deteriorou, fecha.
+IMPORTANTE
+NENHUMA REGRA DE TRADING FOI AFROUXADA.
 
-Se momentum continua:
-mantém a posição.
-
-Aos 75m:
-se ainda não avançou 0.25R, fecha.
-
-PAPER
-Máximo 4 posições simultâneas
-Cooldown 15 min
-Meta 8–12
-Cap 15
-1 posição por moeda
-
-MANTIDO
-Banca 50 USDC
-Risco 0.75%
-Margem 15%
-Alavancagem 2x
-Net R/R 1.50
-Smart Stop 1.25–2 ATR
-Profit Protect
-Direction Balance
-Gemini Rescue All
-HOLD AI
-
-ENV OPCIONAL
-MIN_SCORE=70
-PRE_CANDIDATE_MIN_SCORE=62
-V122_VOLUME_CONFIRM_RATIO=0.50
-V122_OI_CONFIRM_PCT=0.50
-DIRECTION_MIN_EDGE=6
-DIRECTION_REQUIRE_1H=true
-AI_MIN_CONFIDENCE=68
-
-QUALITY_REQUIRE_MOMENTUM_BUNDLE=true
-QUALITY_ANTI_CHASE_ENABLED=true
-QUALITY_BTC_REGIME_GUARD=true
-
-PAPER_MIN_SCORE=70
-PAPER_MIN_AI_CONFIDENCE=68
-PAPER_MAX_OPEN_POSITIONS=4
-PAPER_TARGET_TRADES_MIN=8
-PAPER_MAX_TRADES_PER_DAY=15
-PAPER_COOLDOWN_MINUTES=15
-
-PAPER_SCALP_STALE_MINUTES=40
-PAPER_SCALP_STALE_MAX_MINUTES=75
-PAPER_SCALP_STALE_MIN_PROGRESS_R=0.25
-PAPER_SCALP_STALE_MIN_VOLUME_RATIO=0.45
-
-PAPER_LOSS_BRAKE_ENABLED=true
-PAPER_LOSS_BRAKE_CONSECUTIVE=2
-PAPER_LOSS_BRAKE_MINUTES=45
-PAPER_LOSS_BRAKE_SCORE_BOOST=8
-PAPER_LOSS_BRAKE_AI_BOOST=5
+Mantido exatamente da V1.7.0:
+- Quality Aggressive
+- meta 8–12 trades/dia
+- cap 15
+- score mínimo 70
+- IA mínima 68%
+- 1H obrigatório
+- edge 6
+- Momentum Bundle
+- Anti-chase
+- Regime BTC 1H+4H
+- Loss Brake
+- Stale inteligente
+- Smart Stop
+- Net R/R 1.50
+- HOLD AI
+- Gemini Rescue All

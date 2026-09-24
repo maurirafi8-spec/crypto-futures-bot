@@ -21,7 +21,7 @@ async function get(path, params = {}, tentativa = 0) {
   const res = await fetch(url, {
     headers: {
       api_key: API_KEY,
-      'User-Agent': 'crypto-futures-scanner/1.7.0'
+      'User-Agent': 'crypto-futures-scanner/1.7.1'
     },
     signal: AbortSignal.timeout(20000)
   });

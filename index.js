@@ -2283,6 +2283,26 @@ function pendingAIText(pending = pendingAiCandidate) {
   );
 }
 
+function escapeTelegramHtml(
+  value
+) {
+  return String(
+    value ?? ''
+  )
+    .replace(
+      /&/g,
+      '&amp;'
+    )
+    .replace(
+      /</g,
+      '&lt;'
+    )
+    .replace(
+      />/g,
+      '&gt;'
+    );
+}
+
 function debugCandidateText(r) {
   if (!r) return 'Nenhum candidato disponível.';
 
@@ -2302,13 +2322,18 @@ function debugCandidateText(r) {
 
   return (
     `${badge}` +
-    `<b>${r.symbol} ${r.side || ''}</b>\n` +
+    `<b>${escapeTelegramHtml(r.symbol)} ${escapeTelegramHtml(r.side || '')}</b>\n` +
     `⭐ Score: ${score}\n` +
     `📊 Volume relativo: ${vol}\n` +
     `📈 OI: ${oi}\n` +
     `💵 Volume 24h: ${formatMillions(r.quoteVolume)}\n` +
     `❌ Motivos:\n` +
-    reasons.map(x => `• ${x}`).join('\n')
+    reasons
+      .map(
+        x =>
+          `• ${escapeTelegramHtml(x)}`
+      )
+      .join('\n')
   );
 }
 
@@ -2395,7 +2420,9 @@ function lastScanDebugText() {
     lines.push('', '📋 <b>Outros rejeitados</b>');
     for (const r of rejected.slice(1, 4)) {
       const score = Number.isFinite(r.score) ? r.score : '—';
-      lines.push(`• ${r.symbol} — score ${score} — ${r.reason}`);
+      lines.push(
+        `• ${escapeTelegramHtml(r.symbol)} — score ${score} — ${escapeTelegramHtml(r.reason)}`
+      );
     }
   }
 
@@ -3183,7 +3210,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.7.0 QUALITY AGGRESSIVE</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.7.1 TELEGRAM SAFE</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o próximo lote agora\n' +
       '/scheduler — ver rotação automática de 1 minuto\n' +
@@ -3222,7 +3249,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.7.0 QUALITY AGGRESSIVE\n` +
+      `✅ Online — V1.7.1 TELEGRAM SAFE\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🛡 Modo: CONFIDENCE GUARD V1.5.9\n` +
       `🤖 APPROVE exige confidence válida; ausente/0% vira WAIT\n` +
@@ -3661,7 +3688,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.7.0-quality-aggressive',
+    version: '1.7.1-telegram-safe',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -3709,7 +3736,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.7.0 QUALITY AGGRESSIVE pronto ✅');
+console.log('Crypto Futures Scanner V1.7.1 TELEGRAM SAFE pronto ✅');
 
 // Em rolling deploy o processo antigo do Render pode permanecer vivo por
 // alguns segundos. Um pequeno atraso evita duas instâncias consumindo a

@@ -1918,13 +1918,13 @@ export async function scanMarket({
 
         if (!momentum.volumeOk) {
           missing.push(
-            `volume ${momentum.volumeRatio.toFixed(2)}x < ${minVolumeRatio.toFixed(2)}x`
+            `volume ${momentum.volumeRatio.toFixed(2)}x abaixo de ${minVolumeRatio.toFixed(2)}x`
           );
         }
 
         if (!momentum.oiOk) {
           missing.push(
-            `OI ${momentum.oiPct >= 0 ? '+' : ''}${momentum.oiPct.toFixed(2)}% < +${minOiPct.toFixed(2)}%`
+            `OI ${momentum.oiPct >= 0 ? '+' : ''}${momentum.oiPct.toFixed(2)}% abaixo de +${minOiPct.toFixed(2)}%`
           );
         }
 
@@ -2249,7 +2249,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.7.0: Quality Aggressive — momentum completo, anti-chase, BTC 1H+4H e Smart Stop. ` +
+    `<i>V1.7.1: Quality Aggressive + Telegram Safe; filtros e gestão preservados. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }
