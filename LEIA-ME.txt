@@ -1,61 +1,106 @@
-CRYPTO FUTURES SCANNER V1.7.1 — TELEGRAM SAFE
+CRYPTO FUTURES SCANNER V1.7.2 — STOP GAIN RUNNER
 
-CORREÇÃO
-A V1.7.0 podia concluir o scan normalmente e falhar apenas na hora
-de enviar a resposta ao Telegram.
+NOVA GESTÃO DE LUCRO
 
-Exemplo:
-Telegram 400
-Bad Request: can't parse entities
-Unsupported start tag
+A ideia é deixar o trade vencedor correr.
 
-CAUSA
-Os novos motivos do filtro Quality Aggressive podiam conter:
-volume 0.42x < 0.50x
-OI +0.20% < +0.50%
+PADRÃO:
+TP1:
+- realiza 30%
+- sobe o stop para breakeven líquido + custos/buffer
 
-Como o bot usa parse_mode=HTML, o Telegram interpreta "<" como
-início de uma tag HTML.
+TP2:
+- realiza mais 30%
+- sobe o stop para TP1
 
-CORRIGIDO EM DUAS CAMADAS
+TP3:
+- realiza 20%
+- NÃO encerra mais o trade
+- deixa 20% como RUNNER
+- sobe o stop para TP2
 
-1) FONTE
-Os motivos agora usam:
-"abaixo de"
-em vez do caractere "<".
+DEPOIS DO TP3
 
-Além disso os motivos dinâmicos exibidos em /scan e /debug
-são escapados para HTML seguro.
+O bot cria degraus virtuais:
 
-2) FALLBACK TELEGRAM
-Se qualquer mensagem futura ainda produzir:
-can't parse entities
-Unsupported start tag
-Unsupported end tag
+TP4 = TP3 + distância TP3↔TP2
+TP5 = TP4 + mesma distância
+TP6 = TP5 + mesma distância
+...
 
-o bot automaticamente tenta novamente em TEXTO PURO,
-sem parse_mode HTML.
+Para SHORT a lógica é invertida.
 
-Resultado:
-um problema de formatação não derruba mais o scan inteiro.
+Cada novo degrau sobe o STOP GAIN:
 
-IMPORTANTE
-NENHUMA REGRA DE TRADING FOI AFROUXADA.
+TP4 atingido -> stop vai para TP3
+TP5 atingido -> stop vai para TP4
+TP6 atingido -> stop vai para TP5
+...
 
-Mantido exatamente da V1.7.0:
+O runner só termina quando o STOP GAIN for atingido
+ou quando outra proteção/timeout encerrar a posição.
+
+EXEMPLO LONG
+
+Entrada 100
+TP1 101
+TP2 102
+TP3 103
+
+TP1 -> stop BE líquido
+TP2 -> stop 101
+TP3 -> stop 102 e deixa runner
+TP4 104 -> stop 103
+TP5 105 -> stop 104
+TP6 106 -> stop 105
+...
+
+Se voltar de 106 para 105:
+fecha o runner em STOP GAIN.
+
+REALIZAÇÕES
+30% TP1
+30% TP2
+20% TP3
+20% RUNNER
+
+NET R/R GUARD
+Continua ativo.
+
+A projeção de entrada é conservadora:
+para calcular R/R antes de abrir, o bot assume que,
+depois de alcançar TP3, o runner restante pode sair no stop TP2.
+
+Qualquer TP4, TP5, TP6... é tratado como ganho adicional.
+
+CANDLE AMBÍGUO
+O critério MODERADO continua funcionando.
+Se no mesmo candle houver STOP + próximo degrau,
+usa o fechamento para decidir o lado dominante.
+O novo stop só vale no candle seguinte.
+
+MANTIDO
 - Quality Aggressive
-- meta 8–12 trades/dia
-- cap 15
-- score mínimo 70
-- IA mínima 68%
+- meta 8–12 / cap 15
+- score 70+
+- IA 68%+
 - 1H obrigatório
-- edge 6
 - Momentum Bundle
 - Anti-chase
-- Regime BTC 1H+4H
+- regime BTC
 - Loss Brake
 - Stale inteligente
-- Smart Stop
+- Smart Stop 1.25–2 ATR
+- risco 0.75%
+- banca 50 USDC
+- margem 15%
+- 2x
 - Net R/R 1.50
+- Telegram Safe
 - HOLD AI
 - Gemini Rescue All
+
+ENV OPCIONAL
+PAPER_TRAILING_RUNNER_ENABLED=true
+PAPER_TP3_CLOSE_PCT=20
+PAPER_RUNNER_STEP_GAP_MULTIPLIER=1.00

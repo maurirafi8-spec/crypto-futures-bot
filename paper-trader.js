@@ -118,6 +118,20 @@ export function paperConfig() {
       String(process.env.PAPER_PROFIT_PROTECT_ENABLED || 'true')
         .toLowerCase() !== 'false',
 
+    // V1.7.2 STOP GAIN RUNNER
+    // TP1 e TP2 realizam 30% cada.
+    // No TP3 realiza apenas uma parte e deixa um runner aberto.
+    // O stop do runner sobe por degraus até ser atingido em lucro.
+    trailingRunnerEnabled:
+      String(process.env.PAPER_TRAILING_RUNNER_ENABLED || 'true')
+        .toLowerCase() !== 'false',
+
+    tp3ClosePct:
+      numEnv('PAPER_TP3_CLOSE_PCT', 20, 5, 35),
+
+    runnerStepGapMultiplier:
+      numEnv('PAPER_RUNNER_STEP_GAP_MULTIPLIER', 1.00, 0.50, 3.00),
+
     // V1.6.2:
     // buffer proporcional ao tamanho da posição, em vez de piso fixo em USDC.
     // 0.05% de um notional de 10 USDC = 0.005 USDC.
@@ -772,28 +786,79 @@ function projectedTradeEconomics({
     stopLeg.fee -
     entryFee;
 
-  const weights =
-    [0.30, 0.30, 0.40];
+  const tp1Weight =
+    0.30;
 
-  const targets =
-    [tp1, tp2, tp3];
+  const tp2Weight =
+    0.30;
+
+  const tp3Weight =
+    cfg.trailingRunnerEnabled
+      ? cfg.tp3ClosePct / 100
+      : 0.40;
+
+  const runnerWeight =
+    cfg.trailingRunnerEnabled
+      ? Math.max(
+          0,
+          1 -
+          tp1Weight -
+          tp2Weight -
+          tp3Weight
+        )
+      : 0;
+
+  const plannedLegs = [
+    {
+      reference: tp1,
+      weight: tp1Weight
+    },
+    {
+      reference: tp2,
+      weight: tp2Weight
+    },
+    {
+      reference: tp3,
+      weight: tp3Weight
+    }
+  ];
+
+  // Projeção conservadora:
+  // após TP3 o runner ganha stop em TP2.
+  // Para o Net R/R Guard, assume que o runner restante
+  // acaba saindo em TP2. Qualquer extensão TP4+ é bônus.
+  if (
+    cfg.trailingRunnerEnabled &&
+    runnerWeight > 0
+  ) {
+    plannedLegs.push({
+      reference: tp2,
+      weight: runnerWeight
+    });
+  }
 
   let targetGross = 0;
   let targetFees = 0;
 
   for (
-    let i = 0;
-    i < targets.length;
-    i += 1
+    const planned of
+    plannedLegs
   ) {
+    if (
+      !(planned.weight > 0)
+    ) {
+      continue;
+    }
+
     const leg =
       projectedExitLeg({
         side,
         entryFill,
         exitReference:
-          targets[i],
+          planned.reference,
         qty:
-          qty * weights[i]
+          qty *
+          planned.weight
       });
 
     targetGross +=
@@ -1361,6 +1426,31 @@ export function maybeOpenPaperPosition(signal) {
       originalTp3:
         originalLevels.tp3,
 
+      trailingRunnerEnabled:
+        cfg.trailingRunnerEnabled,
+      tp3ClosePct:
+        cfg.tp3ClosePct,
+      runnerPct:
+        cfg.trailingRunnerEnabled
+          ? Math.max(
+              0,
+              40 -
+              cfg.tp3ClosePct
+            )
+          : 0,
+      runnerStepGapMultiplier:
+        cfg.runnerStepGapMultiplier,
+      runnerActive:
+        false,
+      runnerTrailStage:
+        3,
+      runnerLastTrigger:
+        null,
+      runnerNextTrigger:
+        null,
+      runnerStepDistance:
+        null,
+
       stage: 0,
       realizedGrossPnl: 0,
       exitFees: 0,
@@ -1436,8 +1526,10 @@ export function maybeOpenPaperPosition(signal) {
         `${position.targetsAutoAdjusted ? `🧮 TPs autoajustados: x${position.targetScale.toFixed(2)} para respeitar R/R líquido\n` : ''}` +
         `📦 Notional: ${notional.toFixed(2)} USDC · Margem: ${margin.toFixed(2)} USDC · ${cfg.leverage}x\n` +
         `🛑 Risco líquido projetado no STOP: -${position.projectedStopLossUsdc.toFixed(3)} USDC\n` +
-        `🏆 Lucro líquido projetado TP1+TP2+TP3: +${position.projectedFullTpNetUsdc.toFixed(3)} USDC\n` +
+        `🏆 Lucro líquido projetado TP ladder: +${position.projectedFullTpNetUsdc.toFixed(3)} USDC\n` +
         `⚖️ R/R líquido projetado: ${Number(position.projectedNetRR).toFixed(2)} · mínimo ${cfg.minNetRR.toFixed(2)}\n` +
+        `${cfg.trailingRunnerEnabled ? `🪜 Stop Gain: TP1→BE líquido · TP2→TP1 · TP3→TP2 · depois runner sobe por degraus\n` : ''}` +
+        `${cfg.trailingRunnerEnabled ? `🏃 Saídas: 30% / 30% / ${cfg.tp3ClosePct.toFixed(0)}% · runner ${Math.max(0, 40 - cfg.tp3ClosePct).toFixed(0)}%\n` : ''}` +
         `🎚 Teto de risco da banca: ${riskBudget.toFixed(3)} USDC (${cfg.riskPct.toFixed(2)}%)\n` +
         `💸 Taxa de entrada simulada: ${entryFee.toFixed(4)} USDC`
     };
@@ -1779,6 +1871,156 @@ function moreProtectiveStop(
   );
 }
 
+
+function clampBetween(
+  value,
+  a,
+  b
+) {
+  const low =
+    Math.min(
+      Number(a),
+      Number(b)
+    );
+
+  const high =
+    Math.max(
+      Number(a),
+      Number(b)
+    );
+
+  return Math.min(
+    high,
+    Math.max(
+      low,
+      Number(value)
+    )
+  );
+}
+
+function runnerAdvance(
+  position,
+  price
+) {
+  const step =
+    Number(
+      position.runnerStepDistance ||
+      0
+    );
+
+  if (!(step > 0)) {
+    return null;
+  }
+
+  return position.side === 'LONG'
+    ? Number(price) + step
+    : Number(price) - step;
+}
+
+function setupRunnerAfterTp3(
+  position
+) {
+  const cfg =
+    paperConfig();
+
+  if (
+    !cfg.trailingRunnerEnabled ||
+    !(position.remainingQty > 0)
+  ) {
+    return false;
+  }
+
+  const gap32 =
+    Math.abs(
+      Number(position.tp3) -
+      Number(position.tp2)
+    );
+
+  const gap21 =
+    Math.abs(
+      Number(position.tp2) -
+      Number(position.tp1)
+    );
+
+  const initialRisk =
+    Math.abs(
+      Number(position.entryFill) -
+      Number(position.stopInitial)
+    );
+
+  const baseStep =
+    gap32 > 0
+      ? gap32
+      : gap21 > 0
+        ? gap21
+        : initialRisk > 0
+          ? initialRisk * 0.70
+          : 0;
+
+  if (!(baseStep > 0)) {
+    return false;
+  }
+
+  position.runnerActive =
+    true;
+
+  position.runnerTrailStage =
+    3;
+
+  position.runnerLastTrigger =
+    Number(position.tp3);
+
+  position.runnerStepDistance =
+    baseStep *
+    cfg.runnerStepGapMultiplier;
+
+  position.runnerNextTrigger =
+    runnerAdvance(
+      position,
+      position.runnerLastTrigger
+    );
+
+  return (
+    Number.isFinite(
+      position.runnerNextTrigger
+    )
+  );
+}
+
+function runnerMessage(
+  position,
+  leg
+) {
+  return (
+    `🏃 <b>PAPER ${position.symbol} ${position.side}</b> — TP3 + RUNNER\\n` +
+    `Fechou ${round(leg.qty, 8)} unidade(s) @ ${round(leg.exitFill)}\\n` +
+    `PnL líquido desta perna: ${leg.netPnl >= 0 ? '+' : ''}${leg.netPnl.toFixed(2)} USDC\\n` +
+    `📦 Runner restante: ${(position.remainingQty / position.initialQty * 100).toFixed(0)}%\\n` +
+    `🛡 Stop Gain: ${round(position.stopCurrent)}\\n` +
+    `🎯 Próximo degrau TP${position.runnerTrailStage + 1}: ${round(position.runnerNextTrigger)}`
+  );
+}
+
+function runnerStepMessage(
+  position,
+  fromStage,
+  toStage,
+  oldStop
+) {
+  const crossed =
+    toStage > fromStage
+      ? `TP${fromStage + 1}→TP${toStage}`
+      : `TP${toStage}`;
+
+  return (
+    `🪜 <b>STOP GAIN SUBIU</b> — ${position.symbol} ${position.side}\\n` +
+    `🎯 Degrau(s): ${crossed}\\n` +
+    `🛡 Stop: ${round(oldStop)} → <b>${round(position.stopCurrent)}</b>\\n` +
+    `🏃 Runner: ${(position.remainingQty / position.initialQty * 100).toFixed(0)}% restante\\n` +
+    `➡️ Próximo TP${position.runnerTrailStage + 1}: ${round(position.runnerNextTrigger)}`
+  );
+}
+
 function partialMessage(position, leg, levelName) {
   return (
     `🎯 <b>PAPER ${position.symbol} ${position.side}</b> — ${levelName}\n` +
@@ -2018,7 +2260,12 @@ function updateOnePosition(position, snap) {
         ? position.tp2
         : position.stage === 2
           ? position.tp3
-          : null;
+          : (
+            position.stage >= 3 &&
+            position.runnerActive
+          )
+            ? position.runnerNextTrigger
+            : null;
 
   const stopHit =
     hitStop(
@@ -2076,9 +2323,12 @@ function updateOnePosition(position, snap) {
     !moderateConflictTargetFirst
   ) {
     const outcome =
-      position.stage > 0
-        ? `STOP após TP${position.stage}`
-        : 'STOP';
+      position.runnerActive &&
+      position.stage >= 3
+        ? `STOP GAIN RUNNER após TP${position.runnerTrailStage || 3}`
+        : position.stage > 0
+          ? `STOP após TP${position.stage}`
+          : 'STOP';
 
     const result =
       closeRemainingAt(
@@ -2218,6 +2468,85 @@ function updateOnePosition(position, snap) {
     position.stage < 3 &&
     hitLevel(position, high, low, position.tp3)
   ) {
+    const cfgNow =
+      paperConfig();
+
+    if (
+      cfgNow.trailingRunnerEnabled
+    ) {
+      const qty =
+        position.initialQty *
+        cfgNow.tp3ClosePct /
+        100;
+
+      const leg =
+        closeQty(
+          position,
+          qty,
+          position.tp3,
+          'TP3'
+        );
+
+      position.stage = 3;
+
+      // TP3 sobe o stop para TP2.
+      // O cost protect continua como piso líquido.
+      const targetNetUsdc =
+        profitProtectTargetNet(
+          position
+        );
+
+      const costProtectedStop =
+        profitProtectStopReference(
+          position,
+          targetNetUsdc
+        );
+
+      const desiredStop =
+        moreProtectiveStop(
+          position,
+          position.tp2,
+          costProtectedStop
+        );
+
+      position.stopCurrent =
+        clampBetween(
+          desiredStop,
+          position.tp2,
+          position.tp3
+        );
+
+      const runnerReady =
+        setupRunnerAfterTp3(
+          position
+        );
+
+      if (
+        leg &&
+        runnerReady
+      ) {
+        events.push(
+          runnerMessage(
+            position,
+            leg
+          )
+        );
+      } else if (leg) {
+        events.push(
+          partialMessage(
+            position,
+            leg,
+            `TP3 (${cfgNow.tp3ClosePct.toFixed(0)}%)`
+          )
+        );
+      }
+
+      // O stop novo só passa a valer a partir do próximo candle.
+      updateDrawdown();
+      saveState();
+      return events;
+    }
+
     const leg =
       closeQty(
         position,
@@ -2246,6 +2575,105 @@ function updateOnePosition(position, snap) {
       positionCloseMessage(closed)
     );
 
+    return events;
+  }
+
+  // RUNNER pós-TP3:
+  // cada novo degrau favorável move o stop para o degrau anterior.
+  // Exemplo:
+  // TP3 atingido -> stop TP2
+  // TP4 atingido -> stop TP3
+  // TP5 atingido -> stop TP4
+  // ... até o stop gain ser acionado.
+  if (
+    position.remainingQty > 0 &&
+    position.stage >= 3 &&
+    position.runnerActive &&
+    Number.isFinite(
+      Number(position.runnerNextTrigger)
+    ) &&
+    hitLevel(
+      position,
+      high,
+      low,
+      position.runnerNextTrigger
+    )
+  ) {
+    const fromStage =
+      Number(
+        position.runnerTrailStage ||
+        3
+      );
+
+    const oldStop =
+      Number(position.stopCurrent);
+
+    let loops = 0;
+
+    while (
+      loops < 20 &&
+      Number.isFinite(
+        Number(position.runnerNextTrigger)
+      ) &&
+      hitLevel(
+        position,
+        high,
+        low,
+        position.runnerNextTrigger
+      )
+    ) {
+      const reached =
+        Number(
+          position.runnerNextTrigger
+        );
+
+      const stopCandidate =
+        Number(
+          position.runnerLastTrigger
+        );
+
+      if (
+        Number.isFinite(
+          stopCandidate
+        )
+      ) {
+        position.stopCurrent =
+          moreProtectiveStop(
+            position,
+            position.stopCurrent,
+            stopCandidate
+          );
+      }
+
+      position.runnerTrailStage =
+        Number(
+          position.runnerTrailStage ||
+          3
+        ) + 1;
+
+      position.runnerLastTrigger =
+        reached;
+
+      position.runnerNextTrigger =
+        runnerAdvance(
+          position,
+          reached
+        );
+
+      loops += 1;
+    }
+
+    events.push(
+      runnerStepMessage(
+        position,
+        fromStage,
+        position.runnerTrailStage,
+        oldStop
+      )
+    );
+
+    updateDrawdown();
+    saveState();
     return events;
   }
 
@@ -2457,7 +2885,7 @@ export function paperStatusText() {
       : null;
 
   return [
-    '🎯 <b>PAPER TRADING — V1.7.0 QUALITY AGGRESSIVE</b>',
+    '🪜 <b>PAPER TRADING — V1.7.2 STOP GAIN RUNNER</b>',
     '',
     `Status: ${cfg.enabled ? '✅ ATIVO' : '⛔ DESATIVADO'} · ${state.paused ? '⏸ PAUSADO' : '▶️ RODANDO'}`,
     `💰 Banca inicial: ${state.startingBalance.toFixed(2)} USDC`,
@@ -2477,6 +2905,7 @@ export function paperStatusText() {
     `⚡ Scalp: ${cfg.scalpMode ? 'ATIVO' : 'INATIVO'} · stale inteligente ${cfg.scalpStaleMin}→${cfg.scalpStaleMaxMin} min · máx ${cfg.maxHoldHours}h`,
     `🧠 Smart Stop: estrutura 5m + ATR · alvo 1.25–2.00 ATR`,
     `🛡 Profit Protect: ${cfg.profitProtectEnabled ? 'ATIVO' : 'INATIVO'} · buffer ${cfg.profitProtectBufferPctNotional.toFixed(2)}% do notional`,
+    `🪜 Stop Gain Runner: ${cfg.trailingRunnerEnabled ? 'ATIVO' : 'INATIVO'} · TP3 fecha ${cfg.tp3ClosePct.toFixed(0)}% · runner ${Math.max(0, 40 - cfg.tp3ClosePct).toFixed(0)}%`,
     `⚖️ Candle STOP+TP: critério MODERADO`,
     `🧮 Net R/R Guard: ${cfg.netRrGuardEnabled ? 'ATIVO' : 'INATIVO'} · mínimo ${cfg.minNetRR.toFixed(2)}x`,
     `🎯 Autoajuste TPs: ${cfg.autoAdjustTargets ? 'ATIVO' : 'INATIVO'} · máximo x${cfg.maxTargetScale.toFixed(2)}`,
@@ -2524,13 +2953,15 @@ export function paperPositionsText() {
       p.remainingQty;
 
     lines.push(
-      `${p.side === 'LONG' ? '🟢' : '🔴'} <b>${p.symbol} ${p.side}</b> · TP estágio ${p.stage}/3\n` +
+      `${p.side === 'LONG' ? '🟢' : '🔴'} <b>${p.symbol} ${p.side}</b> · ` +
+      `${p.runnerActive ? `🏃 RUNNER TP${p.runnerTrailStage || 3}` : `TP estágio ${p.stage}/3`}\n` +
       `🤖 IA ${Math.round(p.aiConfidence)}% · ⭐ ${p.score}\n` +
       `Entrada ${round(p.entryFill)} · Mark ${round(mark)}\n` +
       `Stop atual ${round(p.stopCurrent)}\n` +
       `TP1 ${round(p.tp1)} · TP2 ${round(p.tp2)} · TP3 ${round(p.tp3)}\n` +
+      `${p.runnerActive ? `➡️ Próximo TP${(p.runnerTrailStage || 3) + 1}: ${round(p.runnerNextTrigger)}\n` : ''}` +
       `⚖️ R/R líquido projetado ${Number(p.projectedNetRR || 0).toFixed(2)} · ` +
-      `STOP -${Number(p.projectedStopLossUsdc || 0).toFixed(3)} / TP total +${Number(p.projectedFullTpNetUsdc || 0).toFixed(3)} USDC\n` +
+      `STOP -${Number(p.projectedStopLossUsdc || 0).toFixed(3)} / ladder +${Number(p.projectedFullTpNetUsdc || 0).toFixed(3)} USDC\n` +
       `📦 Restante ${(p.remainingQty / p.initialQty * 100).toFixed(0)}% · ` +
       `PnL não realizado ${unrealized >= 0 ? '+' : ''}${unrealized.toFixed(2)} USDC`
     );

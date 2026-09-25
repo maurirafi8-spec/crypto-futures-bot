@@ -2249,7 +2249,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.7.1: Quality Aggressive + Telegram Safe; filtros e gestão preservados. ` +
+    `<i>V1.7.2: Quality Aggressive + Smart Stop + Stop Gain Runner. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }
