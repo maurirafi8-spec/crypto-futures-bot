@@ -809,12 +809,488 @@ function confirmationStatus(
 }
 
 
+
+function oiChangePct(
+  history,
+  barsBack = 2
+) {
+  if (
+    !Array.isArray(history) ||
+    history.length < 2
+  ) {
+    return 0;
+  }
+
+  const end =
+    Number(
+      last(history)?.c
+    );
+
+  const startIndex =
+    Math.max(
+      0,
+      history.length -
+      1 -
+      barsBack
+    );
+
+  const start =
+    Number(
+      history[startIndex]?.c
+    );
+
+  if (
+    !Number.isFinite(start) ||
+    !Number.isFinite(end) ||
+    start === 0
+  ) {
+    return 0;
+  }
+
+  return pctChange(
+    start,
+    end
+  );
+}
+
+function contextualOiStatus({
+  side,
+  c15,
+  oiHistory,
+  pullback,
+  minOiPct = 0.08,
+  minPricePct = 0.03
+}) {
+  const oiPct =
+    oiChangePct(
+      oiHistory,
+      2
+    );
+
+  const priceNow =
+    Number(
+      last(c15)?.close
+    );
+
+  const ref =
+    c15?.[
+      Math.max(
+        0,
+        c15.length - 3
+      )
+    ];
+
+  const priceThen =
+    Number(
+      ref?.close
+    );
+
+  const pricePct =
+    Number.isFinite(priceNow) &&
+    Number.isFinite(priceThen) &&
+    priceThen !== 0
+      ? pctChange(
+          priceThen,
+          priceNow
+        )
+      : 0;
+
+  const oiRising =
+    oiPct >=
+    minOiPct;
+
+  const oiFalling =
+    oiPct <=
+    -minOiPct;
+
+  const alignedPrice =
+    side === 'LONG'
+      ? pricePct >=
+        minPricePct
+      : side === 'SHORT'
+        ? pricePct <=
+          -minPricePct
+        : false;
+
+  const oppositePrice =
+    side === 'LONG'
+      ? pricePct <=
+        -0.15
+      : side === 'SHORT'
+        ? pricePct >=
+          0.15
+        : false;
+
+  const neutralPrice =
+    !alignedPrice &&
+    !oppositePrice;
+
+  let regime =
+    'NEUTRAL';
+
+  if (
+    oiRising &&
+    pricePct >=
+      minPricePct
+  ) {
+    regime =
+      'LONG_BUILDUP';
+  } else if (
+    oiRising &&
+    pricePct <=
+      -minPricePct
+  ) {
+    regime =
+      'SHORT_BUILDUP';
+  } else if (
+    oiFalling &&
+    pricePct >=
+      minPricePct
+  ) {
+    regime =
+      'SHORT_COVERING';
+  } else if (
+    oiFalling &&
+    pricePct <=
+      -minPricePct
+  ) {
+    regime =
+      'LONG_UNWIND';
+  } else if (oiRising) {
+    regime =
+      'OI_BUILDUP_NEUTRAL_PRICE';
+  } else if (oiFalling) {
+    regime =
+      'OI_UNWIND_NEUTRAL_PRICE';
+  }
+
+  // Se o preço de 30m está quase neutro, um pullback+trigger
+  // recém confirmado pode validar o OI crescente.
+  const pullbackReload =
+    oiRising &&
+    neutralPrice &&
+    Boolean(
+      pullback?.confirmed
+    );
+
+  const confirmed =
+    oiRising &&
+    (
+      alignedPrice ||
+      pullbackReload
+    ) &&
+    !oppositePrice;
+
+  return {
+    confirmed,
+    regime,
+    oiPct,
+    pricePct,
+    oiRising,
+    oiFalling,
+    alignedPrice,
+    oppositePrice,
+    pullbackReload
+  };
+}
+
+function pullbackTriggerStatus({
+  side,
+  t5,
+  t15,
+  t1h,
+  candles5m = [],
+  lookback = 7,
+  touchAtr = 0.35,
+  minBodyAtr = 0.12
+}) {
+  const atrValue =
+    Math.max(
+      finiteNumber(
+        t5?.atr,
+        0
+      ),
+      finiteNumber(
+        t5?.price,
+        0
+      ) *
+        0.001
+    );
+
+  const ema20 =
+    finiteNumber(
+      t5?.ema20,
+      0
+    );
+
+  const ema50 =
+    finiteNumber(
+      t5?.ema50,
+      ema20
+    );
+
+  const price =
+    finiteNumber(
+      t5?.price,
+      0
+    );
+
+  const trend15 =
+    directionalStructure(
+      t15
+    );
+
+  const trend1h =
+    directionalStructure(
+      t1h
+    );
+
+  const structure15Ok =
+    trend15 === side;
+
+  const structure1hOk =
+    trend1h === side;
+
+  if (
+    !Array.isArray(candles5m) ||
+    candles5m.length <
+      lookback + 1 ||
+    atrValue <= 0 ||
+    price <= 0 ||
+    ema20 <= 0
+  ) {
+    return {
+      confirmed: false,
+      pullbackFound: false,
+      triggerOk: false,
+      structure15Ok,
+      structure1hOk,
+      trend15,
+      trend1h,
+      bodyAtr: 0,
+      distanceAtr: 99,
+      closeLocation: 0,
+      reason:
+        'histórico insuficiente para pullback'
+    };
+  }
+
+  const trigger =
+    last(candles5m);
+
+  const prior =
+    candles5m.slice(
+      -(lookback + 1),
+      -1
+    );
+
+  const zoneLow =
+    Math.min(
+      ema20,
+      ema50
+    ) -
+    atrValue *
+      0.55;
+
+  const zoneHigh =
+    Math.max(
+      ema20,
+      ema50
+    ) +
+    atrValue *
+      touchAtr;
+
+  const pullbackFound =
+    side === 'LONG'
+      ? prior.some(
+          c =>
+            Number(c.low) <=
+              zoneHigh &&
+            Number(c.low) >=
+              zoneLow
+        )
+      : side === 'SHORT'
+        ? prior.some(
+            c =>
+              Number(c.high) >=
+                (
+                  Math.min(
+                    ema20,
+                    ema50
+                  ) -
+                  atrValue *
+                    touchAtr
+                ) &&
+              Number(c.high) <=
+                (
+                  Math.max(
+                    ema20,
+                    ema50
+                  ) +
+                  atrValue *
+                    0.55
+                )
+          )
+        : false;
+
+  const open =
+    Number(
+      trigger.open
+    );
+
+  const close =
+    Number(
+      trigger.close
+    );
+
+  const high =
+    Number(
+      trigger.high
+    );
+
+  const low =
+    Number(
+      trigger.low
+    );
+
+  const range =
+    Math.max(
+      high - low,
+      atrValue *
+        0.05
+    );
+
+  const body =
+    Math.abs(
+      close - open
+    );
+
+  const bodyAtr =
+    body /
+    atrValue;
+
+  const closeLocation =
+    (
+      close - low
+    ) /
+    range;
+
+  const bullishTrigger =
+    close > open &&
+    close > ema20 &&
+    bodyAtr >=
+      minBodyAtr &&
+    closeLocation >=
+      0.60;
+
+  const bearishTrigger =
+    close < open &&
+    close < ema20 &&
+    bodyAtr >=
+      minBodyAtr &&
+    closeLocation <=
+      0.40;
+
+  const distanceAtr =
+    Math.abs(
+      close - ema20
+    ) /
+    atrValue;
+
+  const notExtended =
+    distanceAtr <=
+    0.95;
+
+  const triggerOk =
+    side === 'LONG'
+      ? bullishTrigger &&
+        notExtended
+      : side === 'SHORT'
+        ? bearishTrigger &&
+          notExtended
+        : false;
+
+  const confirmed =
+    structure15Ok &&
+    structure1hOk &&
+    pullbackFound &&
+    triggerOk;
+
+  const reason =
+    !structure1hOk
+      ? `1H ${trend1h} não confirma ${side}`
+      : !structure15Ok
+        ? `15m ${trend15} não confirma ${side}`
+        : !pullbackFound
+          ? `sem pullback/reteste EMA20-EMA50 nos últimos ${lookback} candles`
+          : !triggerOk
+            ? `pullback ocorreu, mas trigger 5m ainda não confirmou (corpo ${bodyAtr.toFixed(2)} ATR; distância ${distanceAtr.toFixed(2)} ATR)`
+            : `trend 1H+15m + pullback + trigger 5m confirmados`;
+
+  return {
+    confirmed,
+    pullbackFound,
+    triggerOk,
+    structure15Ok,
+    structure1hOk,
+    trend15,
+    trend1h,
+    bodyAtr,
+    distanceAtr,
+    closeLocation,
+    reason
+  };
+}
+
+export function pullbackEnginePreview({
+  side,
+  t5,
+  t15,
+  t1h,
+  candles5m,
+  oiHistory = [],
+  c15 = [],
+  lookback = 7,
+  touchAtr = 0.35,
+  minBodyAtr = 0.12,
+  minOiPct = 0.08,
+  minPricePct = 0.03
+}) {
+  const pullback =
+    pullbackTriggerStatus({
+      side,
+      t5,
+      t15,
+      t1h,
+      candles5m,
+      lookback,
+      touchAtr,
+      minBodyAtr
+    });
+
+  const oiContext =
+    contextualOiStatus({
+      side,
+      c15,
+      oiHistory,
+      pullback,
+      minOiPct,
+      minPricePct
+    });
+
+  return {
+    pullback,
+    oiContext
+  };
+}
+
 function momentumBundleStatus(
   side,
   t5,
   oiPct,
   minVolumeRatio,
-  minOiPct
+  minOiPct,
+  oiContext = null
 ) {
   const volumeRatio =
     finiteNumber(t5?.volumeRatio, 0);
@@ -829,7 +1305,12 @@ function momentumBundleStatus(
     volumeRatio >= minVolumeRatio;
 
   const oiOk =
-    oi >= minOiPct;
+    oiContext
+      ? Boolean(
+          oiContext.confirmed
+        )
+      : oi >=
+        minOiPct;
 
   const macdOk =
     side === 'LONG'
@@ -1554,7 +2035,14 @@ export async function scanMarket({
   require1hConfirmation = true,
   requireMomentumBundle = true,
   antiChaseEnabled = true,
-  btcRegimeGuardEnabled = true
+  btcRegimeGuardEnabled = true,
+  requirePullbackTrigger = true,
+  requireContextualOi = true,
+  pullbackLookback = 7,
+  pullbackTouchAtr = 0.35,
+  triggerMinBodyAtr = 0.12,
+  contextualOiMinPct = 0.08,
+  contextualPriceMinPct = 0.03
 } = {}) {
   const [marketList, exchangeList] = await Promise.all([
     futureMarkets(),
@@ -1710,20 +2198,41 @@ export async function scanMarket({
         M15_MS,
         nowMs
       );
-      let oiPct = 0;
+
+      let oiLongPct = 0;
 
       if (oi.length >= 2) {
-        const firstOi = Number(oi[0].c);
-        const lastOi = Number(last(oi).c);
+        const firstOi =
+          Number(
+            oi[0].c
+          );
+
+        const lastOi =
+          Number(
+            last(oi).c
+          );
 
         if (
           Number.isFinite(firstOi) &&
           Number.isFinite(lastOi) &&
           firstOi !== 0
         ) {
-          oiPct = pctChange(firstOi, lastOi);
+          oiLongPct =
+            pctChange(
+              firstOi,
+              lastOi
+            );
         }
       }
+
+      // V1.7.3:
+      // oiPct passa a refletir a janela recente (~30m)
+      // em vez de misturar toda a janela de ~6h.
+      const oiPct =
+        oiChangePct(
+          oi,
+          2
+        );
 
       const t5 = analyzeTf(c5);
       const t15 = analyzeTf(c15);
@@ -1815,13 +2324,55 @@ export async function scanMarket({
         sig.side === 'LONG' ||
         sig.side === 'SHORT';
 
+      const pullback =
+        pullbackTriggerStatus({
+          side:
+            sig.side,
+          t5,
+          t15,
+          t1h,
+          candles5m:
+            c5,
+          lookback:
+            pullbackLookback,
+          touchAtr:
+            pullbackTouchAtr,
+          minBodyAtr:
+            triggerMinBodyAtr
+        });
+
+      const pullbackTriggerOk =
+        !requirePullbackTrigger ||
+        pullback.confirmed;
+
+      const oiContext =
+        contextualOiStatus({
+          side:
+            sig.side,
+          c15,
+          oiHistory:
+            oi,
+          pullback,
+          minOiPct:
+            contextualOiMinPct,
+          minPricePct:
+            contextualPriceMinPct
+        });
+
+      const contextualOiOk =
+        !requireContextualOi ||
+        oiContext.confirmed;
+
       const momentum =
         momentumBundleStatus(
           sig.side,
           t5,
           oiPct,
           minVolumeRatio,
-          minOiPct
+          minOiPct,
+          requireContextualOi
+            ? oiContext
+            : null
         );
 
       const momentumOk =
@@ -1868,6 +2419,8 @@ export async function scanMarket({
         directionEdgeOk &&
         oneHourConfirmationOk &&
         momentumOk &&
+        pullbackTriggerOk &&
+        contextualOiOk &&
         antiChaseOk &&
         btcRegimeOk;
 
@@ -1940,6 +2493,24 @@ export async function scanMarket({
       }
 
       if (
+        requirePullbackTrigger &&
+        !pullback.confirmed
+      ) {
+        rejectionReasons.push(
+          `Pullback Engine: ${pullback.reason}`
+        );
+      }
+
+      if (
+        requireContextualOi &&
+        !oiContext.confirmed
+      ) {
+        rejectionReasons.push(
+          `OI contextual: ${oiContext.regime} · OI ${oiContext.oiPct >= 0 ? '+' : ''}${oiContext.oiPct.toFixed(2)}% · preço30m ${oiContext.pricePct >= 0 ? '+' : ''}${oiContext.pricePct.toFixed(2)}% não confirma ${sig.side}`
+        );
+      }
+
+      if (
         antiChaseEnabled &&
         !antiChase.ok
       ) {
@@ -2008,6 +2579,9 @@ export async function scanMarket({
         btcContextUsed:
           btcContextForScore,
         momentum,
+        pullback,
+        oiContext,
+        oiLongPct,
         antiChase,
         btcRegime,
         candlePolicy: 'CLOSED_ONLY',
@@ -2028,6 +2602,8 @@ export async function scanMarket({
           directionEdgeOk,
           oneHourConfirmationOk,
           momentumOk,
+          pullbackTriggerOk,
+          contextualOiOk,
           antiChaseOk,
           btcRegimeOk,
           mathApproved
@@ -2212,7 +2788,9 @@ export function signalText(s) {
     `${s.btcScoreAdjustment ? `₿ Ajuste BTC: ${s.btcScoreAdjustment > 0 ? '+' : ''}${s.btcScoreAdjustment}\n` : ''}` +
     `💪 Força: <b>${signalStrength(s.score)}</b>\n` +
     `🔎 Confirmação: <b>${s.confirmation.label}</b>\n` +
-    `${s.momentum ? `🚦 Momentum: ${s.momentum.confirmed ? 'OK' : 'FALHOU'} · Vol ${fmt(s.momentum.volumeRatio, 2)}x · OI ${s.momentum.oiPct >= 0 ? '+' : ''}${fmt(s.momentum.oiPct, 2)}% · MACD ${s.momentum.macdOk ? 'OK' : 'NÃO'}\n` : ''}` +
+    `${s.pullback ? `↩️ Pullback: ${s.pullback.confirmed ? 'CONFIRMADO' : 'AGUARDANDO'} · ${s.pullback.reason}\n` : ''}` +
+    `${s.oiContext ? `📈 OI contextual: ${s.oiContext.regime} · OI ${s.oiContext.oiPct >= 0 ? '+' : ''}${fmt(s.oiContext.oiPct, 2)}% · preço30m ${s.oiContext.pricePct >= 0 ? '+' : ''}${fmt(s.oiContext.pricePct, 2)}%\n` : ''}` +
+    `${s.momentum ? `🚦 Momentum: ${s.momentum.confirmed ? 'OK' : 'FALHOU'} · Vol ${fmt(s.momentum.volumeRatio, 2)}x · MACD ${s.momentum.macdOk ? 'OK' : 'NÃO'}\n` : ''}` +
     `${s.antiChase ? `🛑 Anti-chase: ${s.antiChase.ok ? 'OK' : 'BLOQUEIO'} · ${s.antiChase.reason}\n` : ''}` +
     `${s.btcRegime ? `₿ Regime BTC 1H+4H: ${s.btcRegime.regime}${s.btcRegime.exceptional ? ' · EXCEÇÃO FORTE' : ''}\n` : ''}` +
     (s.ai
@@ -2249,7 +2827,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.7.2: Quality Aggressive + Smart Stop + Stop Gain Runner. ` +
+    `<i>V1.7.3: Trend 1H + estrutura 15m + Pullback/Trigger 5m + OI contextual. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

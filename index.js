@@ -70,7 +70,7 @@ const cfg = {
   minVolume: Number(process.env.MIN_QUOTE_VOLUME_USDT || 20_000_000),
   cooldownMin: Number(process.env.COOLDOWN_MINUTES || 90),
   minVolumeRatio: Number(process.env.V122_VOLUME_CONFIRM_RATIO || 0.50),
-  minOiPct: Number(process.env.V122_OI_CONFIRM_PCT || 0.50),
+  minOiPct: Number(process.env.V122_OI_CONFIRM_PCT || 0.10),
   hardMinVolumeRatio: Number(process.env.V122_HARD_MIN_VOLUME_RATIO || 0.40),
   oiRejectPct: Number(process.env.V122_OI_REJECT_PCT || -1.00),
   exceptionScore: Number(process.env.V122_EXCEPTION_SCORE || 85),
@@ -99,6 +99,61 @@ const cfg = {
     String(
       process.env.QUALITY_BTC_REGIME_GUARD || 'true'
     ).toLowerCase() !== 'false',
+
+  requirePullbackTrigger:
+    String(
+      process.env.QUALITY_REQUIRE_PULLBACK_TRIGGER || 'true'
+    ).toLowerCase() !== 'false',
+
+  requireContextualOi:
+    String(
+      process.env.QUALITY_REQUIRE_CONTEXTUAL_OI || 'true'
+    ).toLowerCase() !== 'false',
+
+  pullbackLookback:
+    Math.max(
+      4,
+      Math.min(
+        12,
+        Number(process.env.QUALITY_PULLBACK_LOOKBACK || 7)
+      )
+    ),
+
+  pullbackTouchAtr:
+    Math.max(
+      0.10,
+      Math.min(
+        1.00,
+        Number(process.env.QUALITY_PULLBACK_TOUCH_ATR || 0.35)
+      )
+    ),
+
+  triggerMinBodyAtr:
+    Math.max(
+      0.05,
+      Math.min(
+        1.00,
+        Number(process.env.QUALITY_TRIGGER_MIN_BODY_ATR || 0.12)
+      )
+    ),
+
+  contextualOiMinPct:
+    Math.max(
+      0,
+      Math.min(
+        2,
+        Number(process.env.QUALITY_CONTEXT_OI_MIN_PCT || 0.08)
+      )
+    ),
+
+  contextualPriceMinPct:
+    Math.max(
+      0,
+      Math.min(
+        1,
+        Number(process.env.QUALITY_CONTEXT_PRICE_MIN_PCT || 0.03)
+      )
+    ),
 
   aiEnabled: String(process.env.AI_ENABLED || 'true').toLowerCase() !== 'false',
   aiMinConfidence: Number(process.env.AI_MIN_CONFIDENCE || 68),
@@ -2961,7 +3016,14 @@ async function doScan({
       require1hConfirmation: cfg.require1hConfirmation,
       requireMomentumBundle: cfg.requireMomentumBundle,
       antiChaseEnabled: cfg.antiChaseEnabled,
-      btcRegimeGuardEnabled: cfg.btcRegimeGuardEnabled
+      btcRegimeGuardEnabled: cfg.btcRegimeGuardEnabled,
+      requirePullbackTrigger: cfg.requirePullbackTrigger,
+      requireContextualOi: cfg.requireContextualOi,
+      pullbackLookback: cfg.pullbackLookback,
+      pullbackTouchAtr: cfg.pullbackTouchAtr,
+      triggerMinBodyAtr: cfg.triggerMinBodyAtr,
+      contextualOiMinPct: cfg.contextualOiMinPct,
+      contextualPriceMinPct: cfg.contextualPriceMinPct
     });
 
     // Atualiza primeiro as posições paper usando somente candle fechado.
@@ -3210,7 +3272,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.7.2 STOP GAIN RUNNER</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.7.3 PULLBACK ENGINE</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o próximo lote agora\n' +
       '/scheduler — ver rotação automática de 1 minuto\n' +
@@ -3249,7 +3311,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.7.2 STOP GAIN RUNNER\n` +
+      `✅ Online — V1.7.3 PULLBACK ENGINE\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🛡 Modo: CONFIDENCE GUARD V1.5.9\n` +
       `🤖 APPROVE exige confidence válida; ausente/0% vira WAIT\n` +
@@ -3269,7 +3331,10 @@ async function handleMessage(msg) {
       `⚖️ Direction Balance: ATIVO · LONG/SHORT simétricos\n` +
       `↔️ Edge direcional mínimo: ${cfg.minDirectionEdge} pontos\n` +
       `🕐 Confirmação 1H: ${cfg.require1hConfirmation ? 'OBRIGATÓRIA' : 'FLEXÍVEL'}\n` +
-      `🚦 Momentum: ${cfg.requireMomentumBundle ? 'volume + OI + MACD obrigatórios' : 'flexível'}\n` +
+      `🚦 Momentum: ${cfg.requireMomentumBundle ? 'volume + OI contextual + MACD' : 'flexível'}\n` +
+      `↩️ Pullback Engine: ${cfg.requirePullbackTrigger ? 'OBRIGATÓRIO' : 'FLEXÍVEL'} · lookback ${cfg.pullbackLookback} candles\n` +
+      `🎯 Trigger 5m: corpo >= ${cfg.triggerMinBodyAtr.toFixed(2)} ATR · reteste EMA20/EMA50\n` +
+      `📈 OI contextual: ${cfg.requireContextualOi ? 'OBRIGATÓRIO' : 'FLEXÍVEL'} · mínimo +${cfg.contextualOiMinPct.toFixed(2)}%\n` +
       `🛑 Anti-chase/reteste: ${cfg.antiChaseEnabled ? 'ATIVO' : 'INATIVO'}\n` +
       `₿ Regime BTC 1H+4H: ${cfg.btcRegimeGuardEnabled ? 'ATIVO' : 'INATIVO'}\n` +
       `₿ Contexto BTC: ajuste simétrico em alts · cache máx 10 min\n` +
@@ -3689,7 +3754,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.7.2-stop-gain-runner',
+    version: '1.7.3-pullback-engine',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -3737,7 +3802,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.7.2 STOP GAIN RUNNER pronto ✅');
+console.log('Crypto Futures Scanner V1.7.3 PULLBACK ENGINE pronto ✅');
 
 // Em rolling deploy o processo antigo do Render pode permanecer vivo por
 // alguns segundos. Um pequeno atraso evita duas instâncias consumindo a

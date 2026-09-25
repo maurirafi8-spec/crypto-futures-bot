@@ -1,106 +1,115 @@
-CRYPTO FUTURES SCANNER V1.7.2 — STOP GAIN RUNNER
+CRYPTO FUTURES SCANNER V1.7.3 — PULLBACK ENGINE
 
-NOVA GESTÃO DE LUCRO
+OBJETIVO
+Parar de entrar tarde depois que todos os indicadores já ficaram alinhados.
 
-A ideia é deixar o trade vencedor correr.
+NOVO SETUP DE ENTRADA
 
-PADRÃO:
-TP1:
-- realiza 30%
-- sobe o stop para breakeven líquido + custos/buffer
+1H
+Define a direção principal.
 
-TP2:
-- realiza mais 30%
-- sobe o stop para TP1
+15m
+Precisa confirmar a mesma estrutura.
 
-TP3:
-- realiza 20%
-- NÃO encerra mais o trade
-- deixa 20% como RUNNER
-- sobe o stop para TP2
+5m
+O bot NÃO entra imediatamente.
 
-DEPOIS DO TP3
+Ele espera:
+1. pullback/reteste na região EMA20/EMA50;
+2. candle fechado de trigger;
+3. preço ainda perto da EMA20, sem perseguir movimento esticado;
+4. volume + MACD coerentes;
+5. Open Interest contextual coerente.
 
-O bot cria degraus virtuais:
+PULLBACK / TRIGGER
 
-TP4 = TP3 + distância TP3↔TP2
-TP5 = TP4 + mesma distância
-TP6 = TP5 + mesma distância
-...
+LONG:
+- 1H bullish;
+- 15m bullish;
+- houve reteste EMA20/EMA50 nos últimos candles;
+- trigger 5m fecha bullish acima da EMA20;
+- corpo mínimo 0.12 ATR;
+- fechamento na parte superior do candle;
+- distância máxima de ~0.95 ATR da EMA20.
 
-Para SHORT a lógica é invertida.
+SHORT:
+lógica espelhada.
 
-Cada novo degrau sobe o STOP GAIN:
+OPEN INTEREST CONTEXTUAL
 
-TP4 atingido -> stop vai para TP3
-TP5 atingido -> stop vai para TP4
-TP6 atingido -> stop vai para TP5
-...
+O OI não é mais interpretado sozinho.
 
-O runner só termina quando o STOP GAIN for atingido
-ou quando outra proteção/timeout encerrar a posição.
+Preço sobe + OI sobe
+= LONG_BUILDUP
 
-EXEMPLO LONG
+Preço cai + OI sobe
+= SHORT_BUILDUP
 
-Entrada 100
-TP1 101
-TP2 102
-TP3 103
+Preço sobe + OI cai
+= SHORT_COVERING
+(não é confirmação limpa de novo LONG)
 
-TP1 -> stop BE líquido
-TP2 -> stop 101
-TP3 -> stop 102 e deixa runner
-TP4 104 -> stop 103
-TP5 105 -> stop 104
-TP6 106 -> stop 105
-...
+Preço cai + OI cai
+= LONG_UNWIND
+(não é confirmação limpa de novo SHORT)
 
-Se voltar de 106 para 105:
-fecha o runner em STOP GAIN.
+oiPct principal agora usa janela recente de aproximadamente 30 minutos.
+A janela longa (~6h) continua registrada como oiLongPct para diagnóstico.
 
-REALIZAÇÕES
-30% TP1
-30% TP2
-20% TP3
-20% RUNNER
+MOMENTUM
+O bundle passa a usar:
+- volume;
+- MACD;
+- OI contextual.
 
-NET R/R GUARD
-Continua ativo.
+MFE / MAE
 
-A projeção de entrada é conservadora:
-para calcular R/R antes de abrir, o bot assume que,
-depois de alcançar TP3, o runner restante pode sair no stop TP2.
+Cada paper trade agora registra:
 
-Qualquer TP4, TP5, TP6... é tratado como ganho adicional.
+MFE
+Maximum Favorable Excursion
+= quanto o trade chegou a andar a favor, em R.
 
-CANDLE AMBÍGUO
-O critério MODERADO continua funcionando.
-Se no mesmo candle houver STOP + próximo degrau,
-usa o fechamento para decidir o lado dominante.
-O novo stop só vale no candle seguinte.
+MAE
+Maximum Adverse Excursion
+= quanto chegou a andar contra, em R.
+
+Exemplo:
+MFE +0.08R / MAE -1.00R
+=> entrada ruim quase desde o começo.
+
+MFE +0.85R / MAE -1.00R
+=> direção/timing quase funcionaram; gestão/targets podem precisar ajuste.
+
+Isso aparece:
+- ao encerrar o PAPER trade;
+- em /papertrades.
 
 MANTIDO
 - Quality Aggressive
-- meta 8–12 / cap 15
 - score 70+
 - IA 68%+
+- edge 6
 - 1H obrigatório
-- Momentum Bundle
 - Anti-chase
-- regime BTC
+- Regime BTC 1H+4H
 - Loss Brake
 - Stale inteligente
 - Smart Stop 1.25–2 ATR
-- risco 0.75%
-- banca 50 USDC
-- margem 15%
-- 2x
+- Stop Gain Runner
 - Net R/R 1.50
 - Telegram Safe
 - HOLD AI
 - Gemini Rescue All
 
 ENV OPCIONAL
-PAPER_TRAILING_RUNNER_ENABLED=true
-PAPER_TP3_CLOSE_PCT=20
-PAPER_RUNNER_STEP_GAP_MULTIPLIER=1.00
+
+V122_OI_CONFIRM_PCT=0.10
+
+QUALITY_REQUIRE_PULLBACK_TRIGGER=true
+QUALITY_REQUIRE_CONTEXTUAL_OI=true
+QUALITY_PULLBACK_LOOKBACK=7
+QUALITY_PULLBACK_TOUCH_ATR=0.35
+QUALITY_TRIGGER_MIN_BODY_ATR=0.12
+QUALITY_CONTEXT_OI_MIN_PCT=0.08
+QUALITY_CONTEXT_PRICE_MIN_PCT=0.03

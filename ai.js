@@ -140,12 +140,22 @@ function buildPayload(signal) {
     },
     derivatives: {
       openInterestChangePct: num(signal.oiPct, 3),
+      openInterestLongWindowPct:
+        signal.oiLongPct == null
+          ? null
+          : num(signal.oiLongPct, 3),
+      contextualOI:
+        signal.oiContext || null,
       fundingRatePct:
         signal.fundingRate == null
           ? null
           : num(signal.fundingRate, 5)
     },
     btcContext: signal.btcContext || null,
+    pullbackTrigger:
+      signal.pullback || null,
+    antiChase:
+      signal.antiChase || null,
     deterministicReasons: (signal.reasons || []).slice(0, 6),
     technicalGateFailures: (signal.rejectionReasons || []).slice(0, 6)
   };
@@ -161,8 +171,11 @@ function systemPrompt() {
     'Trate LONG e SHORT de forma totalmente simétrica. Não favoreça LONG por padrão.',
     'O lado enviado já passou por um placar LONG x SHORT; confirme se 1h sustenta esse lado.',
     'Considere o contexto BTC: se 1H e 4H do BTC estiverem claramente contrários ao lado da altcoin, exija evidência excepcional.',
+    'O setup principal agora é Trend + Pullback + Trigger: 1H define direção, 15m confirma estrutura, 5m precisa mostrar pullback/reteste e candle de trigger fechado.',
+    'Não aprove entrada apenas porque todos os indicadores já estão alinhados; se o pullback/trigger não estiver confirmado, use WAIT ou REJECT.',
+    'Interprete Open Interest junto com preço: preço sobe + OI sobe favorece buildup LONG; preço cai + OI sobe favorece buildup SHORT; OI caindo sugere fechamento/liquidação, não nova confirmação direcional.',
     'Não aprove entrada perseguindo candle já esticado; prefira pullback/reteste com momentum ainda válido.',
-    'Para APPROVE, dê preferência a volume, OI e MACD confirmando juntos. Se momentum estiver incompleto, use WAIT/REJECT.',
+    'Para APPROVE, volume, OI contextual e MACD devem estar coerentes com o trigger.',
     'Analise confluência multi-timeframe, volume relativo, Open Interest, RSI, MACD, stop e contexto do BTC. Funding pode estar ausente.',
     'STANDARD pode receber APPROVE, WATCH, WAIT ou REJECT.',
     'PRE_CANDIDATE nunca pode receber APPROVE.',
@@ -498,7 +511,7 @@ async function fetchOpenRouter({ apiKey, body, timeoutMs }) {
         'HTTP-Referer':
           process.env.OPENROUTER_SITE_URL ||
           'https://crypto-futures-bot.onrender.com',
-        'X-Title': 'Crypto Futures Scanner V1.7.2 Free'
+        'X-Title': 'Crypto Futures Scanner V1.7.3 Free'
       },
       body: JSON.stringify(body),
       signal: controller.signal

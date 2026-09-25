@@ -1380,6 +1380,27 @@ export function maybeOpenPaperPosition(signal) {
         Boolean(signal.btcRegime?.exceptional),
       setupAntiChaseRetest:
         Boolean(signal.antiChase?.retest),
+      setupPullbackConfirmed:
+        Boolean(signal.pullback?.confirmed),
+      setupPullbackBodyAtr:
+        Number(signal.pullback?.bodyAtr || 0),
+      setupPullbackDistanceAtr:
+        Number(signal.pullback?.distanceAtr || 0),
+      setupOiContextRegime:
+        signal.oiContext?.regime || null,
+      setupOiRecentPct:
+        Number(signal.oiContext?.oiPct ?? signal.oiPct ?? 0),
+      setupPrice30mPct:
+        Number(signal.oiContext?.pricePct || 0),
+
+      mfeR: 0,
+      maeR: 0,
+      mfePct: 0,
+      maePct: 0,
+      maxFavorablePrice:
+        entryFill,
+      maxAdversePrice:
+        entryFill,
 
       openedAt: Date.now(),
       openBarTime:
@@ -1689,6 +1710,8 @@ function positionCloseMessage(closed) {
     `💵 PnL líquido: ${closed.netPnl >= 0 ? '+' : ''}${closed.netPnl.toFixed(2)} USDC\n` +
     `💸 Taxas simuladas: ${closed.totalFees.toFixed(4)} USDC\n` +
     `📊 Retorno sobre margem: ${closed.returnOnMarginPct >= 0 ? '+' : ''}${closed.returnOnMarginPct.toFixed(2)}%\n` +
+    `📈 MFE: +${Number(closed.mfeR || 0).toFixed(2)}R · 📉 MAE: -${Number(closed.maeR || 0).toFixed(2)}R\n` +
+    `${closed.setupOiContextRegime ? `🧭 Setup: ${closed.setupOiContextRegime} · pullback ${closed.setupPullbackConfirmed ? 'SIM' : 'NÃO'}\n` : ''}` +
     `🏦 Banca: ${state.balance.toFixed(2)} USDC`
   );
 }
@@ -2137,6 +2160,123 @@ function updateOnePosition(position, snap) {
     position.lastMark = mark;
   }
 
+  // V1.7.3 MFE/MAE:
+  // mede a melhor e a pior excursão intratrade em múltiplos de R.
+  // Isso permite separar entrada ruim de gestão ruim.
+  const initialRiskDistance =
+    Math.abs(
+      Number(position.entryFill) -
+      Number(position.stopInitial)
+    );
+
+  if (
+    initialRiskDistance > 0
+  ) {
+    const favorablePrice =
+      position.side === 'LONG'
+        ? high
+        : low;
+
+    const adversePrice =
+      position.side === 'LONG'
+        ? low
+        : high;
+
+    const favorableMove =
+      position.side === 'LONG'
+        ? favorablePrice -
+          position.entryFill
+        : position.entryFill -
+          favorablePrice;
+
+    const adverseMove =
+      position.side === 'LONG'
+        ? position.entryFill -
+          adversePrice
+        : adversePrice -
+          position.entryFill;
+
+    const mfeR =
+      Math.max(
+        0,
+        favorableMove /
+          initialRiskDistance
+      );
+
+    const maeR =
+      Math.max(
+        0,
+        adverseMove /
+          initialRiskDistance
+      );
+
+    position.mfeR =
+      Math.max(
+        Number(position.mfeR || 0),
+        mfeR
+      );
+
+    position.maeR =
+      Math.max(
+        Number(position.maeR || 0),
+        maeR
+      );
+
+    position.mfePct =
+      Math.max(
+        Number(position.mfePct || 0),
+        position.entryFill > 0
+          ? Math.max(
+              0,
+              favorableMove /
+                position.entryFill *
+                100
+            )
+          : 0
+      );
+
+    position.maePct =
+      Math.max(
+        Number(position.maePct || 0),
+        position.entryFill > 0
+          ? Math.max(
+              0,
+              adverseMove /
+                position.entryFill *
+                100
+            )
+          : 0
+      );
+
+    if (
+      position.side === 'LONG'
+    ) {
+      position.maxFavorablePrice =
+        Math.max(
+          Number(position.maxFavorablePrice || position.entryFill),
+          high
+        );
+
+      position.maxAdversePrice =
+        Math.min(
+          Number(position.maxAdversePrice || position.entryFill),
+          low
+        );
+    } else {
+      position.maxFavorablePrice =
+        Math.min(
+          Number(position.maxFavorablePrice || position.entryFill),
+          low
+        );
+
+      position.maxAdversePrice =
+        Math.max(
+          Number(position.maxAdversePrice || position.entryFill),
+          high
+        );
+    }
+  }
+
   // V1.7.0 STALE INTELIGENTE:
   // revisa em 40m. Só sai cedo quando o progresso é fraco
   // E o momentum deteriorou. Se a estrutura continua viva,
@@ -2150,12 +2290,6 @@ function updateOnePosition(position, snap) {
     const directionalMove =
       directionSign(position.side) *
       (mark - position.entryFill);
-
-    const initialRiskDistance =
-      Math.abs(
-        position.entryFill -
-        position.stopInitial
-      );
 
     const progressR =
       initialRiskDistance > 0
@@ -2885,7 +3019,7 @@ export function paperStatusText() {
       : null;
 
   return [
-    '🪜 <b>PAPER TRADING — V1.7.2 STOP GAIN RUNNER</b>',
+    '↩️ <b>PAPER TRADING — V1.7.3 PULLBACK ENGINE</b>',
     '',
     `Status: ${cfg.enabled ? '✅ ATIVO' : '⛔ DESATIVADO'} · ${state.paused ? '⏸ PAUSADO' : '▶️ RODANDO'}`,
     `💰 Banca inicial: ${state.startingBalance.toFixed(2)} USDC`,
@@ -2904,6 +3038,8 @@ export function paperStatusText() {
     `⚙️ Alavancagem simulada: ${cfg.leverage}x`,
     `⚡ Scalp: ${cfg.scalpMode ? 'ATIVO' : 'INATIVO'} · stale inteligente ${cfg.scalpStaleMin}→${cfg.scalpStaleMaxMin} min · máx ${cfg.maxHoldHours}h`,
     `🧠 Smart Stop: estrutura 5m + ATR · alvo 1.25–2.00 ATR`,
+    `↩️ Entrada: Trend 1H + estrutura 15m + Pullback/Trigger 5m`,
+    `📊 Diagnóstico: MFE/MAE por trade ATIVO`,
     `🛡 Profit Protect: ${cfg.profitProtectEnabled ? 'ATIVO' : 'INATIVO'} · buffer ${cfg.profitProtectBufferPctNotional.toFixed(2)}% do notional`,
     `🪜 Stop Gain Runner: ${cfg.trailingRunnerEnabled ? 'ATIVO' : 'INATIVO'} · TP3 fecha ${cfg.tp3ClosePct.toFixed(0)}% · runner ${Math.max(0, 40 - cfg.tp3ClosePct).toFixed(0)}%`,
     `⚖️ Candle STOP+TP: critério MODERADO`,
@@ -2993,6 +3129,8 @@ export function paperTradesText(limit = 10) {
       `🤖 IA ${Math.round(t.aiConfidence || 0)}% · ⭐ ${t.score || 0}\n` +
       `PnL ${t.netPnl >= 0 ? '+' : ''}${Number(t.netPnl || 0).toFixed(2)} USDC · ` +
       `ROM ${Number(t.returnOnMarginPct || 0) >= 0 ? '+' : ''}${Number(t.returnOnMarginPct || 0).toFixed(2)}%\n` +
+      `📈 MFE +${Number(t.mfeR || 0).toFixed(2)}R · 📉 MAE -${Number(t.maeR || 0).toFixed(2)}R\n` +
+      `${t.setupOiContextRegime ? `🧭 ${t.setupOiContextRegime} · pullback ${t.setupPullbackConfirmed ? 'SIM' : 'NÃO'}\n` : ''}` +
       `Taxas ${Number(t.totalFees || 0).toFixed(4)} USDC`
     );
   }
