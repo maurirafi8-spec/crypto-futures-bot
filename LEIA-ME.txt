@@ -1,115 +1,117 @@
-CRYPTO FUTURES SCANNER V1.7.3 — PULLBACK ENGINE
+CRYPTO FUTURES SCANNER V1.7.4 — ADAPTIVE STALE
 
-OBJETIVO
-Parar de entrar tarde depois que todos os indicadores já ficaram alinhados.
+MOTIVO
+Na V1.7.3, os primeiros trades do Pullback Engine estavam sendo
+encerrados por SCALP STALE QUALITY 40m antes de sabermos se o setup
+teria tempo suficiente para desenvolver.
 
-NOVO SETUP DE ENTRADA
+A V1.7.4 NÃO afrouxa o stop-loss real.
+Ela muda somente a saída por tempo/momentum.
 
-1H
-Define a direção principal.
+PRIMEIRA REVISÃO: 60 MINUTOS
 
-15m
-Precisa confirmar a mesma estrutura.
+O bot NÃO fecha por uma única leitura ruim.
 
-5m
-O bot NÃO entra imediatamente.
+Para virar candidato a saída stale aos 60m, precisa acontecer TUDO:
 
-Ele espera:
-1. pullback/reteste na região EMA20/EMA50;
-2. candle fechado de trigger;
-3. preço ainda perto da EMA20, sem perseguir movimento esticado;
-4. volume + MACD coerentes;
-5. Open Interest contextual coerente.
+1. ainda estar no estágio 0, antes do TP1;
+2. nunca ter alcançado +0.20R de MFE;
+3. posição atual não estar positiva;
+4. pelo menos 2 de 3 terem deteriorado:
+   - volume;
+   - Open Interest contextual;
+   - MACD;
+5. 1H + 15m NÃO estarem ambos alinhados com a posição;
+6. nenhum STOP/TP1 ter sido tocado no candle atual.
 
-PULLBACK / TRIGGER
+2 CHECKS CONSECUTIVOS
 
-LONG:
-- 1H bullish;
-- 15m bullish;
-- houve reteste EMA20/EMA50 nos últimos candles;
-- trigger 5m fecha bullish acima da EMA20;
-- corpo mínimo 0.12 ATR;
-- fechamento na parte superior do candle;
-- distância máxima de ~0.95 ATR da EMA20.
+Mesmo cumprindo tudo acima:
+o bot não fecha na primeira leitura.
 
-SHORT:
-lógica espelhada.
+Precisa de 2 candles fechados consecutivos ruins.
 
-OPEN INTEREST CONTEXTUAL
+Exemplo:
+60m = ruim -> check 1/2
+65m = ruim -> check 2/2 -> fecha
 
-O OI não é mais interpretado sozinho.
+Se:
+60m = ruim -> 1/2
+65m = melhora -> volta para 0/2
 
-Preço sobe + OI sobe
-= LONG_BUILDUP
+ESTRUTURA 1H + 15M
 
-Preço cai + OI sobe
-= SHORT_BUILDUP
+Se 1H e 15m continuam alinhados com a posição:
+o early stale não fecha o trade.
 
-Preço sobe + OI cai
-= SHORT_COVERING
-(não é confirmação limpa de novo LONG)
+Isso evita matar um pullback lento enquanto a tendência maior
+continua válida.
 
-Preço cai + OI cai
-= LONG_UNWIND
-(não é confirmação limpa de novo SHORT)
+HARD STALE: 90 MINUTOS
 
-oiPct principal agora usa janela recente de aproximadamente 30 minutos.
-A janela longa (~6h) continua registrada como oiLongPct para diagnóstico.
+Aos 90 minutos:
+se o trade ainda NÃO tiver alcançado +0.25R de MFE,
+ele é encerrado como:
 
-MOMENTUM
-O bundle passa a usar:
-- volume;
-- MACD;
-- OI contextual.
+SCALP STALE HARD 90m
+
+Se já alcançou +0.25R em algum momento:
+não toma hard stale de 90m por essa regra.
+
+TIMEOUT ABSOLUTO
+
+Continua em 2 horas.
+
+STOP E TP TÊM PRIORIDADE
+
+O Adaptive Stale não fecha uma posição se o candle atual tocou
+o stop real ou o TP1.
+
+Nesse caso a lógica normal de STOP/TP decide o resultado do candle.
+
+OI NO STALE
+
+O OI usa a leitura contextual da V1.7.3.
+Não considera qualquer oscilação pequena como deterioração.
 
 MFE / MAE
 
-Cada paper trade agora registra:
+Continuam ativos para diagnosticar o setup.
 
-MFE
-Maximum Favorable Excursion
-= quanto o trade chegou a andar a favor, em R.
+Exemplos:
 
-MAE
-Maximum Adverse Excursion
-= quanto chegou a andar contra, em R.
+MFE +0.05R / MAE -0.40R
+=> trade quase nunca andou a favor.
 
-Exemplo:
-MFE +0.08R / MAE -1.00R
-=> entrada ruim quase desde o começo.
-
-MFE +0.85R / MAE -1.00R
-=> direção/timing quase funcionaram; gestão/targets podem precisar ajuste.
-
-Isso aparece:
-- ao encerrar o PAPER trade;
-- em /papertrades.
+MFE +0.60R / MAE -0.20R
+=> entrada teve movimento favorável; gestão merece investigação.
 
 MANTIDO
+- Pullback Engine
+- tendência 1H
+- estrutura 15m
+- trigger 5m
+- OI contextual
 - Quality Aggressive
-- score 70+
-- IA 68%+
-- edge 6
-- 1H obrigatório
-- Anti-chase
-- Regime BTC 1H+4H
-- Loss Brake
-- Stale inteligente
 - Smart Stop 1.25–2 ATR
 - Stop Gain Runner
 - Net R/R 1.50
+- Loss Brake
+- risco 0.75%
+- banca 50 USDC
+- margem 15%
+- alavancagem 2x
 - Telegram Safe
+- Gemini Rescue
 - HOLD AI
-- Gemini Rescue All
 
 ENV OPCIONAL
 
-V122_OI_CONFIRM_PCT=0.10
-
-QUALITY_REQUIRE_PULLBACK_TRIGGER=true
-QUALITY_REQUIRE_CONTEXTUAL_OI=true
-QUALITY_PULLBACK_LOOKBACK=7
-QUALITY_PULLBACK_TOUCH_ATR=0.35
-QUALITY_TRIGGER_MIN_BODY_ATR=0.12
-QUALITY_CONTEXT_OI_MIN_PCT=0.08
-QUALITY_CONTEXT_PRICE_MIN_PCT=0.03
+PAPER_SCALP_STALE_MINUTES=60
+PAPER_SCALP_STALE_MAX_MINUTES=90
+PAPER_SCALP_STALE_MIN_PROGRESS_R=0.20
+PAPER_SCALP_STALE_HARD_PROGRESS_R=0.25
+PAPER_SCALP_STALE_MIN_VOLUME_RATIO=0.45
+PAPER_SCALP_STALE_DETERIORATION_COUNT=2
+PAPER_SCALP_STALE_CONSECUTIVE_CHECKS=2
+PAPER_MAX_HOLD_HOURS=2

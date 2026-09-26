@@ -87,16 +87,25 @@ export function paperConfig() {
         .toLowerCase() !== 'false',
 
     scalpStaleMin:
-      numEnv('PAPER_SCALP_STALE_MINUTES', 40, 15, 360),
+      numEnv('PAPER_SCALP_STALE_MINUTES', 60, 15, 360),
 
     scalpStaleMaxMin:
-      numEnv('PAPER_SCALP_STALE_MAX_MINUTES', 75, 30, 180),
+      numEnv('PAPER_SCALP_STALE_MAX_MINUTES', 90, 30, 180),
 
     scalpStaleMinProgressR:
-      numEnv('PAPER_SCALP_STALE_MIN_PROGRESS_R', 0.25, 0, 2),
+      numEnv('PAPER_SCALP_STALE_MIN_PROGRESS_R', 0.20, 0, 2),
 
     scalpStaleMinVolumeRatio:
       numEnv('PAPER_SCALP_STALE_MIN_VOLUME_RATIO', 0.45, 0, 5),
+
+    scalpStaleHardProgressR:
+      numEnv('PAPER_SCALP_STALE_HARD_PROGRESS_R', 0.25, 0, 2),
+
+    scalpStaleDeteriorationCount:
+      intEnv('PAPER_SCALP_STALE_DETERIORATION_COUNT', 2, 2, 3),
+
+    scalpStaleConsecutiveChecks:
+      intEnv('PAPER_SCALP_STALE_CONSECUTIVE_CHECKS', 2, 1, 6),
 
     lossBrakeEnabled:
       String(process.env.PAPER_LOSS_BRAKE_ENABLED || 'true')
@@ -1402,6 +1411,12 @@ export function maybeOpenPaperPosition(signal) {
       maxAdversePrice:
         entryFill,
 
+      staleBadChecks: 0,
+      staleLastDeteriorationCount: 0,
+      staleLastStructureAligned: true,
+      staleLastProgressR: 0,
+      staleLastAssessmentAt: 0,
+
       openedAt: Date.now(),
       openBarTime:
         Number(signal.t5?.openTime ?? signal.t15?.openTime ?? 0),
@@ -2114,6 +2129,298 @@ function moderateTargetFirst(
   return close <= midpoint;
 }
 
+
+function tfStructureSide(
+  tf
+) {
+  const price =
+    Number(
+      tf?.price ??
+      tf?.close
+    );
+
+  const ema20 =
+    Number(
+      tf?.ema20
+    );
+
+  const ema50 =
+    Number(
+      tf?.ema50
+    );
+
+  if (
+    !Number.isFinite(price) ||
+    !Number.isFinite(ema20) ||
+    !Number.isFinite(ema50)
+  ) {
+    return 'MIXED';
+  }
+
+  if (
+    price >
+      ema20 &&
+    ema20 >
+      ema50
+  ) {
+    return 'LONG';
+  }
+
+  if (
+    price <
+      ema20 &&
+    ema20 <
+      ema50
+  ) {
+    return 'SHORT';
+  }
+
+  return 'MIXED';
+}
+
+function oiDeterioratedForSide(
+  side,
+  snap
+) {
+  const regime =
+    String(
+      snap?.oiContext?.regime ||
+      ''
+    ).toUpperCase();
+
+  if (regime) {
+    if (side === 'LONG') {
+      return [
+        'SHORT_BUILDUP',
+        'LONG_UNWIND',
+        'OI_UNWIND_NEUTRAL_PRICE'
+      ].includes(
+        regime
+      );
+    }
+
+    return [
+      'LONG_BUILDUP',
+      'SHORT_COVERING',
+      'OI_UNWIND_NEUTRAL_PRICE'
+    ].includes(
+      regime
+    );
+  }
+
+  const oiPct =
+    Number(
+      snap?.oiPct ||
+      0
+    );
+
+  return (
+    Number.isFinite(oiPct) &&
+    oiPct < 0
+  );
+}
+
+function adaptiveStaleAssessment(
+  position,
+  snap,
+  mark,
+  ageMin,
+  cfg,
+  {
+    stopTouched = false,
+    targetTouched = false
+  } = {}
+) {
+  const initialRiskDistance =
+    Math.abs(
+      Number(position.entryFill) -
+      Number(position.stopInitial)
+    );
+
+  const directionalMove =
+    directionSign(
+      position.side
+    ) *
+    (
+      Number(mark) -
+      Number(position.entryFill)
+    );
+
+  const progressR =
+    initialRiskDistance > 0
+      ? directionalMove /
+        initialRiskDistance
+      : 0;
+
+  const mfeR =
+    Math.max(
+      0,
+      Number(
+        position.mfeR ||
+        0
+      )
+    );
+
+  const currentVolumeRatio =
+    Number(
+      snap?.t5?.volumeRatio ||
+      0
+    );
+
+  const currentMacd =
+    Number(
+      snap?.t5?.macdHist ||
+      0
+    );
+
+  const volumeBad =
+    currentVolumeRatio <
+    cfg.scalpStaleMinVolumeRatio;
+
+  const oiBad =
+    oiDeterioratedForSide(
+      position.side,
+      snap
+    );
+
+  const macdBad =
+    position.side === 'LONG'
+      ? !(currentMacd > 0)
+      : !(currentMacd < 0);
+
+  const deteriorationCount =
+    [
+      volumeBad,
+      oiBad,
+      macdBad
+    ].filter(Boolean).length;
+
+  const structure15 =
+    tfStructureSide(
+      snap?.t15
+    );
+
+  const structure1h =
+    tfStructureSide(
+      snap?.t1h
+    );
+
+  const structureAligned =
+    structure15 ===
+      position.side &&
+    structure1h ===
+      position.side;
+
+  const tradePositive =
+    progressR > 0;
+
+  const protectedByPriceEvent =
+    Boolean(
+      stopTouched ||
+      targetTouched
+    );
+
+  const earlyCandidate =
+    Number(position.stage || 0) === 0 &&
+    ageMin >=
+      cfg.scalpStaleMin &&
+    ageMin <
+      cfg.scalpStaleMaxMin &&
+    mfeR <
+      cfg.scalpStaleMinProgressR &&
+    !tradePositive &&
+    deteriorationCount >=
+      cfg.scalpStaleDeteriorationCount &&
+    !structureAligned &&
+    !protectedByPriceEvent;
+
+  const hardStale =
+    Number(position.stage || 0) === 0 &&
+    ageMin >=
+      cfg.scalpStaleMaxMin &&
+    mfeR <
+      cfg.scalpStaleHardProgressR &&
+    !protectedByPriceEvent;
+
+  return {
+    earlyCandidate,
+    hardStale,
+    progressR,
+    mfeR,
+    tradePositive,
+    deteriorationCount,
+    volumeBad,
+    oiBad,
+    macdBad,
+    structure15,
+    structure1h,
+    structureAligned,
+    protectedByPriceEvent,
+    currentVolumeRatio
+  };
+}
+
+export function adaptiveStalePreview({
+  side = 'LONG',
+  entryFill = 100,
+  stopInitial = 99,
+  stage = 0,
+  mfeR = 0,
+  mark = 100,
+  ageMin = 60,
+  badChecks = 0,
+  volumeRatio = 0.30,
+  macdHist = -0.1,
+  oiRegime = 'LONG_UNWIND',
+  oiPct = -0.10,
+  t15 = null,
+  t1h = null,
+  stopTouched = false,
+  targetTouched = false,
+  config = {}
+} = {}) {
+  const cfg = {
+    ...paperConfig(),
+    ...config
+  };
+
+  const position = {
+    side,
+    entryFill,
+    stopInitial,
+    stage,
+    mfeR,
+    staleBadChecks:
+      badChecks
+  };
+
+  const snap = {
+    oiPct,
+    oiContext: {
+      regime:
+        oiRegime
+    },
+    t5: {
+      volumeRatio,
+      macdHist
+    },
+    t15,
+    t1h
+  };
+
+  return adaptiveStaleAssessment(
+    position,
+    snap,
+    mark,
+    ageMin,
+    cfg,
+    {
+      stopTouched,
+      targetTouched
+    }
+  );
+}
+
 function updateOnePosition(position, snap) {
   const cfg = paperConfig();
   const events = [];
@@ -2277,55 +2584,23 @@ function updateOnePosition(position, snap) {
     }
   }
 
-  // V1.7.0 STALE INTELIGENTE:
-  // revisa em 40m. Só sai cedo quando o progresso é fraco
-  // E o momentum deteriorou. Se a estrutura continua viva,
-  // dá espaço até 75m.
+  // V1.7.4 ADAPTIVE STALE:
+  // 60m = primeira revisão, sem sair por uma única leitura ruim.
+  // Early exit exige:
+  // - nunca ter alcançado +0.20R;
+  // - trade não estar positivo;
+  // - pelo menos 2 de 3 deteriorados: volume / OI contextual / MACD;
+  // - 1H + 15m não estarem ambos alinhados;
+  // - 2 candles fechados consecutivos com a mesma condição ruim.
+  //
+  // 90m = hard stale somente se o trade nunca alcançou +0.25R.
+  // 2h = timeout absoluto já existente.
   if (
     cfg.scalpMode &&
     position.stage === 0 &&
     Date.now() - position.openedAt >=
       cfg.scalpStaleMin * 60 * 1000
   ) {
-    const directionalMove =
-      directionSign(position.side) *
-      (mark - position.entryFill);
-
-    const progressR =
-      initialRiskDistance > 0
-        ? directionalMove /
-          initialRiskDistance
-        : 0;
-
-    const currentVolumeRatio =
-      Number(
-        snap?.t5?.volumeRatio ||
-        0
-      );
-
-    const currentOiPct =
-      Number(
-        snap?.oiPct ||
-        0
-      );
-
-    const currentMacd =
-      Number(
-        snap?.t5?.macdHist ||
-        0
-      );
-
-    const macdStillAligned =
-      position.side === 'LONG'
-        ? currentMacd > 0
-        : currentMacd < 0;
-
-    const momentumDeteriorated =
-      currentVolumeRatio <
-        cfg.scalpStaleMinVolumeRatio ||
-      currentOiPct < 0 ||
-      !macdStillAligned;
-
     const ageMin =
       (
         Date.now() -
@@ -2333,38 +2608,98 @@ function updateOnePosition(position, snap) {
       ) /
       60_000;
 
-    const weakProgress =
-      progressR <
-      cfg.scalpStaleMinProgressR;
+    // Não deixa o stale "roubar" um candle que tocou STOP ou TP1.
+    // Nesse caso, a lógica normal de STOP/TP logo abaixo decide o candle.
+    const stopTouched =
+      hitStop(
+        position,
+        high,
+        low
+      );
 
-    const hardStale =
-      ageMin >=
-      cfg.scalpStaleMaxMin;
+    const targetTouched =
+      hitLevel(
+        position,
+        high,
+        low,
+        position.tp1
+      );
 
-    if (
-      weakProgress &&
-      (
-        momentumDeteriorated ||
-        hardStale
-      )
-    ) {
-      const reason =
-        hardStale
-          ? `SCALP STALE MAX ${Math.round(cfg.scalpStaleMaxMin)}m`
-          : `SCALP STALE QUALITY ${Math.round(cfg.scalpStaleMin)}m`;
+    const stale =
+      adaptiveStaleAssessment(
+        position,
+        snap,
+        mark,
+        ageMin,
+        cfg,
+        {
+          stopTouched,
+          targetTouched
+        }
+      );
+
+    position.staleLastDeteriorationCount =
+      stale.deteriorationCount;
+
+    position.staleLastStructureAligned =
+      stale.structureAligned;
+
+    position.staleLastProgressR =
+      stale.progressR;
+
+    position.staleLastAssessmentAt =
+      Date.now();
+
+    if (stale.hardStale) {
+      position.staleBadChecks = 0;
 
       const result =
         closeRemainingAt(
           position,
           mark,
-          reason
+          `SCALP STALE HARD ${Math.round(cfg.scalpStaleMaxMin)}m`
         );
 
       events.push(
-        positionCloseMessage(result.closed)
+        positionCloseMessage(
+          result.closed
+        )
       );
 
       return events;
+    }
+
+    if (
+      stale.earlyCandidate
+    ) {
+      position.staleBadChecks =
+        Number(
+          position.staleBadChecks ||
+          0
+        ) + 1;
+
+      if (
+        position.staleBadChecks >=
+        cfg.scalpStaleConsecutiveChecks
+      ) {
+        const result =
+          closeRemainingAt(
+            position,
+            mark,
+            `SCALP STALE QUALITY ${Math.round(cfg.scalpStaleMin)}m · ${position.staleBadChecks}/${cfg.scalpStaleConsecutiveChecks} checks`
+          );
+
+        events.push(
+          positionCloseMessage(
+            result.closed
+          )
+        );
+
+        return events;
+      }
+    } else {
+      // Uma leitura boa quebra a sequência ruim.
+      position.staleBadChecks = 0;
     }
   }
 
@@ -3019,7 +3354,7 @@ export function paperStatusText() {
       : null;
 
   return [
-    '↩️ <b>PAPER TRADING — V1.7.3 PULLBACK ENGINE</b>',
+    '⏳ <b>PAPER TRADING — V1.7.4 ADAPTIVE STALE</b>',
     '',
     `Status: ${cfg.enabled ? '✅ ATIVO' : '⛔ DESATIVADO'} · ${state.paused ? '⏸ PAUSADO' : '▶️ RODANDO'}`,
     `💰 Banca inicial: ${state.startingBalance.toFixed(2)} USDC`,
@@ -3036,7 +3371,8 @@ export function paperStatusText() {
     `💳 Disponível: ${available.toFixed(2)} USDC`,
     `⚖️ Risco por trade: ${cfg.riskPct.toFixed(2)}%`,
     `⚙️ Alavancagem simulada: ${cfg.leverage}x`,
-    `⚡ Scalp: ${cfg.scalpMode ? 'ATIVO' : 'INATIVO'} · stale inteligente ${cfg.scalpStaleMin}→${cfg.scalpStaleMaxMin} min · máx ${cfg.maxHoldHours}h`,
+    `⚡ Scalp: ${cfg.scalpMode ? 'ATIVO' : 'INATIVO'} · stale adaptativo ${cfg.scalpStaleMin}/${cfg.scalpStaleMaxMin} min · máx ${cfg.maxHoldHours}h`,
+    `⏳ Stale: ${cfg.scalpStaleConsecutiveChecks} checks · ${cfg.scalpStaleDeteriorationCount}/3 deteriorações · MFE ${cfg.scalpStaleMinProgressR.toFixed(2)}R/${cfg.scalpStaleHardProgressR.toFixed(2)}R`,
     `🧠 Smart Stop: estrutura 5m + ATR · alvo 1.25–2.00 ATR`,
     `↩️ Entrada: Trend 1H + estrutura 15m + Pullback/Trigger 5m`,
     `📊 Diagnóstico: MFE/MAE por trade ATIVO`,
@@ -3096,6 +3432,7 @@ export function paperPositionsText() {
       `Stop atual ${round(p.stopCurrent)}\n` +
       `TP1 ${round(p.tp1)} · TP2 ${round(p.tp2)} · TP3 ${round(p.tp3)}\n` +
       `${p.runnerActive ? `➡️ Próximo TP${(p.runnerTrailStage || 3) + 1}: ${round(p.runnerNextTrigger)}\n` : ''}` +
+      `${p.stage === 0 ? `⏳ Stale checks ${Number(p.staleBadChecks || 0)}/${cfg.scalpStaleConsecutiveChecks} · MFE +${Number(p.mfeR || 0).toFixed(2)}R · estrutura ${p.staleLastStructureAligned === false ? 'NÃO ALINHADA' : 'OK'}\n` : ''}` +
       `⚖️ R/R líquido projetado ${Number(p.projectedNetRR || 0).toFixed(2)} · ` +
       `STOP -${Number(p.projectedStopLossUsdc || 0).toFixed(3)} / ladder +${Number(p.projectedFullTpNetUsdc || 0).toFixed(3)} USDC\n` +
       `📦 Restante ${(p.remainingQty / p.initialQty * 100).toFixed(0)}% · ` +

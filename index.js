@@ -3272,7 +3272,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.7.3 PULLBACK ENGINE</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.7.4 ADAPTIVE STALE</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o próximo lote agora\n' +
       '/scheduler — ver rotação automática de 1 minuto\n' +
@@ -3311,7 +3311,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.7.3 PULLBACK ENGINE\n` +
+      `✅ Online — V1.7.4 ADAPTIVE STALE\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🛡 Modo: CONFIDENCE GUARD V1.5.9\n` +
       `🤖 APPROVE exige confidence válida; ausente/0% vira WAIT\n` +
@@ -3326,6 +3326,7 @@ async function handleMessage(msg) {
       `🧠 Smart Stop: estrutura 5m + 0.25 ATR · faixa 1.25–2.00 ATR\n` +
       `🎯 TPs-base: 0.90R / 1.40R / 2.10R · Net R/R continua >= 1.50\n` +
       `🪜 Stop Gain Runner: TP1→BE · TP2→TP1 · TP3→TP2 · TP4+ sobe por degraus\n` +
+      `⏳ Adaptive Stale: revisão 60m · 2 checks · 2/3 deteriorações · hard 90m · timeout 2h\n` +
       `🎯 Perfil: QUALITY AGGRESSIVE · alvo 8–12 PAPER trades/dia · cap 15\n` +
       `⭐ Score mínimo para sinal: ${cfg.minScore}\n` +
       `⚖️ Direction Balance: ATIVO · LONG/SHORT simétricos\n` +
@@ -3754,7 +3755,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.7.3-pullback-engine',
+    version: '1.7.4-adaptive-stale',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -3802,7 +3803,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.7.3 PULLBACK ENGINE pronto ✅');
+console.log('Crypto Futures Scanner V1.7.4 ADAPTIVE STALE pronto ✅');
 
 // Em rolling deploy o processo antigo do Render pode permanecer vivo por
 // alguns segundos. Um pequeno atraso evita duas instâncias consumindo a

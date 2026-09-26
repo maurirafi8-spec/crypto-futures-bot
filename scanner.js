@@ -2827,7 +2827,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.7.3: Trend 1H + estrutura 15m + Pullback/Trigger 5m + OI contextual. ` +
+    `<i>V1.7.4: Pullback Engine + Adaptive Stale 60/90 + MFE/MAE. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }
