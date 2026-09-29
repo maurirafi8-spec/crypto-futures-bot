@@ -1290,7 +1290,8 @@ function momentumBundleStatus(
   oiPct,
   minVolumeRatio,
   minOiPct,
-  oiContext = null
+  oiContext = null,
+  minConfirmations = 2
 ) {
   const volumeRatio =
     finiteNumber(t5?.volumeRatio, 0);
@@ -1319,17 +1320,234 @@ function momentumBundleStatus(
         ? macdHist < 0
         : false;
 
+  const confirmationCount =
+    [
+      volumeOk,
+      oiOk,
+      macdOk
+    ].filter(Boolean).length;
+
   return {
     confirmed:
-      volumeOk &&
-      oiOk &&
-      macdOk,
+      confirmationCount >=
+      minConfirmations,
+    confirmationCount,
+    minConfirmations,
     volumeOk,
     oiOk,
     macdOk,
     volumeRatio,
     oiPct: oi,
     macdHist
+  };
+}
+
+
+function breakoutStrongStatus({
+  side,
+  t5,
+  t15,
+  t1h,
+  candles5m = [],
+  score,
+  directionEdge,
+  oiContext,
+  minScore = 82,
+  minVolumeRatio = 0.80,
+  minDirectionEdge = 10,
+  minBodyAtr = 0.20
+}) {
+  const lastCandle =
+    candles5m?.[
+      candles5m.length - 1
+    ] || null;
+
+  const atrValue =
+    Math.max(
+      finiteNumber(
+        t5?.atr,
+        0
+      ),
+      finiteNumber(
+        t5?.price,
+        0
+      ) *
+        0.001
+    );
+
+  if (
+    !lastCandle ||
+    atrValue <= 0
+  ) {
+    return {
+      qualified: false,
+      reason:
+        'sem candle fechado suficiente para breakout'
+    };
+  }
+
+  const open =
+    Number(lastCandle.open);
+
+  const close =
+    Number(lastCandle.close);
+
+  const high =
+    Number(lastCandle.high);
+
+  const low =
+    Number(lastCandle.low);
+
+  const bodyAtr =
+    Math.abs(
+      close - open
+    ) /
+    atrValue;
+
+  const range =
+    Math.max(
+      high - low,
+      atrValue * 0.05
+    );
+
+  const closeLocation =
+    (
+      close - low
+    ) /
+    range;
+
+  const directionalCandle =
+    side === 'LONG'
+      ? close > open &&
+        closeLocation >= 0.65
+      : side === 'SHORT'
+        ? close < open &&
+          closeLocation <= 0.35
+        : false;
+
+  const structure15Ok =
+    directionalStructure(
+      t15
+    ) === side;
+
+  const structure1hOk =
+    directionalStructure(
+      t1h
+    ) === side;
+
+  const scoreOk =
+    Number(score || 0) >=
+    minScore;
+
+  const volumeOk =
+    Number(
+      t5?.volumeRatio ||
+      0
+    ) >=
+    minVolumeRatio;
+
+  const edgeOk =
+    Number(directionEdge || 0) >=
+    minDirectionEdge;
+
+  const macdOk =
+    side === 'LONG'
+      ? Number(t5?.macdHist || 0) > 0
+      : Number(t5?.macdHist || 0) < 0;
+
+  const oiOk =
+    Boolean(
+      oiContext?.confirmed
+    );
+
+  const bodyOk =
+    bodyAtr >=
+    minBodyAtr;
+
+  const qualified =
+    scoreOk &&
+    volumeOk &&
+    edgeOk &&
+    macdOk &&
+    oiOk &&
+    bodyOk &&
+    directionalCandle &&
+    structure15Ok &&
+    structure1hOk;
+
+  const missing = [];
+
+  if (!scoreOk) {
+    missing.push(
+      `score ${Number(score || 0)} abaixo de ${minScore}`
+    );
+  }
+
+  if (!volumeOk) {
+    missing.push(
+      `volume ${Number(t5?.volumeRatio || 0).toFixed(2)}x abaixo de ${minVolumeRatio.toFixed(2)}x`
+    );
+  }
+
+  if (!edgeOk) {
+    missing.push(
+      `edge ${Number(directionEdge || 0)} abaixo de ${minDirectionEdge}`
+    );
+  }
+
+  if (!oiOk) {
+    missing.push(
+      'OI contextual não confirma'
+    );
+  }
+
+  if (!macdOk) {
+    missing.push(
+      `MACD 5m não confirma ${side}`
+    );
+  }
+
+  if (!bodyOk) {
+    missing.push(
+      `corpo ${bodyAtr.toFixed(2)} ATR abaixo de ${minBodyAtr.toFixed(2)}`
+    );
+  }
+
+  if (!directionalCandle) {
+    missing.push(
+      'candle de breakout sem fechamento forte'
+    );
+  }
+
+  if (!structure15Ok) {
+    missing.push(
+      `15m não confirma ${side}`
+    );
+  }
+
+  if (!structure1hOk) {
+    missing.push(
+      `1H não confirma ${side}`
+    );
+  }
+
+  return {
+    qualified,
+    scoreOk,
+    volumeOk,
+    edgeOk,
+    macdOk,
+    oiOk,
+    bodyOk,
+    directionalCandle,
+    structure15Ok,
+    structure1hOk,
+    bodyAtr,
+    closeLocation,
+    reason:
+      qualified
+        ? 'breakout forte confirmado'
+        : missing.join(' · ')
   };
 }
 
@@ -1500,6 +1718,100 @@ function btcRegimeGuardStatus({
           : 'MIXED',
     t1h,
     t4h
+  };
+}
+
+
+export function balancedEntryPreview({
+  side,
+  t5,
+  t15,
+  t1h,
+  candles5m = [],
+  c15 = [],
+  oiHistory = [],
+  score = 68,
+  directionEdge = 5,
+  minVolumeRatio = 0.45,
+  contextualOiMinPct = 0.05,
+  contextualPriceMinPct = 0.03,
+  momentumMinConfirmations = 2,
+  breakoutMinScore = 82,
+  breakoutMinVolumeRatio = 0.80,
+  breakoutMinDirectionEdge = 10,
+  breakoutMinBodyAtr = 0.20
+}) {
+  const pullback =
+    pullbackTriggerStatus({
+      side,
+      t5,
+      t15,
+      t1h,
+      candles5m,
+      lookback: 7,
+      touchAtr: 0.35,
+      minBodyAtr: 0.12
+    });
+
+  const oiContext =
+    contextualOiStatus({
+      side,
+      c15,
+      oiHistory,
+      pullback,
+      minOiPct:
+        contextualOiMinPct,
+      minPricePct:
+        contextualPriceMinPct
+    });
+
+  const momentum =
+    momentumBundleStatus(
+      side,
+      t5,
+      oiContext.oiPct,
+      minVolumeRatio,
+      contextualOiMinPct,
+      oiContext,
+      momentumMinConfirmations
+    );
+
+  const breakout =
+    breakoutStrongStatus({
+      side,
+      t5,
+      t15,
+      t1h,
+      candles5m,
+      score,
+      directionEdge,
+      oiContext,
+      minScore:
+        breakoutMinScore,
+      minVolumeRatio:
+        breakoutMinVolumeRatio,
+      minDirectionEdge:
+        breakoutMinDirectionEdge,
+      minBodyAtr:
+        breakoutMinBodyAtr
+    });
+
+  const entryMode =
+    pullback.confirmed
+      ? 'PULLBACK'
+      : breakout.qualified
+        ? 'BREAKOUT_STRONG'
+        : 'WAIT_SETUP';
+
+  return {
+    entryMode,
+    entryModeOk:
+      entryMode !==
+      'WAIT_SETUP',
+    pullback,
+    oiContext,
+    momentum,
+    breakout
   };
 }
 
@@ -2041,8 +2353,14 @@ export async function scanMarket({
   pullbackLookback = 7,
   pullbackTouchAtr = 0.35,
   triggerMinBodyAtr = 0.12,
-  contextualOiMinPct = 0.08,
-  contextualPriceMinPct = 0.03
+  contextualOiMinPct = 0.05,
+  contextualPriceMinPct = 0.03,
+  momentumMinConfirmations = 2,
+  breakoutEnabled = true,
+  breakoutMinScore = 82,
+  breakoutMinVolumeRatio = 0.80,
+  breakoutMinDirectionEdge = 10,
+  breakoutMinBodyAtr = 0.20
 } = {}) {
   const [marketList, exchangeList] = await Promise.all([
     futureMarkets(),
@@ -2370,14 +2688,51 @@ export async function scanMarket({
           oiPct,
           minVolumeRatio,
           minOiPct,
-          requireContextualOi
-            ? oiContext
-            : null
+          oiContext,
+          momentumMinConfirmations
         );
 
       const momentumOk =
         !requireMomentumBundle ||
         momentum.confirmed;
+
+      const breakout =
+        breakoutStrongStatus({
+          side:
+            sig.side,
+          t5,
+          t15,
+          t1h,
+          candles5m:
+            c5,
+          score:
+            sig.score,
+          directionEdge:
+            sig.directionEdge,
+          oiContext,
+          minScore:
+            breakoutMinScore,
+          minVolumeRatio:
+            breakoutMinVolumeRatio,
+          minDirectionEdge:
+            breakoutMinDirectionEdge,
+          minBodyAtr:
+            breakoutMinBodyAtr
+        });
+
+      const entryMode =
+        pullback.confirmed
+          ? 'PULLBACK'
+          : (
+            breakoutEnabled &&
+            breakout.qualified
+          )
+            ? 'BREAKOUT_STRONG'
+            : 'WAIT_SETUP';
+
+      const balancedEntryOk =
+        entryMode !==
+        'WAIT_SETUP';
 
       const antiChase =
         antiChaseStatus(
@@ -2419,8 +2774,7 @@ export async function scanMarket({
         directionEdgeOk &&
         oneHourConfirmationOk &&
         momentumOk &&
-        pullbackTriggerOk &&
-        contextualOiOk &&
+        balancedEntryOk &&
         antiChaseOk &&
         btcRegimeOk;
 
@@ -2488,7 +2842,15 @@ export async function scanMarket({
         }
 
         rejectionReasons.push(
-          `Momentum incompleto: ${missing.join(' · ')}`
+          `Momentum ${momentum.confirmationCount}/${momentum.minConfirmations} insuficiente: ${missing.join(' · ')}`
+        );
+      }
+
+      if (
+        !balancedEntryOk
+      ) {
+        rejectionReasons.push(
+          `Entrada aguardando setup: pullback não confirmado; breakout forte: ${breakout.reason}`
         );
       }
 
@@ -2580,6 +2942,9 @@ export async function scanMarket({
           btcContextForScore,
         momentum,
         pullback,
+        breakout,
+        entryMode,
+        balancedEntryOk,
         oiContext,
         oiLongPct,
         antiChase,
@@ -2602,6 +2967,7 @@ export async function scanMarket({
           directionEdgeOk,
           oneHourConfirmationOk,
           momentumOk,
+          balancedEntryOk,
           pullbackTriggerOk,
           contextualOiOk,
           antiChaseOk,
@@ -2788,9 +3154,11 @@ export function signalText(s) {
     `${s.btcScoreAdjustment ? `₿ Ajuste BTC: ${s.btcScoreAdjustment > 0 ? '+' : ''}${s.btcScoreAdjustment}\n` : ''}` +
     `💪 Força: <b>${signalStrength(s.score)}</b>\n` +
     `🔎 Confirmação: <b>${s.confirmation.label}</b>\n` +
+    `${s.entryMode ? `🧭 Modo de entrada: <b>${s.entryMode}</b>\n` : ''}` +
     `${s.pullback ? `↩️ Pullback: ${s.pullback.confirmed ? 'CONFIRMADO' : 'AGUARDANDO'} · ${s.pullback.reason}\n` : ''}` +
+    `${s.breakout?.qualified ? `🚀 Breakout forte: CONFIRMADO · corpo ${fmt(s.breakout.bodyAtr, 2)} ATR\n` : ''}` +
     `${s.oiContext ? `📈 OI contextual: ${s.oiContext.regime} · OI ${s.oiContext.oiPct >= 0 ? '+' : ''}${fmt(s.oiContext.oiPct, 2)}% · preço30m ${s.oiContext.pricePct >= 0 ? '+' : ''}${fmt(s.oiContext.pricePct, 2)}%\n` : ''}` +
-    `${s.momentum ? `🚦 Momentum: ${s.momentum.confirmed ? 'OK' : 'FALHOU'} · Vol ${fmt(s.momentum.volumeRatio, 2)}x · MACD ${s.momentum.macdOk ? 'OK' : 'NÃO'}\n` : ''}` +
+    `${s.momentum ? `🚦 Momentum: ${s.momentum.confirmationCount}/${s.momentum.minConfirmations} · Vol ${s.momentum.volumeOk ? 'OK' : 'NÃO'} · OI ${s.momentum.oiOk ? 'OK' : 'NÃO'} · MACD ${s.momentum.macdOk ? 'OK' : 'NÃO'}\n` : ''}` +
     `${s.antiChase ? `🛑 Anti-chase: ${s.antiChase.ok ? 'OK' : 'BLOQUEIO'} · ${s.antiChase.reason}\n` : ''}` +
     `${s.btcRegime ? `₿ Regime BTC 1H+4H: ${s.btcRegime.regime}${s.btcRegime.exceptional ? ' · EXCEÇÃO FORTE' : ''}\n` : ''}` +
     (s.ai
@@ -2827,7 +3195,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.7.4: Pullback Engine + Adaptive Stale 60/90 + MFE/MAE. ` +
+    `<i>V1.7.5: Balanced Active — Pullback preferencial ou Breakout Forte, momentum 2/3. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

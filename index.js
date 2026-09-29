@@ -65,19 +65,19 @@ const cfg = {
     Math.max(Number(process.env.V133_TOP_MARKETS || 12), 1),
     12
   ),
-  minScore: Number(process.env.MIN_SCORE || 70),
-  preCandidateMinScore: Number(process.env.PRE_CANDIDATE_MIN_SCORE || 62),
+  minScore: Number(process.env.MIN_SCORE || 68),
+  preCandidateMinScore: Number(process.env.PRE_CANDIDATE_MIN_SCORE || 60),
   minVolume: Number(process.env.MIN_QUOTE_VOLUME_USDT || 20_000_000),
   cooldownMin: Number(process.env.COOLDOWN_MINUTES || 90),
-  minVolumeRatio: Number(process.env.V122_VOLUME_CONFIRM_RATIO || 0.50),
-  minOiPct: Number(process.env.V122_OI_CONFIRM_PCT || 0.10),
-  hardMinVolumeRatio: Number(process.env.V122_HARD_MIN_VOLUME_RATIO || 0.40),
+  minVolumeRatio: Number(process.env.V122_VOLUME_CONFIRM_RATIO || 0.45),
+  minOiPct: Number(process.env.V122_OI_CONFIRM_PCT || 0.05),
+  hardMinVolumeRatio: Number(process.env.V122_HARD_MIN_VOLUME_RATIO || 0.45),
   oiRejectPct: Number(process.env.V122_OI_REJECT_PCT || -1.00),
   exceptionScore: Number(process.env.V122_EXCEPTION_SCORE || 85),
   exceptionVolumeRatio: Number(process.env.V122_EXCEPTION_VOLUME_RATIO || 0.90),
   minDirectionEdge:
     Math.max(
-      Number(process.env.DIRECTION_MIN_EDGE || 6),
+      Number(process.env.DIRECTION_MIN_EDGE || 5),
       0
     ),
   require1hConfirmation:
@@ -102,12 +102,12 @@ const cfg = {
 
   requirePullbackTrigger:
     String(
-      process.env.QUALITY_REQUIRE_PULLBACK_TRIGGER || 'true'
+      process.env.QUALITY_REQUIRE_PULLBACK_TRIGGER || 'false'
     ).toLowerCase() !== 'false',
 
   requireContextualOi:
     String(
-      process.env.QUALITY_REQUIRE_CONTEXTUAL_OI || 'true'
+      process.env.QUALITY_REQUIRE_CONTEXTUAL_OI || 'false'
     ).toLowerCase() !== 'false',
 
   pullbackLookback:
@@ -142,7 +142,7 @@ const cfg = {
       0,
       Math.min(
         2,
-        Number(process.env.QUALITY_CONTEXT_OI_MIN_PCT || 0.08)
+        Number(process.env.QUALITY_CONTEXT_OI_MIN_PCT || 0.05)
       )
     ),
 
@@ -155,22 +155,72 @@ const cfg = {
       )
     ),
 
+  momentumMinConfirmations:
+    Math.max(
+      2,
+      Math.min(
+        3,
+        Number(process.env.QUALITY_MOMENTUM_MIN_CONFIRMATIONS || 2)
+      )
+    ),
+
+  breakoutEnabled:
+    String(
+      process.env.QUALITY_BREAKOUT_ENABLED || 'true'
+    ).toLowerCase() !== 'false',
+
+  breakoutMinScore:
+    Math.max(
+      75,
+      Math.min(
+        100,
+        Number(process.env.QUALITY_BREAKOUT_MIN_SCORE || 82)
+      )
+    ),
+
+  breakoutMinVolumeRatio:
+    Math.max(
+      0.45,
+      Math.min(
+        3,
+        Number(process.env.QUALITY_BREAKOUT_MIN_VOLUME_RATIO || 0.80)
+      )
+    ),
+
+  breakoutMinDirectionEdge:
+    Math.max(
+      5,
+      Math.min(
+        50,
+        Number(process.env.QUALITY_BREAKOUT_MIN_EDGE || 10)
+      )
+    ),
+
+  breakoutMinBodyAtr:
+    Math.max(
+      0.10,
+      Math.min(
+        1.50,
+        Number(process.env.QUALITY_BREAKOUT_MIN_BODY_ATR || 0.20)
+      )
+    ),
+
   aiEnabled: String(process.env.AI_ENABLED || 'true').toLowerCase() !== 'false',
-  aiMinConfidence: Number(process.env.AI_MIN_CONFIDENCE || 68),
+  aiMinConfidence: Number(process.env.AI_MIN_CONFIDENCE || 65),
   aiFailOpen: String(process.env.AI_FAIL_OPEN || 'false').toLowerCase() === 'true',
   // V1.6.8 HOLD AI: até 2 candidatos por ciclo.
   // O limite diário global continua protegendo a cota.
   aiMaxCandidates: Math.min(
-    Math.max(Number(process.env.AI_MAX_CANDIDATES || 2), 1),
-    2
+    Math.max(Number(process.env.AI_MAX_CANDIDATES || 3), 1),
+    3
   ),
   aiBurstSecondCandidate:
     String(process.env.AI_BURST_SECOND_CANDIDATE || 'true')
       .toLowerCase() !== 'false',
   // Reserva algumas chamadas abaixo do teto diário do plano gratuito.
-  aiDailyLimit: Math.min(Math.max(Number(process.env.AI_DAILY_LIMIT || 60), 1), 75),
+  aiDailyLimit: Math.min(Math.max(Number(process.env.AI_DAILY_LIMIT || 70), 1), 80),
   // 30 min para candidatos normais.
-  aiMinGapMin: Math.max(Number(process.env.AI_MIN_GAP_MINUTES || 10), 1),
+  aiMinGapMin: Math.max(Number(process.env.AI_MIN_GAP_MINUTES || 8), 1),
 
   // V1.6.8 HOLD AI: prioridade adaptativa mais agressiva.
   // NORMAL: gap 20 min.
@@ -179,9 +229,9 @@ const cfg = {
   aiPriorityEnabled:
     String(process.env.AI_PRIORITY_ENABLED || 'true').toLowerCase() !== 'false',
 
-  aiPriorityScore: Number(process.env.AI_PRIORITY_SCORE || 85),
-  aiPriorityVolumeRatio: Number(process.env.AI_PRIORITY_VOLUME_RATIO || 0.55),
-  aiPriorityOiPct: Number(process.env.AI_PRIORITY_OI_PCT || 0.70),
+  aiPriorityScore: Number(process.env.AI_PRIORITY_SCORE || 82),
+  aiPriorityVolumeRatio: Number(process.env.AI_PRIORITY_VOLUME_RATIO || 0.60),
+  aiPriorityOiPct: Number(process.env.AI_PRIORITY_OI_PCT || 0.20),
   aiPriorityGapMin: Math.max(
     Number(process.env.AI_PRIORITY_GAP_MINUTES || 3),
     1
@@ -3023,7 +3073,13 @@ async function doScan({
       pullbackTouchAtr: cfg.pullbackTouchAtr,
       triggerMinBodyAtr: cfg.triggerMinBodyAtr,
       contextualOiMinPct: cfg.contextualOiMinPct,
-      contextualPriceMinPct: cfg.contextualPriceMinPct
+      contextualPriceMinPct: cfg.contextualPriceMinPct,
+      momentumMinConfirmations: cfg.momentumMinConfirmations,
+      breakoutEnabled: cfg.breakoutEnabled,
+      breakoutMinScore: cfg.breakoutMinScore,
+      breakoutMinVolumeRatio: cfg.breakoutMinVolumeRatio,
+      breakoutMinDirectionEdge: cfg.breakoutMinDirectionEdge,
+      breakoutMinBodyAtr: cfg.breakoutMinBodyAtr
     });
 
     // Atualiza primeiro as posições paper usando somente candle fechado.
@@ -3272,7 +3328,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.7.4 ADAPTIVE STALE</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.7.5 BALANCED ACTIVE</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o próximo lote agora\n' +
       '/scheduler — ver rotação automática de 1 minuto\n' +
@@ -3311,7 +3367,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.7.4 ADAPTIVE STALE\n` +
+      `✅ Online — V1.7.5 BALANCED ACTIVE\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🛡 Modo: CONFIDENCE GUARD V1.5.9\n` +
       `🤖 APPROVE exige confidence válida; ausente/0% vira WAIT\n` +
@@ -3327,15 +3383,15 @@ async function handleMessage(msg) {
       `🎯 TPs-base: 0.90R / 1.40R / 2.10R · Net R/R continua >= 1.50\n` +
       `🪜 Stop Gain Runner: TP1→BE · TP2→TP1 · TP3→TP2 · TP4+ sobe por degraus\n` +
       `⏳ Adaptive Stale: revisão 60m · 2 checks · 2/3 deteriorações · hard 90m · timeout 2h\n` +
-      `🎯 Perfil: QUALITY AGGRESSIVE · alvo 8–12 PAPER trades/dia · cap 15\n` +
+      `⚖️ Perfil: BALANCED ACTIVE · alvo 4–8 PAPER trades/dia · cap 10\n` +
       `⭐ Score mínimo para sinal: ${cfg.minScore}\n` +
       `⚖️ Direction Balance: ATIVO · LONG/SHORT simétricos\n` +
       `↔️ Edge direcional mínimo: ${cfg.minDirectionEdge} pontos\n` +
       `🕐 Confirmação 1H: ${cfg.require1hConfirmation ? 'OBRIGATÓRIA' : 'FLEXÍVEL'}\n` +
-      `🚦 Momentum: ${cfg.requireMomentumBundle ? 'volume + OI contextual + MACD' : 'flexível'}\n` +
-      `↩️ Pullback Engine: ${cfg.requirePullbackTrigger ? 'OBRIGATÓRIO' : 'FLEXÍVEL'} · lookback ${cfg.pullbackLookback} candles\n` +
-      `🎯 Trigger 5m: corpo >= ${cfg.triggerMinBodyAtr.toFixed(2)} ATR · reteste EMA20/EMA50\n` +
-      `📈 OI contextual: ${cfg.requireContextualOi ? 'OBRIGATÓRIO' : 'FLEXÍVEL'} · mínimo +${cfg.contextualOiMinPct.toFixed(2)}%\n` +
+      `🚦 Momentum: ${cfg.requireMomentumBundle ? `${cfg.momentumMinConfirmations}/3 confirmações · Vol/MACD/OI` : 'flexível'}\n` +
+      `↩️ Entrada A: PULLBACK preferencial · 1H + 15m + trigger 5m\n` +
+      `🚀 Entrada B: BREAKOUT FORTE · score ${cfg.breakoutMinScore}+ · vol ${cfg.breakoutMinVolumeRatio.toFixed(2)}x+ · edge ${cfg.breakoutMinDirectionEdge}+\n` +
+      `📈 OI contextual: analisado no momentum; não bloqueia sozinho\n` +
       `🛑 Anti-chase/reteste: ${cfg.antiChaseEnabled ? 'ATIVO' : 'INATIVO'}\n` +
       `₿ Regime BTC 1H+4H: ${cfg.btcRegimeGuardEnabled ? 'ATIVO' : 'INATIVO'}\n` +
       `₿ Contexto BTC: ajuste simétrico em alts · cache máx 10 min\n` +
@@ -3755,7 +3811,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.7.4-adaptive-stale',
+    version: '1.7.5-balanced-active',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -3803,7 +3859,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.7.4 ADAPTIVE STALE pronto ✅');
+console.log('Crypto Futures Scanner V1.7.5 BALANCED ACTIVE pronto ✅');
 
 // Em rolling deploy o processo antigo do Render pode permanecer vivo por
 // alguns segundos. Um pequeno atraso evita duas instâncias consumindo a

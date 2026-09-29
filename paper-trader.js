@@ -49,10 +49,10 @@ export function paperConfig() {
       intEnv('PAPER_MAX_OPEN_POSITIONS', 4, 1, 20),
 
     targetTradesPerDayMin:
-      intEnv('PAPER_TARGET_TRADES_MIN', 8, 1, 100),
+      intEnv('PAPER_TARGET_TRADES_MIN', 4, 1, 100),
 
     maxTradesPerDay:
-      intEnv('PAPER_MAX_TRADES_PER_DAY', 15, 1, 100),
+      intEnv('PAPER_MAX_TRADES_PER_DAY', 10, 1, 100),
 
     onePositionPerSymbol:
       String(process.env.PAPER_ONE_POSITION_PER_SYMBOL || 'true')
@@ -62,10 +62,16 @@ export function paperConfig() {
       numEnv('PAPER_MIN_NOTIONAL_USDC', 10, 1, 10000),
 
     minAiConfidence:
-      numEnv('PAPER_MIN_AI_CONFIDENCE', 68, 0, 100),
+      numEnv('PAPER_MIN_AI_CONFIDENCE', 65, 0, 100),
 
     minScore:
-      numEnv('PAPER_MIN_SCORE', 70, 0, 100),
+      numEnv('PAPER_MIN_SCORE', 68, 0, 100),
+
+    breakoutMinAiConfidence:
+      numEnv('PAPER_BREAKOUT_MIN_AI_CONFIDENCE', 75, 0, 100),
+
+    breakoutMinScore:
+      numEnv('PAPER_BREAKOUT_MIN_SCORE', 82, 0, 100),
 
     feeRate:
       numEnv('PAPER_FEE_RATE', 0.00045, 0, 0.01),
@@ -77,7 +83,7 @@ export function paperConfig() {
       numEnv('PAPER_DAILY_LOSS_LIMIT_PCT', 3, 0.1, 50),
 
     cooldownMin:
-      numEnv('PAPER_COOLDOWN_MINUTES', 15, 0, 1440),
+      numEnv('PAPER_COOLDOWN_MINUTES', 12, 0, 1440),
 
     maxHoldHours:
       numEnv('PAPER_MAX_HOLD_HOURS', 2, 0.5, 720),
@@ -555,15 +561,44 @@ function eligibility(signal) {
   const brake =
     lossBrakeStatus();
 
-  const effectiveMinAiConfidence =
-    brake.active
-      ? brake.effectiveMinAiConfidence
+  const isBreakout =
+    String(
+      signal?.entryMode ||
+      ''
+    ).toUpperCase() ===
+      'BREAKOUT_STRONG';
+
+  const baseMinAiConfidence =
+    isBreakout
+      ? Math.max(
+          cfg.minAiConfidence,
+          cfg.breakoutMinAiConfidence
+        )
       : cfg.minAiConfidence;
 
-  const effectiveMinScore =
-    brake.active
-      ? brake.effectiveMinScore
+  const baseMinScore =
+    isBreakout
+      ? Math.max(
+          cfg.minScore,
+          cfg.breakoutMinScore
+        )
       : cfg.minScore;
+
+  const effectiveMinAiConfidence =
+    baseMinAiConfidence +
+    (
+      brake.active
+        ? cfg.lossBrakeAiBoost
+        : 0
+    );
+
+  const effectiveMinScore =
+    baseMinScore +
+    (
+      brake.active
+        ? cfg.lossBrakeScoreBoost
+        : 0
+    );
 
   if (!cfg.enabled) {
     return {
@@ -598,6 +633,7 @@ function eligibility(signal) {
       reason:
         `IA ${Math.round(signal?.ai?.confidence || 0)}% < ` +
         `${effectiveMinAiConfidence}%` +
+        `${isBreakout ? ' (BREAKOUT FORTE)' : ''}` +
         `${brake.active ? ` (LOSS BRAKE ${brake.count} perdas · ${brake.remainingMin.toFixed(0)}m)` : ''}`
     };
   }
@@ -610,6 +646,7 @@ function eligibility(signal) {
       ok: false,
       reason:
         `score ${signal?.score || 0} < ${effectiveMinScore}` +
+        `${isBreakout ? ' (BREAKOUT FORTE)' : ''}` +
         `${brake.active ? ` (LOSS BRAKE ${brake.count} perdas · ${brake.remainingMin.toFixed(0)}m)` : ''}`
     };
   }
@@ -1389,6 +1426,8 @@ export function maybeOpenPaperPosition(signal) {
         Boolean(signal.btcRegime?.exceptional),
       setupAntiChaseRetest:
         Boolean(signal.antiChase?.retest),
+      setupEntryMode:
+        signal.entryMode || 'PULLBACK',
       setupPullbackConfirmed:
         Boolean(signal.pullback?.confirmed),
       setupPullbackBodyAtr:
@@ -1553,6 +1592,7 @@ export function maybeOpenPaperPosition(signal) {
         `${signal.side === 'LONG' ? '🟢' : '🔴'} ` +
         `<b>${signal.symbol} ${signal.side}</b>\n` +
         `⭐ Score ${position.score} · 🤖 IA ${Math.round(position.aiConfidence)}%\n` +
+        `🧭 Entrada: ${position.setupEntryMode || 'PULLBACK'}\n` +
         `💰 Entrada simulada: ${round(entryFill)}\n` +
         `🛑 Stop: ${round(position.stopCurrent)}\n` +
         `${position.smartStopMode ? `🧠 Smart Stop: ${position.smartStopMode}` +
@@ -1726,7 +1766,7 @@ function positionCloseMessage(closed) {
     `💸 Taxas simuladas: ${closed.totalFees.toFixed(4)} USDC\n` +
     `📊 Retorno sobre margem: ${closed.returnOnMarginPct >= 0 ? '+' : ''}${closed.returnOnMarginPct.toFixed(2)}%\n` +
     `📈 MFE: +${Number(closed.mfeR || 0).toFixed(2)}R · 📉 MAE: -${Number(closed.maeR || 0).toFixed(2)}R\n` +
-    `${closed.setupOiContextRegime ? `🧭 Setup: ${closed.setupOiContextRegime} · pullback ${closed.setupPullbackConfirmed ? 'SIM' : 'NÃO'}\n` : ''}` +
+    `${closed.setupOiContextRegime ? `🧭 Setup: ${closed.setupEntryMode || 'PULLBACK'} · ${closed.setupOiContextRegime} · pullback ${closed.setupPullbackConfirmed ? 'SIM' : 'NÃO'}\n` : ''}` +
     `🏦 Banca: ${state.balance.toFixed(2)} USDC`
   );
 }
@@ -3354,7 +3394,7 @@ export function paperStatusText() {
       : null;
 
   return [
-    '⏳ <b>PAPER TRADING — V1.7.4 ADAPTIVE STALE</b>',
+    '⚖️ <b>PAPER TRADING — V1.7.5 BALANCED ACTIVE</b>',
     '',
     `Status: ${cfg.enabled ? '✅ ATIVO' : '⛔ DESATIVADO'} · ${state.paused ? '⏸ PAUSADO' : '▶️ RODANDO'}`,
     `💰 Banca inicial: ${state.startingBalance.toFixed(2)} USDC`,
@@ -3364,7 +3404,7 @@ export function paperStatusText() {
     `💵 Retorno total: ${pnlFromStart >= 0 ? '+' : ''}${pnlFromStart.toFixed(2)} USDC (${returnPct >= 0 ? '+' : ''}${returnPct.toFixed(2)}%)`,
     '',
     `📌 Posições abertas: ${state.openPositions.length}/${cfg.maxOpenPositions}`,
-    `🎯 Meta diária: ${cfg.targetTradesPerDayMin}–12 entradas · cap ${cfg.maxTradesPerDay} · hoje ${todayEntryCount()}/${cfg.maxTradesPerDay}`,
+    `⚖️ Meta diária: ${cfg.targetTradesPerDayMin}–8 entradas · cap ${cfg.maxTradesPerDay} · hoje ${todayEntryCount()}/${cfg.maxTradesPerDay}`,
     `🔒 1 posição por moeda: ${cfg.onePositionPerSymbol ? 'ATIVO' : 'INATIVO'}`,
     `🧯 Loss Brake: ${cfg.lossBrakeEnabled ? 'ATIVO' : 'INATIVO'} · após ${cfg.lossBrakeConsecutive} perdas: +${cfg.lossBrakeScoreBoost} score / +${cfg.lossBrakeAiBoost}% IA por ${cfg.lossBrakeMinutes}m`,
     `🔒 Margem usada: ${used.toFixed(2)} USDC`,
@@ -3374,7 +3414,8 @@ export function paperStatusText() {
     `⚡ Scalp: ${cfg.scalpMode ? 'ATIVO' : 'INATIVO'} · stale adaptativo ${cfg.scalpStaleMin}/${cfg.scalpStaleMaxMin} min · máx ${cfg.maxHoldHours}h`,
     `⏳ Stale: ${cfg.scalpStaleConsecutiveChecks} checks · ${cfg.scalpStaleDeteriorationCount}/3 deteriorações · MFE ${cfg.scalpStaleMinProgressR.toFixed(2)}R/${cfg.scalpStaleHardProgressR.toFixed(2)}R`,
     `🧠 Smart Stop: estrutura 5m + ATR · alvo 1.25–2.00 ATR`,
-    `↩️ Entrada: Trend 1H + estrutura 15m + Pullback/Trigger 5m`,
+    `🧭 Entradas: PULLBACK preferencial + BREAKOUT FORTE`,
+    `🚀 Breakout PAPER: score ${cfg.breakoutMinScore}+ · IA ${cfg.breakoutMinAiConfidence}%+`,
     `📊 Diagnóstico: MFE/MAE por trade ATIVO`,
     `🛡 Profit Protect: ${cfg.profitProtectEnabled ? 'ATIVO' : 'INATIVO'} · buffer ${cfg.profitProtectBufferPctNotional.toFixed(2)}% do notional`,
     `🪜 Stop Gain Runner: ${cfg.trailingRunnerEnabled ? 'ATIVO' : 'INATIVO'} · TP3 fecha ${cfg.tp3ClosePct.toFixed(0)}% · runner ${Math.max(0, 40 - cfg.tp3ClosePct).toFixed(0)}%`,
@@ -3467,7 +3508,7 @@ export function paperTradesText(limit = 10) {
       `PnL ${t.netPnl >= 0 ? '+' : ''}${Number(t.netPnl || 0).toFixed(2)} USDC · ` +
       `ROM ${Number(t.returnOnMarginPct || 0) >= 0 ? '+' : ''}${Number(t.returnOnMarginPct || 0).toFixed(2)}%\n` +
       `📈 MFE +${Number(t.mfeR || 0).toFixed(2)}R · 📉 MAE -${Number(t.maeR || 0).toFixed(2)}R\n` +
-      `${t.setupOiContextRegime ? `🧭 ${t.setupOiContextRegime} · pullback ${t.setupPullbackConfirmed ? 'SIM' : 'NÃO'}\n` : ''}` +
+      `${t.setupOiContextRegime ? `🧭 ${t.setupEntryMode || 'PULLBACK'} · ${t.setupOiContextRegime} · pullback ${t.setupPullbackConfirmed ? 'SIM' : 'NÃO'}\n` : ''}` +
       `Taxas ${Number(t.totalFees || 0).toFixed(4)} USDC`
     );
   }

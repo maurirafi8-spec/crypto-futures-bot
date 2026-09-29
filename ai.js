@@ -87,6 +87,9 @@ function buildPayload(signal) {
       exchange: signal.exchange,
       side: signal.side,
       score: signal.score,
+      entryMode: signal.entryMode || null,
+      breakoutStrong:
+        signal.breakout || null,
       longScore: signal.longScore ?? null,
       shortScore: signal.shortScore ?? null,
       directionEdge: signal.directionEdge ?? null,
@@ -171,8 +174,10 @@ function systemPrompt() {
     'Trate LONG e SHORT de forma totalmente simétrica. Não favoreça LONG por padrão.',
     'O lado enviado já passou por um placar LONG x SHORT; confirme se 1h sustenta esse lado.',
     'Considere o contexto BTC: se 1H e 4H do BTC estiverem claramente contrários ao lado da altcoin, exija evidência excepcional.',
-    'O setup principal agora é Trend + Pullback + Trigger: 1H define direção, 15m confirma estrutura, 5m precisa mostrar pullback/reteste e candle de trigger fechado.',
-    'Não aprove entrada apenas porque todos os indicadores já estão alinhados; se o pullback/trigger não estiver confirmado, use WAIT ou REJECT.',
+    'Existem dois modos válidos de entrada: PULLBACK e BREAKOUT_STRONG.',
+    'PULLBACK é o modo preferencial: 1H define direção, 15m confirma estrutura e 5m mostra reteste/trigger.',
+    'BREAKOUT_STRONG pode entrar sem pullback somente quando o scanner marcou esse modo; nesse caso seja mais exigente e só dê APPROVE com convicção alta.',
+    'No BREAKOUT_STRONG, procure volume forte, OI contextual favorável, MACD alinhado, fechamento forte e ausência de conflito importante com BTC.',
     'Interprete Open Interest junto com preço: preço sobe + OI sobe favorece buildup LONG; preço cai + OI sobe favorece buildup SHORT; OI caindo sugere fechamento/liquidação, não nova confirmação direcional.',
     'Não aprove entrada perseguindo candle já esticado; prefira pullback/reteste com momentum ainda válido.',
     'Para APPROVE, volume, OI contextual e MACD devem estar coerentes com o trigger.',
@@ -511,7 +516,7 @@ async function fetchOpenRouter({ apiKey, body, timeoutMs }) {
         'HTTP-Referer':
           process.env.OPENROUTER_SITE_URL ||
           'https://crypto-futures-bot.onrender.com',
-        'X-Title': 'Crypto Futures Scanner V1.7.4 Free'
+        'X-Title': 'Crypto Futures Scanner V1.7.5 Free'
       },
       body: JSON.stringify(body),
       signal: controller.signal
