@@ -1,113 +1,130 @@
-CRYPTO FUTURES SCANNER V1.7.5 — BALANCED ACTIVE
+CRYPTO FUTURES SCANNER V1.7.6 — PERFORMANCE GUARD
 
 OBJETIVO
-Voltar a dar atividade ao bot sem retornar ao excesso de entradas fracas.
+Parar de insistir automaticamente em um lado ou setup que esteja
+performando mal na amostra recente.
 
-META
-4–8 PAPER trades/dia em mercado normal.
-Cap máximo: 10 entradas/dia.
-A quantidade depende das oportunidades e não é garantida.
+1) SIDE CIRCUIT BREAKER
 
-FILTRO BASE
-Score mínimo: 68
-IA mínima: 65%
-Edge direcional: 5
-1H continua obrigatório
-Volume mínimo absoluto: 0.45x
-Anti-chase continua obrigatório
-Regime BTC continua ativo
-Net R/R mínimo continua 1.50
+LONG e SHORT são avaliados separadamente.
 
-MOMENTUM 2 DE 3
+Padrão:
+- olha os últimos 6 trades daquele lado;
+- precisa ter pelo menos 5 trades;
+- Profit Factor abaixo de 0.60;
+- win rate <= 40%;
+- pelo menos 2 perdas consecutivas recentes.
 
-Antes:
-Volume + OI + MACD precisavam TODOS confirmar.
+Se tudo ocorrer:
+=> pausa novas entradas daquele LADO por 90 minutos.
 
-Agora:
-pelo menos 2 de 3:
+Exemplo:
+SHORT últimos 6:
+1 win / 5 losses
+PF 0.20
+últimos 2 perderam
+=> SHORT pausado 90 min.
+LONG continua normalmente.
 
-1. Volume
-2. OI contextual
-3. MACD
+Depois dos 90 min:
+o lado pode fazer uma nova entrada de teste.
+Se essa entrada perder e a janela continuar ruim, a pausa reinicia.
+Se ganhar, a sequência de perdas é quebrada.
 
-Como o piso de volume é 0.45x, normalmente o setup precisa de:
-volume + MACD
-OU
-volume + OI contextual.
+2) SETUP CIRCUIT BREAKER
 
-OI CONTEXTUAL
+A mesma proteção existe separadamente para:
+- PULLBACK
+- BREAKOUT_STRONG
 
-Continua sendo calculado e enviado à IA.
-Porém não é mais um bloqueio isolado.
+Assim o bot pode continuar usando o setup saudável e pausar apenas
+o setup que estiver degradado.
 
-Se o OI estiver neutro, um bom Pullback com volume + MACD
-ainda pode ser analisado.
+3) PERFORMANCE QUALITY
 
-DOIS MODOS DE ENTRADA
+Além dos circuit breakers, o bot olha a qualidade geral recente.
 
-A) PULLBACK — PREFERENCIAL
+Padrão:
+- últimos 10 trades;
+- mínimo 8 trades;
+- se PF < 0.80 OU payoff real < 0.70:
+  score mínimo sobe +5
+  IA mínima sobe +4%.
 
-1H alinhado
-15m alinhado
-pullback/reteste em 5m
-trigger fechado
+Isso NÃO pausa tudo.
+Só deixa o bot mais exigente enquanto a performance estiver ruim.
 
-É o setup principal.
+4) PAYOFF REAL
 
-B) BREAKOUT_STRONG
+O /performance mostra:
 
-Pode entrar sem pullback, mas exige por padrão:
+média dos wins
+média das losses
+payoff real = média win / média loss
+profit factor
+expectativa média por trade
 
-score >= 82
-volume >= 0.80x
-edge >= 10
-OI contextual favorável
-MACD alinhado
-candle 5m com corpo >= 0.20 ATR
-fechamento forte na direção
-1H + 15m alinhados
-Anti-chase aprovado
-Regime BTC aprovado
+Isso permite comparar o R/R PROJETADO com o resultado REAL.
 
-Além disso no PAPER:
-IA precisa ser >= 75%.
+5) MFE / MAE AGREGADOS
 
-Assim o bot não precisa esperar pullback perfeito em movimentos fortes,
-mas também não persegue qualquer rompimento.
+Mostra:
+- MFE/MAE médio de todos;
+- MFE/MAE dos vencedores;
+- MFE/MAE dos perdedores.
 
-PAPER
+Se losers têm MFE muito baixo:
+=> entrada ruim/timing ruim.
 
-Score normal: 68
-IA normal: 65%
+Se losers têm MFE alto antes de perder:
+=> gestão/TP/proteção merece revisão.
 
-BREAKOUT_STRONG:
-Score: 82+
-IA: 75%+
+6) BREAKDOWN
 
-Meta: 4–8
-Cap: 10
-Máximo simultâneo: 4
-Cooldown por moeda: 12 min
+/ performance mostra:
+- LONG
+- SHORT
+- PULLBACK
+- BREAKOUT
+- score 60–69 / 70–79 / 80–89 / 90+
+- IA 60–69 / 70–79 / 80–89 / 90+
 
-LOSS BRAKE
+7) DIRECTIONAL AUDIT
 
-Continua ativo.
-Após duas perdas seguidas, os mínimos sobem temporariamente.
+/debug agora mostra separadamente LONG e SHORT:
 
-ADAPTIVE STALE
+analisados
+aprovados técnicos
+pré-candidatos
+bloqueios por:
+- score
+- 1H
+- momentum
+- setup de entrada
+- anti-chase
+- regime BTC
 
-Mantido:
-60m primeira revisão
-2 checks consecutivos
-2/3 deteriorações
-hard stale 90m se MFE < 0.25R
-timeout 2h
+Assim dá para descobrir se 0 LONG é o mercado ou viés do filtro.
+
+NOVO COMANDO
+
+/performance
+ou
+/perf
 
 MANTIDO
-- Smart Stop 1.25–2 ATR
-- Stop Gain Runner
-- Profit Protect
+- Balanced Active 4–8/dia
+- Pullback preferencial
+- Breakout Strong
+- Momentum 2/3
+- 1H obrigatório
+- Anti-chase
+- Regime BTC
 - Net R/R 1.50
+- Smart Stop
+- Stop Gain Runner
+- Adaptive Stale 60/90
+- Loss Brake
 - MFE/MAE
 - Telegram Safe
 - Gemini Rescue
@@ -115,29 +132,20 @@ MANTIDO
 
 ENV OPCIONAL
 
-MIN_SCORE=68
-PRE_CANDIDATE_MIN_SCORE=60
-V122_VOLUME_CONFIRM_RATIO=0.45
-V122_HARD_MIN_VOLUME_RATIO=0.45
-V122_OI_CONFIRM_PCT=0.05
-DIRECTION_MIN_EDGE=5
-DIRECTION_REQUIRE_1H=true
-AI_MIN_CONFIDENCE=65
+PAPER_PERFORMANCE_GUARD_ENABLED=true
+PAPER_PERFORMANCE_LOOKBACK=6
+PAPER_PERFORMANCE_MIN_TRADES=5
+PAPER_PERFORMANCE_MIN_PROFIT_FACTOR=0.60
+PAPER_PERFORMANCE_MAX_WIN_RATE_PCT=40
+PAPER_PERFORMANCE_RECENT_LOSSES=2
+PAPER_PERFORMANCE_PAUSE_MINUTES=90
 
-QUALITY_MOMENTUM_MIN_CONFIRMATIONS=2
-QUALITY_REQUIRE_PULLBACK_TRIGGER=false
-QUALITY_REQUIRE_CONTEXTUAL_OI=false
+PAPER_SETUP_GUARD_ENABLED=true
 
-QUALITY_BREAKOUT_ENABLED=true
-QUALITY_BREAKOUT_MIN_SCORE=82
-QUALITY_BREAKOUT_MIN_VOLUME_RATIO=0.80
-QUALITY_BREAKOUT_MIN_EDGE=10
-QUALITY_BREAKOUT_MIN_BODY_ATR=0.20
-
-PAPER_MIN_SCORE=68
-PAPER_MIN_AI_CONFIDENCE=65
-PAPER_BREAKOUT_MIN_SCORE=82
-PAPER_BREAKOUT_MIN_AI_CONFIDENCE=75
-PAPER_TARGET_TRADES_MIN=4
-PAPER_MAX_TRADES_PER_DAY=10
-PAPER_COOLDOWN_MINUTES=12
+PAPER_PERFORMANCE_QUALITY_ENABLED=true
+PAPER_PERFORMANCE_QUALITY_LOOKBACK=10
+PAPER_PERFORMANCE_QUALITY_MIN_TRADES=8
+PAPER_PERFORMANCE_QUALITY_MIN_PF=0.80
+PAPER_PERFORMANCE_QUALITY_MIN_PAYOFF=0.70
+PAPER_PERFORMANCE_QUALITY_SCORE_BOOST=5
+PAPER_PERFORMANCE_QUALITY_AI_BOOST=4

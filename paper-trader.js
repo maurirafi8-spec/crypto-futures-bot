@@ -129,6 +129,55 @@ export function paperConfig() {
     lossBrakeAiBoost:
       numEnv('PAPER_LOSS_BRAKE_AI_BOOST', 5, 0, 30),
 
+    // V1.7.6 PERFORMANCE GUARD
+    performanceGuardEnabled:
+      String(process.env.PAPER_PERFORMANCE_GUARD_ENABLED || 'true')
+        .toLowerCase() !== 'false',
+
+    performanceLookback:
+      intEnv('PAPER_PERFORMANCE_LOOKBACK', 6, 4, 30),
+
+    performanceMinTrades:
+      intEnv('PAPER_PERFORMANCE_MIN_TRADES', 5, 3, 30),
+
+    performanceMinProfitFactor:
+      numEnv('PAPER_PERFORMANCE_MIN_PROFIT_FACTOR', 0.60, 0, 5),
+
+    performanceMaxWinRatePct:
+      numEnv('PAPER_PERFORMANCE_MAX_WIN_RATE_PCT', 40, 0, 100),
+
+    performanceRecentLosses:
+      intEnv('PAPER_PERFORMANCE_RECENT_LOSSES', 2, 1, 6),
+
+    performancePauseMin:
+      numEnv('PAPER_PERFORMANCE_PAUSE_MINUTES', 90, 15, 720),
+
+    setupGuardEnabled:
+      String(process.env.PAPER_SETUP_GUARD_ENABLED || 'true')
+        .toLowerCase() !== 'false',
+
+    performanceQualityEnabled:
+      String(process.env.PAPER_PERFORMANCE_QUALITY_ENABLED || 'true')
+        .toLowerCase() !== 'false',
+
+    performanceQualityLookback:
+      intEnv('PAPER_PERFORMANCE_QUALITY_LOOKBACK', 10, 6, 30),
+
+    performanceQualityMinTrades:
+      intEnv('PAPER_PERFORMANCE_QUALITY_MIN_TRADES', 8, 5, 30),
+
+    performanceQualityMinPf:
+      numEnv('PAPER_PERFORMANCE_QUALITY_MIN_PF', 0.80, 0, 5),
+
+    performanceQualityMinPayoff:
+      numEnv('PAPER_PERFORMANCE_QUALITY_MIN_PAYOFF', 0.70, 0, 5),
+
+    performanceQualityScoreBoost:
+      numEnv('PAPER_PERFORMANCE_QUALITY_SCORE_BOOST', 5, 0, 30),
+
+    performanceQualityAiBoost:
+      numEnv('PAPER_PERFORMANCE_QUALITY_AI_BOOST', 4, 0, 30),
+
     profitProtectEnabled:
       String(process.env.PAPER_PROFIT_PROTECT_ENABLED || 'true')
         .toLowerCase() !== 'false',
@@ -487,6 +536,412 @@ function cooldownBlocked(signal) {
 }
 
 
+
+function tradeMetrics(
+  trades
+) {
+  const list =
+    Array.isArray(trades)
+      ? trades
+      : [];
+
+  const wins =
+    list.filter(
+      t =>
+        Number(t?.netPnl || 0) >
+        0.000001
+    );
+
+  const losses =
+    list.filter(
+      t =>
+        Number(t?.netPnl || 0) <
+        -0.000001
+    );
+
+  const grossProfit =
+    wins.reduce(
+      (sum, t) =>
+        sum +
+        Number(t?.netPnl || 0),
+      0
+    );
+
+  const grossLossAbs =
+    Math.abs(
+      losses.reduce(
+        (sum, t) =>
+          sum +
+          Number(t?.netPnl || 0),
+        0
+      )
+    );
+
+  const avgWin =
+    wins.length
+      ? grossProfit /
+        wins.length
+      : 0;
+
+  const avgLossAbs =
+    losses.length
+      ? grossLossAbs /
+        losses.length
+      : 0;
+
+  const profitFactor =
+    grossLossAbs > 0
+      ? grossProfit /
+        grossLossAbs
+      : grossProfit > 0
+        ? Infinity
+        : 0;
+
+  const payoffRatio =
+    avgLossAbs > 0
+      ? avgWin /
+        avgLossAbs
+      : avgWin > 0
+        ? Infinity
+        : 0;
+
+  let recentLossStreak = 0;
+
+  for (const trade of list) {
+    if (
+      Number(trade?.netPnl || 0) <
+      -0.000001
+    ) {
+      recentLossStreak += 1;
+    } else {
+      break;
+    }
+  }
+
+  const avgField = (
+    source,
+    field
+  ) =>
+    source.length
+      ? source.reduce(
+          (sum, t) =>
+            sum +
+            Number(t?.[field] || 0),
+          0
+        ) /
+        source.length
+      : 0;
+
+  return {
+    total:
+      list.length,
+    wins:
+      wins.length,
+    losses:
+      losses.length,
+    flat:
+      list.length -
+      wins.length -
+      losses.length,
+    pnl:
+      list.reduce(
+        (sum, t) =>
+          sum +
+          Number(t?.netPnl || 0),
+        0
+      ),
+    winRate:
+      list.length
+        ? wins.length /
+          list.length *
+          100
+        : 0,
+    grossProfit,
+    grossLossAbs,
+    profitFactor,
+    avgWin,
+    avgLossAbs,
+    payoffRatio,
+    avgNet:
+      list.length
+        ? list.reduce(
+            (sum, t) =>
+              sum +
+              Number(t?.netPnl || 0),
+            0
+          ) /
+          list.length
+        : 0,
+    avgMfe:
+      avgField(
+        list,
+        'mfeR'
+      ),
+    avgMae:
+      avgField(
+        list,
+        'maeR'
+      ),
+    winnersMfe:
+      avgField(
+        wins,
+        'mfeR'
+      ),
+    winnersMae:
+      avgField(
+        wins,
+        'maeR'
+      ),
+    losersMfe:
+      avgField(
+        losses,
+        'mfeR'
+      ),
+    losersMae:
+      avgField(
+        losses,
+        'maeR'
+      ),
+    recentLossStreak,
+    newestClosedAt:
+      Number(
+        list?.[0]?.closedAt ||
+        0
+      )
+  };
+}
+
+function recentTradesMatching(
+  predicate,
+  limit
+) {
+  const out = [];
+
+  for (
+    const trade of
+    state.closedTrades
+  ) {
+    if (
+      predicate(trade)
+    ) {
+      out.push(trade);
+    }
+
+    if (
+      out.length >=
+      limit
+    ) {
+      break;
+    }
+  }
+
+  return out;
+}
+
+function performanceCircuitStatus(
+  kind,
+  value
+) {
+  const cfg =
+    paperConfig();
+
+  const normalized =
+    String(
+      value || ''
+    )
+      .toUpperCase();
+
+  if (
+    !cfg.performanceGuardEnabled ||
+    !normalized
+  ) {
+    return {
+      active: false,
+      poor: false,
+      kind,
+      value: normalized,
+      metrics:
+        tradeMetrics([])
+    };
+  }
+
+  if (
+    kind === 'SETUP' &&
+    !cfg.setupGuardEnabled
+  ) {
+    return {
+      active: false,
+      poor: false,
+      kind,
+      value: normalized,
+      metrics:
+        tradeMetrics([])
+    };
+  }
+
+  const trades =
+    recentTradesMatching(
+      trade => {
+        if (kind === 'SIDE') {
+          return (
+            String(
+              trade?.side ||
+              ''
+            ).toUpperCase() ===
+            normalized
+          );
+        }
+
+        return (
+          String(
+            trade?.setupEntryMode ||
+            'PULLBACK'
+          ).toUpperCase() ===
+          normalized
+        );
+      },
+      cfg.performanceLookback
+    );
+
+  const metrics =
+    tradeMetrics(
+      trades
+    );
+
+  const pfBad =
+    metrics.profitFactor !==
+      Infinity &&
+    metrics.profitFactor <
+      cfg.performanceMinProfitFactor;
+
+  const winRateBad =
+    metrics.winRate <=
+    cfg.performanceMaxWinRatePct;
+
+  const lossStreakBad =
+    metrics.recentLossStreak >=
+    cfg.performanceRecentLosses;
+
+  const poor =
+    metrics.total >=
+      cfg.performanceMinTrades &&
+    pfBad &&
+    winRateBad &&
+    lossStreakBad;
+
+  const elapsedMin =
+    metrics.newestClosedAt
+      ? (
+        Date.now() -
+        metrics.newestClosedAt
+      ) /
+        60_000
+      : Infinity;
+
+  const remainingMin =
+    poor
+      ? Math.max(
+          0,
+          cfg.performancePauseMin -
+          elapsedMin
+        )
+      : 0;
+
+  return {
+    active:
+      poor &&
+      remainingMin > 0,
+    poor,
+    kind,
+    value:
+      normalized,
+    metrics,
+    remainingMin,
+    elapsedMin
+  };
+}
+
+function overallPerformanceQualityStatus() {
+  const cfg =
+    paperConfig();
+
+  if (
+    !cfg.performanceQualityEnabled
+  ) {
+    return {
+      active: false,
+      metrics:
+        tradeMetrics([])
+    };
+  }
+
+  const trades =
+    state.closedTrades.slice(
+      0,
+      cfg.performanceQualityLookback
+    );
+
+  const metrics =
+    tradeMetrics(
+      trades
+    );
+
+  const pfBad =
+    metrics.profitFactor !==
+      Infinity &&
+    metrics.profitFactor <
+      cfg.performanceQualityMinPf;
+
+  const payoffBad =
+    metrics.payoffRatio !==
+      Infinity &&
+    metrics.payoffRatio <
+      cfg.performanceQualityMinPayoff;
+
+  const active =
+    metrics.total >=
+      cfg.performanceQualityMinTrades &&
+    (
+      pfBad ||
+      payoffBad
+    );
+
+  return {
+    active,
+    metrics,
+    pfBad,
+    payoffBad,
+    scoreBoost:
+      active
+        ? cfg.performanceQualityScoreBoost
+        : 0,
+    aiBoost:
+      active
+        ? cfg.performanceQualityAiBoost
+        : 0
+  };
+}
+
+export function paperPerformanceGuardPreview({
+  side = 'LONG',
+  setup = 'PULLBACK'
+} = {}) {
+  return {
+    side:
+      performanceCircuitStatus(
+        'SIDE',
+        side
+      ),
+    setup:
+      performanceCircuitStatus(
+        'SETUP',
+        setup
+      ),
+    overall:
+      overallPerformanceQualityStatus()
+  };
+}
+
 function lossBrakeStatus() {
   const cfg = paperConfig();
 
@@ -561,6 +1016,63 @@ function eligibility(signal) {
   const brake =
     lossBrakeStatus();
 
+  const signalSide =
+    String(
+      signal?.side ||
+      ''
+    ).toUpperCase();
+
+  const signalSetup =
+    String(
+      signal?.entryMode ||
+      'PULLBACK'
+    ).toUpperCase();
+
+  const sideGuard =
+    performanceCircuitStatus(
+      'SIDE',
+      signalSide
+    );
+
+  if (
+    sideGuard.active
+  ) {
+    const m =
+      sideGuard.metrics;
+
+    return {
+      ok: false,
+      reason:
+        `PERFORMANCE GUARD ${signalSide}: ` +
+        `${m.wins}W/${m.losses}L · PF ${Number.isFinite(m.profitFactor) ? m.profitFactor.toFixed(2) : '∞'} · ` +
+        `pausa ${sideGuard.remainingMin.toFixed(0)}m`
+    };
+  }
+
+  const setupGuard =
+    performanceCircuitStatus(
+      'SETUP',
+      signalSetup
+    );
+
+  if (
+    setupGuard.active
+  ) {
+    const m =
+      setupGuard.metrics;
+
+    return {
+      ok: false,
+      reason:
+        `SETUP GUARD ${signalSetup}: ` +
+        `${m.wins}W/${m.losses}L · PF ${Number.isFinite(m.profitFactor) ? m.profitFactor.toFixed(2) : '∞'} · ` +
+        `pausa ${setupGuard.remainingMin.toFixed(0)}m`
+    };
+  }
+
+  const quality =
+    overallPerformanceQualityStatus();
+
   const isBreakout =
     String(
       signal?.entryMode ||
@@ -590,6 +1102,11 @@ function eligibility(signal) {
       brake.active
         ? cfg.lossBrakeAiBoost
         : 0
+    ) +
+    (
+      quality.active
+        ? cfg.performanceQualityAiBoost
+        : 0
     );
 
   const effectiveMinScore =
@@ -597,6 +1114,11 @@ function eligibility(signal) {
     (
       brake.active
         ? cfg.lossBrakeScoreBoost
+        : 0
+    ) +
+    (
+      quality.active
+        ? cfg.performanceQualityScoreBoost
         : 0
     );
 
@@ -634,7 +1156,9 @@ function eligibility(signal) {
         `IA ${Math.round(signal?.ai?.confidence || 0)}% < ` +
         `${effectiveMinAiConfidence}%` +
         `${isBreakout ? ' (BREAKOUT FORTE)' : ''}` +
-        `${brake.active ? ` (LOSS BRAKE ${brake.count} perdas · ${brake.remainingMin.toFixed(0)}m)` : ''}`
+        `${brake.active ? ` (LOSS BRAKE ${brake.count} perdas · ${brake.remainingMin.toFixed(0)}m)` : ''}` +
+        `${quality.active ? ' (PERFORMANCE QUALITY)' : ''}` +
+        `${quality.active ? ' (PERFORMANCE QUALITY)' : ''}`
     };
   }
 
@@ -3361,6 +3885,308 @@ function coinStats() {
     );
 }
 
+
+function performanceGroup(
+  label,
+  predicate,
+  limit = 20
+) {
+  const trades =
+    recentTradesMatching(
+      predicate,
+      limit
+    );
+
+  return {
+    label,
+    metrics:
+      tradeMetrics(
+        trades
+      )
+  };
+}
+
+function fmtPf(
+  value
+) {
+  return value === Infinity
+    ? '∞'
+    : Number(value || 0)
+        .toFixed(2);
+}
+
+function fmtSigned(
+  value,
+  digits = 2
+) {
+  const n =
+    Number(value || 0);
+
+  return (
+    `${n >= 0 ? '+' : ''}` +
+    n.toFixed(digits)
+  );
+}
+
+function groupLine(
+  icon,
+  label,
+  metrics
+) {
+  return (
+    `${icon} ${label}: ${metrics.total} · ` +
+    `${metrics.wins}W/${metrics.losses}L · ` +
+    `PF ${fmtPf(metrics.profitFactor)} · ` +
+    `PnL ${fmtSigned(metrics.pnl)}`
+  );
+}
+
+export function paperPerformanceText() {
+  const cfg =
+    paperConfig();
+
+  const overall =
+    tradeMetrics(
+      state.closedTrades.slice(
+        0,
+        Math.max(
+          20,
+          cfg.performanceQualityLookback
+        )
+      )
+    );
+
+  const quality =
+    overallPerformanceQualityStatus();
+
+  const longGroup =
+    performanceGroup(
+      'LONG',
+      t =>
+        t.side ===
+        'LONG'
+    );
+
+  const shortGroup =
+    performanceGroup(
+      'SHORT',
+      t =>
+        t.side ===
+        'SHORT'
+    );
+
+  const pullbackGroup =
+    performanceGroup(
+      'PULLBACK',
+      t =>
+        String(
+          t.setupEntryMode ||
+          'PULLBACK'
+        ).toUpperCase() ===
+        'PULLBACK'
+    );
+
+  const breakoutGroup =
+    performanceGroup(
+      'BREAKOUT',
+      t =>
+        String(
+          t.setupEntryMode ||
+          ''
+        ).toUpperCase() ===
+        'BREAKOUT_STRONG'
+    );
+
+  const longGuard =
+    performanceCircuitStatus(
+      'SIDE',
+      'LONG'
+    );
+
+  const shortGuard =
+    performanceCircuitStatus(
+      'SIDE',
+      'SHORT'
+    );
+
+  const pullbackGuard =
+    performanceCircuitStatus(
+      'SETUP',
+      'PULLBACK'
+    );
+
+  const breakoutGuard =
+    performanceCircuitStatus(
+      'SETUP',
+      'BREAKOUT_STRONG'
+    );
+
+  const scoreBands = [
+    {
+      label: 'score 60–69',
+      min: 60,
+      max: 69
+    },
+    {
+      label: 'score 70–79',
+      min: 70,
+      max: 79
+    },
+    {
+      label: 'score 80–89',
+      min: 80,
+      max: 89
+    },
+    {
+      label: 'score 90+',
+      min: 90,
+      max: 999
+    }
+  ].map(
+    band => ({
+      label:
+        band.label,
+      metrics:
+        tradeMetrics(
+          state.closedTrades
+            .filter(t => {
+              const score =
+                Number(
+                  t?.score ||
+                  0
+                );
+
+              return (
+                score >=
+                  band.min &&
+                score <=
+                  band.max
+              );
+            })
+            .slice(
+              0,
+              20
+            )
+        )
+    })
+  );
+
+  const aiBands = [
+    {
+      label: 'IA 60–69%',
+      min: 60,
+      max: 69
+    },
+    {
+      label: 'IA 70–79%',
+      min: 70,
+      max: 79
+    },
+    {
+      label: 'IA 80–89%',
+      min: 80,
+      max: 89
+    },
+    {
+      label: 'IA 90%+',
+      min: 90,
+      max: 100
+    }
+  ].map(
+    band => ({
+      label:
+        band.label,
+      metrics:
+        tradeMetrics(
+          state.closedTrades
+            .filter(t => {
+              const confidence =
+                Number(
+                  t?.aiConfidence ||
+                  0
+                );
+
+              return (
+                confidence >=
+                  band.min &&
+                confidence <=
+                  band.max
+              );
+            })
+            .slice(
+              0,
+              20
+            )
+        )
+    })
+  );
+
+  const guardLabel = (
+    guard
+  ) =>
+    guard.active
+      ? `⛔ ${guard.remainingMin.toFixed(0)}m`
+      : guard.poor
+        ? '🟡 janela ruim, pausa cumprida'
+        : '✅ OK';
+
+  const lines = [
+    '🧠 <b>PERFORMANCE GUARD</b>',
+    '',
+    `📊 Amostra recente: ${overall.total} trade(s)`,
+    `🎯 Win rate: ${overall.winRate.toFixed(1)}% · PF ${fmtPf(overall.profitFactor)}`,
+    `💰 Média win: +${overall.avgWin.toFixed(3)} · média loss: -${overall.avgLossAbs.toFixed(3)} USDC`,
+    `⚖️ Payoff real: ${fmtPf(overall.payoffRatio)} · expectativa/trade ${fmtSigned(overall.avgNet, 3)} USDC`,
+    `📈 MFE médio: +${overall.avgMfe.toFixed(2)}R · 📉 MAE médio: -${overall.avgMae.toFixed(2)}R`,
+    `✅ Winners MFE/MAE: +${overall.winnersMfe.toFixed(2)}R / -${overall.winnersMae.toFixed(2)}R`,
+    `🛑 Losers MFE/MAE: +${overall.losersMfe.toFixed(2)}R / -${overall.losersMae.toFixed(2)}R`,
+    '',
+    '<b>Por direção</b>',
+    groupLine('🟢', 'LONG', longGroup.metrics),
+    `   Guard LONG: ${guardLabel(longGuard)}`,
+    groupLine('🔴', 'SHORT', shortGroup.metrics),
+    `   Guard SHORT: ${guardLabel(shortGuard)}`,
+    '',
+    '<b>Por setup</b>',
+    groupLine('↩️', 'PULLBACK', pullbackGroup.metrics),
+    `   Guard PULLBACK: ${guardLabel(pullbackGuard)}`,
+    groupLine('🚀', 'BREAKOUT', breakoutGroup.metrics),
+    `   Guard BREAKOUT: ${guardLabel(breakoutGuard)}`,
+    '',
+    `<b>Quality boost:</b> ${quality.active ? `🟠 ATIVO · +${cfg.performanceQualityScoreBoost} score / +${cfg.performanceQualityAiBoost}% IA` : '✅ INATIVO'}`,
+    '',
+    '<b>Faixa de score</b>',
+    ...scoreBands
+      .filter(
+        x =>
+          x.metrics.total >
+          0
+      )
+      .map(
+        x =>
+          `• ${x.label}: ${x.metrics.total} · PF ${fmtPf(x.metrics.profitFactor)} · ${fmtSigned(x.metrics.pnl)} USDC`
+      ),
+    '',
+    '<b>Faixa da IA</b>',
+    ...aiBands
+      .filter(
+        x =>
+          x.metrics.total >
+          0
+      )
+      .map(
+        x =>
+          `• ${x.label}: ${x.metrics.total} · PF ${fmtPf(x.metrics.profitFactor)} · ${fmtSigned(x.metrics.pnl)} USDC`
+      ),
+    '',
+    `<i>Circuit breaker: ${cfg.performanceLookback} últimos do grupo · mínimo ${cfg.performanceMinTrades} · PF abaixo de ${cfg.performanceMinProfitFactor.toFixed(2)} · loss streak ${cfg.performanceRecentLosses}+ · pausa ${cfg.performancePauseMin.toFixed(0)}m.</i>`
+  ];
+
+  return lines.join(
+    '\n'
+  );
+}
+
 export function paperStatusText() {
   ensureDay();
 
@@ -3394,7 +4220,7 @@ export function paperStatusText() {
       : null;
 
   return [
-    '⚖️ <b>PAPER TRADING — V1.7.5 BALANCED ACTIVE</b>',
+    '🧠 <b>PAPER TRADING — V1.7.6 PERFORMANCE GUARD</b>',
     '',
     `Status: ${cfg.enabled ? '✅ ATIVO' : '⛔ DESATIVADO'} · ${state.paused ? '⏸ PAUSADO' : '▶️ RODANDO'}`,
     `💰 Banca inicial: ${state.startingBalance.toFixed(2)} USDC`,
@@ -3407,6 +4233,8 @@ export function paperStatusText() {
     `⚖️ Meta diária: ${cfg.targetTradesPerDayMin}–8 entradas · cap ${cfg.maxTradesPerDay} · hoje ${todayEntryCount()}/${cfg.maxTradesPerDay}`,
     `🔒 1 posição por moeda: ${cfg.onePositionPerSymbol ? 'ATIVO' : 'INATIVO'}`,
     `🧯 Loss Brake: ${cfg.lossBrakeEnabled ? 'ATIVO' : 'INATIVO'} · após ${cfg.lossBrakeConsecutive} perdas: +${cfg.lossBrakeScoreBoost} score / +${cfg.lossBrakeAiBoost}% IA por ${cfg.lossBrakeMinutes}m`,
+    `🧠 Performance Guard: ${cfg.performanceGuardEnabled ? 'ATIVO' : 'INATIVO'} · lado/setup · janela ${cfg.performanceLookback} · pausa ${cfg.performancePauseMin.toFixed(0)}m`,
+    `📈 Performance Quality: ${cfg.performanceQualityEnabled ? 'ATIVO' : 'INATIVO'} · PF ${cfg.performanceQualityMinPf.toFixed(2)} / payoff ${cfg.performanceQualityMinPayoff.toFixed(2)}`,
     `🔒 Margem usada: ${used.toFixed(2)} USDC`,
     `💳 Disponível: ${available.toFixed(2)} USDC`,
     `⚖️ Risco por trade: ${cfg.riskPct.toFixed(2)}%`,
@@ -3447,6 +4275,9 @@ export function paperStatusText() {
 }
 
 export function paperPositionsText() {
+  const cfg =
+    paperConfig();
+
   if (!state.openPositions.length) {
     return '📭 Nenhuma posição paper aberta.';
   }

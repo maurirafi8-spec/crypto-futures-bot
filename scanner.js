@@ -2331,6 +2331,145 @@ function chooseMarkets(
   return selected;
 }
 
+
+function auditRejectionCategory(
+  result
+) {
+  const g =
+    result?.gates ||
+    {};
+
+  const categories = [];
+
+  if (!g.volume24hOk) {
+    categories.push('volume24h');
+  }
+
+  if (!g.scoreOk) {
+    categories.push('score');
+  }
+
+  if (!g.directionEdgeOk) {
+    categories.push('edge');
+  }
+
+  if (!g.oneHourConfirmationOk) {
+    categories.push('1h');
+  }
+
+  if (!g.confirmationOk) {
+    categories.push('baseConfirmation');
+  }
+
+  if (!g.momentumOk) {
+    categories.push('momentum');
+  }
+
+  if (!g.balancedEntryOk) {
+    categories.push('entrySetup');
+  }
+
+  if (!g.antiChaseOk) {
+    categories.push('antiChase');
+  }
+
+  if (!g.btcRegimeOk) {
+    categories.push('btcRegime');
+  }
+
+  return categories;
+}
+
+export function buildDirectionAudit(
+  results = []
+) {
+  const create =
+    () => ({
+      analyzed: 0,
+      approved: 0,
+      preCandidates: 0,
+      rejections: {
+        score: 0,
+        edge: 0,
+        oneHour: 0,
+        momentum: 0,
+        entrySetup: 0,
+        antiChase: 0,
+        btcRegime: 0,
+        volume24h: 0,
+        baseConfirmation: 0
+      }
+    });
+
+  const audit = {
+    LONG: create(),
+    SHORT: create()
+  };
+
+  for (
+    const result of
+    results
+  ) {
+    const side =
+      String(
+        result?.side ||
+        ''
+      ).toUpperCase();
+
+    if (
+      !audit[side]
+    ) {
+      continue;
+    }
+
+    const bucket =
+      audit[side];
+
+    bucket.analyzed += 1;
+
+    if (
+      result?.gates?.mathApproved
+    ) {
+      bucket.approved += 1;
+    }
+
+    if (
+      result?.gates?.preCandidate
+    ) {
+      bucket.preCandidates += 1;
+    }
+
+    for (
+      const category of
+      auditRejectionCategory(
+        result
+      )
+    ) {
+      const map = {
+        score: 'score',
+        edge: 'edge',
+        '1h': 'oneHour',
+        momentum: 'momentum',
+        entrySetup: 'entrySetup',
+        antiChase: 'antiChase',
+        btcRegime: 'btcRegime',
+        volume24h: 'volume24h',
+        baseConfirmation: 'baseConfirmation'
+      };
+
+      const key =
+        map[category];
+
+      if (key) {
+        bucket.rejections[key] +=
+          1;
+      }
+    }
+  }
+
+  return audit;
+}
+
 export async function scanMarket({
   topMarkets = 12,
   marketBases = null,
@@ -3083,6 +3222,10 @@ export async function scanMarket({
       selectedMarkets: markets.length,
       analyzedMarkets: allResults.length,
       mathApproved: signals.length,
+      directionAudit:
+        buildDirectionAudit(
+          allResults
+        ),
       directionStats: {
         longApproved:
           signals.filter(
@@ -3195,7 +3338,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.7.5: Balanced Active — Pullback preferencial ou Breakout Forte, momentum 2/3. ` +
+    `<i>V1.7.6: Performance Guard por lado/setup + Directional Audit. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }
