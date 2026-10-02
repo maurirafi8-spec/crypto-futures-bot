@@ -49,6 +49,11 @@ import {
   defaultHoldBases,
   holdConfig
 } from './hold.js';
+import { futureMarkets } from './binance.js';
+import {
+  LiquidUniverseManager,
+  DEFAULT_LIQUID_UNIVERSE_BASES
+} from './universe.js';
 
 const cfg = {
   token: process.env.BOT_TOKEN,
@@ -66,6 +71,52 @@ const cfg = {
     Math.max(Number(process.env.V133_TOP_MARKETS || 12), 1),
     12
   ),
+
+  dynamicUniverseSize:
+    Math.max(
+      40,
+      Math.min(
+        60,
+        Number(process.env.DYNAMIC_UNIVERSE_SIZE || 50)
+      )
+    ),
+
+  universeRefreshMin:
+    Math.max(
+      15,
+      Math.min(
+        120,
+        Number(process.env.DYNAMIC_UNIVERSE_REFRESH_MINUTES || 30)
+      )
+    ),
+
+  pullbackMinVolumeRatio:
+    Math.max(
+      0.45,
+      Math.min(
+        1.20,
+        Number(process.env.PULLBACK_TRIGGER_MIN_VOLUME_RATIO || 0.55)
+      )
+    ),
+
+  pullbackMaxDistanceAtrMin:
+    Math.max(
+      0.70,
+      Math.min(
+        1.20,
+        Number(process.env.PULLBACK_MAX_DISTANCE_ATR_MIN || 0.90)
+      )
+    ),
+
+  pullbackMaxDistanceAtrMax:
+    Math.max(
+      1.00,
+      Math.min(
+        1.60,
+        Number(process.env.PULLBACK_MAX_DISTANCE_ATR_MAX || 1.25)
+      )
+    ),
+
   minScore: Number(process.env.MIN_SCORE || 68),
   preCandidateMinScore: Number(process.env.PRE_CANDIDATE_MIN_SCORE || 60),
   minVolume: Number(process.env.MIN_QUOTE_VOLUME_USDT || 20_000_000),
@@ -184,7 +235,7 @@ const cfg = {
       0.45,
       Math.min(
         3,
-        Number(process.env.QUALITY_BREAKOUT_MIN_VOLUME_RATIO || 0.80)
+        Number(process.env.QUALITY_BREAKOUT_MIN_VOLUME_RATIO || 1.25)
       )
     ),
 
@@ -374,49 +425,21 @@ const aiDecisionCache = new Map();
 // com os próximos candles fechados.
 const aiWaitWatchlist = new Map();
 
-const FAST_CORE_BASES = [
-  'BTC',
-  'ETH',
-  'SOL'
-];
+const universeManager =
+  new LiquidUniverseManager({
+    seedBases:
+      DEFAULT_LIQUID_UNIVERSE_BASES,
+    maxSize:
+      cfg.dynamicUniverseSize,
+    minQuoteVolume:
+      cfg.minVolume,
+    coreEveryScans: 4,
+    hotEveryScans: 4,
+    hotSize: 12
+  });
 
-const ROTATION_SCAN_BASES = [
-  'XRP',
-  'BNB',
-  'DOGE',
-  'ADA',
-  'LINK',
-  'AVAX',
-  'SUI',
-  'LTC',
-  'BCH',
-  'DOT',
-  'NEAR',
-  'UNI',
-  'AAVE',
-  'ETC',
-  'ATOM',
-  'INJ',
-  'HBAR',
-  'TRX',
-  'FIL',
-  'ARB',
-  'OP',
-  'APT',
-  'SEI',
-  'TIA',
-  'PEPE',
-  'WIF',
-  'JUP',
-  'FET',
-  'RENDER',
-  'TAO'
-];
-
-let scanCoreCursor = 0;
-let scanRotationCursor = 0;
-let scanUrgentCursor = 0;
-let lastScanBatch = [];
+let lastUniverseRefreshAt = 0;
+let lastUniverseRefreshError = '';
 
 function baseFromSymbol(symbol) {
   return String(symbol || '')
@@ -448,129 +471,78 @@ function urgentScanBases() {
     .filter(base => base && base !== 'USDT');
 }
 
-function takeRotating(items, cursor, count, blocked = new Set()) {
-  const out = [];
+async function refreshDynamicUniverse(
+  force = false
+) {
+  const due =
+    force ||
+    !lastUniverseRefreshAt ||
+    Date.now() -
+      lastUniverseRefreshAt >=
+      cfg.universeRefreshMin *
+        60_000;
 
-  if (!items.length || count <= 0) {
-    return {
-      values: out,
-      nextCursor: cursor
-    };
+  if (!due) {
+    return universeManager.status();
   }
 
-  let checked = 0;
-  let idx = cursor % items.length;
+  try {
+    const markets =
+      await futureMarkets();
 
-  while (
-    out.length < count &&
-    checked < items.length * 2
-  ) {
-    const value = items[idx];
+    universeManager.setAvailableMarkets(
+      markets
+    );
 
-    if (
-      value &&
-      !blocked.has(value) &&
-      !out.includes(value)
-    ) {
-      out.push(value);
-    }
+    lastUniverseRefreshAt =
+      Date.now();
 
-    idx = (idx + 1) % items.length;
-    checked += 1;
+    lastUniverseRefreshError = '';
+  } catch (error) {
+    lastUniverseRefreshError =
+      String(
+        error?.message ||
+        error
+      )
+        .replace(/\s+/g, ' ')
+        .slice(0, 220);
+
+    console.error(
+      '[universe] refresh falhou:',
+      lastUniverseRefreshError
+    );
   }
 
-  return {
-    values: out,
-    nextCursor: idx
-  };
+  return universeManager.status();
 }
 
 function nextAutomaticScanBatch() {
-  const size = cfg.scanBatchSize;
-  const batch = [];
-  const blocked = new Set();
-
-  const urgent = urgentScanBases();
-
-  if (urgent.length) {
-    const urgentPick =
-      takeRotating(
-        urgent,
-        scanUrgentCursor,
-        Math.min(2, size),
-        blocked
-      );
-
-    for (const base of urgentPick.values) {
-      batch.push(base);
-      blocked.add(base);
-    }
-
-    scanUrgentCursor =
-      urgentPick.nextCursor;
-  }
-
-  if (batch.length < size) {
-    let attempts = 0;
-
-    while (
-      attempts < FAST_CORE_BASES.length &&
-      batch.length < size
-    ) {
-      const base =
-        FAST_CORE_BASES[
-          scanCoreCursor %
-          FAST_CORE_BASES.length
-        ];
-
-      scanCoreCursor =
-        (
-          scanCoreCursor + 1
-        ) %
-        FAST_CORE_BASES.length;
-
-      attempts += 1;
-
-      if (!blocked.has(base)) {
-        batch.push(base);
-        blocked.add(base);
-        break;
-      }
-    }
-  }
-
-  if (batch.length < size) {
-    const rotationPick =
-      takeRotating(
-        ROTATION_SCAN_BASES,
-        scanRotationCursor,
-        size - batch.length,
-        blocked
-      );
-
-    for (const base of rotationPick.values) {
-      batch.push(base);
-      blocked.add(base);
-    }
-
-    scanRotationCursor =
-      rotationPick.nextCursor;
-  }
-
-  lastScanBatch = batch;
-  return batch;
+  return universeManager.nextBatch({
+    size:
+      cfg.scanBatchSize,
+    urgentBases:
+      urgentScanBases()
+  });
 }
 
 function scanSchedulerText() {
-  const urgent = urgentScanBases();
+  const urgent =
+    urgentScanBases();
+
+  const status =
+    universeManager.status();
 
   return (
     `⏱ <b>Scheduler 1 minuto</b>\n` +
     `Lote: ${cfg.scanBatchSize} moedas por scan\n` +
-    `Cotação: USDT em todos os contratos\n` +
-    `Prioridade rápida: BTC / ETH / SOL\n` +
-    `WATCH/PAPER prioritários: ${urgent.length ? urgent.join(', ') : 'nenhum'}\n` +
-    `Último lote: ${lastScanBatch.length ? lastScanBatch.join(', ') : 'ainda não executado'}`
+    `🌐 Universo líquido dinâmico: ${status.size}/${cfg.dynamicUniverseSize} ativos\n` +
+    `👀 Volume 24h já observado: ${status.observed} · acima de $${Math.round(cfg.minVolume / 1e6)}M: ${status.liquid}\n` +
+    `🔥 Top volume observado: ${status.top.length ? status.top.join(' · ') : 'aprendendo o universo...'}\n` +
+    `🔄 Ciclo esperado: ~${Math.ceil(cfg.dynamicUniverseSize / cfg.scanBatchSize)}–${Math.ceil(cfg.dynamicUniverseSize / Math.max(2, cfg.scanBatchSize - 1))} min\n` +
+    `₿ BTC/ETH/SOL: revisão periódica, não ocupam slot em todo scan\n` +
+    `📌 WATCH/PAPER prioritários: ${urgent.length ? urgent.join(', ') : 'nenhum'}\n` +
+    `Último lote: ${status.lastBatch.length ? status.lastBatch.join(', ') : 'ainda não executado'}` +
+    `${lastUniverseRefreshError ? `\n⚠️ Último refresh: ${lastUniverseRefreshError}` : ''}`
   );
 }
 
@@ -3076,6 +3048,10 @@ async function doScan({
   const startedAt = Date.now();
 
   try {
+    if (automatic || !(Array.isArray(marketBases) && marketBases.length)) {
+      await refreshDynamicUniverse(false);
+    }
+
     const selectedBases =
       Array.isArray(marketBases) && marketBases.length
         ? marketBases
@@ -3098,6 +3074,7 @@ async function doScan({
       minScore: cfg.minScore,
       preCandidateMinScore: cfg.preCandidateMinScore,
       minVolumeRatio: cfg.minVolumeRatio,
+      pullbackMinVolumeRatio: cfg.pullbackMinVolumeRatio,
       minOiPct: cfg.minOiPct,
       hardMinVolumeRatio: cfg.hardMinVolumeRatio,
       oiRejectPct: cfg.oiRejectPct,
@@ -3112,6 +3089,8 @@ async function doScan({
       requireContextualOi: cfg.requireContextualOi,
       pullbackLookback: cfg.pullbackLookback,
       pullbackTouchAtr: cfg.pullbackTouchAtr,
+      pullbackMaxDistanceAtrMin: cfg.pullbackMaxDistanceAtrMin,
+      pullbackMaxDistanceAtrMax: cfg.pullbackMaxDistanceAtrMax,
       triggerMinBodyAtr: cfg.triggerMinBodyAtr,
       contextualOiMinPct: cfg.contextualOiMinPct,
       contextualPriceMinPct: cfg.contextualPriceMinPct,
@@ -3122,6 +3101,11 @@ async function doScan({
       breakoutMinDirectionEdge: cfg.breakoutMinDirectionEdge,
       breakoutMinBodyAtr: cfg.breakoutMinBodyAtr
     });
+
+    // Aprende o volume 24h/atividade sem fazer chamadas extras.
+    universeManager.observeSnapshots(
+      snapshots
+    );
 
     // Atualiza primeiro as posições paper usando somente candle fechado.
     const paperUpdate =
@@ -3369,7 +3353,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.7.6 PERFORMANCE GUARD</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.7.7 LIQUID UNIVERSE</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o próximo lote agora\n' +
       '/scheduler — ver rotação automática de 1 minuto\n' +
@@ -3409,7 +3393,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.7.6 PERFORMANCE GUARD\n` +
+      `✅ Online — V1.7.7 LIQUID UNIVERSE\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🛡 Modo: CONFIDENCE GUARD V1.5.9\n` +
       `🤖 APPROVE exige confidence válida; ausente/0% vira WAIT\n` +
@@ -3426,7 +3410,8 @@ async function handleMessage(msg) {
       `🪜 Stop Gain Runner: TP1→BE · TP2→TP1 · TP3→TP2 · TP4+ sobe por degraus\n` +
       `⏳ Adaptive Stale: revisão 60m · 2 checks · 2/3 deteriorações · hard 90m · timeout 2h\n` +
       `🧠 Performance Guard: lado/setup ruim pausa 90m · qualidade geral sobe score/IA\n` +
-      `⚖️ Perfil: BALANCED ACTIVE · alvo 4–8 PAPER trades/dia · cap 10\n` +
+      `🌐 V1.7.7: universo dinâmico ${cfg.dynamicUniverseSize} ativos · ranking por volume observado\n` +
+      `⚖️ Perfil: BALANCED ACTIVE · qualidade antes de quantidade\n` +
       `⭐ Score mínimo para sinal: ${cfg.minScore}\n` +
       `⚖️ Direction Balance: ATIVO · LONG/SHORT simétricos\n` +
       `↔️ Edge direcional mínimo: ${cfg.minDirectionEdge} pontos\n` +
@@ -3442,7 +3427,7 @@ async function handleMessage(msg) {
       `🧠 Máx. candidatos IA por scan: ${cfg.aiMaxCandidates}\n` +
       `👀 Pré-candidato IA: ${cfg.preCandidateMinScore}–${cfg.minScore - 1}\n` +
       `💵 Volume mínimo 24h: $${Math.round(cfg.minVolume / 1e6)}M\n` +
-      `📊 Volume para confirmar: ${cfg.minVolumeRatio.toFixed(2)}x\n` +
+      `📊 Volume base: ${cfg.minVolumeRatio.toFixed(2)}x · Pullback trigger ${cfg.pullbackMinVolumeRatio.toFixed(2)}x · Breakout ${cfg.breakoutMinVolumeRatio.toFixed(2)}x\n` +
       `🚫 Piso absoluto de volume: ${cfg.hardMinVolumeRatio.toFixed(2)}x\n` +
       `📈 OI para confirmar: +${cfg.minOiPct.toFixed(2)}%\n` +
       `🛡 Bloqueio OI: abaixo de ${cfg.oiRejectPct.toFixed(2)}%\n` +
@@ -3863,7 +3848,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.7.6-performance-guard',
+    version: '1.7.7-liquid-universe',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -3911,7 +3896,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.7.6 PERFORMANCE GUARD pronto ✅');
+console.log('Crypto Futures Scanner V1.7.7 LIQUID UNIVERSE pronto ✅');
 
 // Em rolling deploy o processo antigo do Render pode permanecer vivo por
 // alguns segundos. Um pequeno atraso evita duas instâncias consumindo a

@@ -49,6 +49,7 @@ const BTC_CONTEXT_MAX_AGE_MS = 10 * 60 * 1000;
 
 const EXCHANGE_PRIORITY = [
   'BINANCE',
+  'HYPERLIQUID',
   'BYBIT',
   'OKX',
   'BITGET'
@@ -994,6 +995,70 @@ function contextualOiStatus({
   };
 }
 
+function adaptivePullbackDistanceAtr(
+  t5,
+  minAtr = 0.90,
+  maxAtr = 1.25
+) {
+  const price =
+    finiteNumber(
+      t5?.price,
+      0
+    );
+
+  const atrValue =
+    finiteNumber(
+      t5?.atr,
+      0
+    );
+
+  if (
+    price <= 0 ||
+    atrValue <= 0
+  ) {
+    return minAtr;
+  }
+
+  const atrPct =
+    atrValue /
+    price *
+    100;
+
+  // Moeda mais volátil ganha mais espaço relativo da EMA20.
+  // <=0.45% ATR: 0.90 ATR
+  // >=1.50% ATR: 1.25 ATR
+  const normalized =
+    Math.max(
+      0,
+      Math.min(
+        1,
+        (atrPct - 0.45) /
+        (1.50 - 0.45)
+      )
+    );
+
+  return (
+    minAtr +
+    (
+      maxAtr -
+      minAtr
+    ) *
+    normalized
+  );
+}
+
+export function adaptivePullbackDistancePreview(
+  t5,
+  minAtr = 0.90,
+  maxAtr = 1.25
+) {
+  return adaptivePullbackDistanceAtr(
+    t5,
+    minAtr,
+    maxAtr
+  );
+}
+
 function pullbackTriggerStatus({
   side,
   t5,
@@ -1002,7 +1067,9 @@ function pullbackTriggerStatus({
   candles5m = [],
   lookback = 7,
   touchAtr = 0.35,
-  minBodyAtr = 0.12
+  minBodyAtr = 0.12,
+  maxDistanceAtrMin = 0.90,
+  maxDistanceAtrMax = 1.25
 }) {
   const atrValue =
     Math.max(
@@ -1197,9 +1264,16 @@ function pullbackTriggerStatus({
     ) /
     atrValue;
 
+  const maxDistanceAtr =
+    adaptivePullbackDistanceAtr(
+      t5,
+      maxDistanceAtrMin,
+      maxDistanceAtrMax
+    );
+
   const notExtended =
     distanceAtr <=
-    0.95;
+    maxDistanceAtr;
 
   const triggerOk =
     side === 'LONG'
@@ -1224,7 +1298,7 @@ function pullbackTriggerStatus({
         : !pullbackFound
           ? `sem pullback/reteste EMA20-EMA50 nos últimos ${lookback} candles`
           : !triggerOk
-            ? `pullback ocorreu, mas trigger 5m ainda não confirmou (corpo ${bodyAtr.toFixed(2)} ATR; distância ${distanceAtr.toFixed(2)} ATR)`
+            ? `pullback ocorreu, mas trigger 5m ainda não confirmou (corpo ${bodyAtr.toFixed(2)} ATR; distância ${distanceAtr.toFixed(2)}/${maxDistanceAtr.toFixed(2)} ATR)`
             : `trend 1H+15m + pullback + trigger 5m confirmados`;
 
   return {
@@ -1237,6 +1311,7 @@ function pullbackTriggerStatus({
     trend1h,
     bodyAtr,
     distanceAtr,
+    maxDistanceAtr,
     closeLocation,
     reason
   };
@@ -1337,6 +1412,7 @@ function momentumBundleStatus(
     oiOk,
     macdOk,
     volumeRatio,
+    minVolumeRatio,
     oiPct: oi,
     macdHist
   };
@@ -1736,8 +1812,11 @@ export function balancedEntryPreview({
   contextualOiMinPct = 0.05,
   contextualPriceMinPct = 0.03,
   momentumMinConfirmations = 2,
+  pullbackMinVolumeRatio = 0.55,
+  pullbackMaxDistanceAtrMin = 0.90,
+  pullbackMaxDistanceAtrMax = 1.25,
   breakoutMinScore = 82,
-  breakoutMinVolumeRatio = 0.80,
+  breakoutMinVolumeRatio = 1.25,
   breakoutMinDirectionEdge = 10,
   breakoutMinBodyAtr = 0.20
 }) {
@@ -1750,7 +1829,11 @@ export function balancedEntryPreview({
       candles5m,
       lookback: 7,
       touchAtr: 0.35,
-      minBodyAtr: 0.12
+      minBodyAtr: 0.12,
+      maxDistanceAtrMin:
+        pullbackMaxDistanceAtrMin,
+      maxDistanceAtrMax:
+        pullbackMaxDistanceAtrMax
     });
 
   const oiContext =
@@ -1764,17 +1847,6 @@ export function balancedEntryPreview({
       minPricePct:
         contextualPriceMinPct
     });
-
-  const momentum =
-    momentumBundleStatus(
-      side,
-      t5,
-      oiContext.oiPct,
-      minVolumeRatio,
-      contextualOiMinPct,
-      oiContext,
-      momentumMinConfirmations
-    );
 
   const breakout =
     breakoutStrongStatus({
@@ -1803,8 +1875,26 @@ export function balancedEntryPreview({
         ? 'BREAKOUT_STRONG'
         : 'WAIT_SETUP';
 
+  const entryVolumeTarget =
+    entryMode ===
+      'BREAKOUT_STRONG'
+      ? breakoutMinVolumeRatio
+      : pullbackMinVolumeRatio;
+
+  const momentum =
+    momentumBundleStatus(
+      side,
+      t5,
+      oiContext.oiPct,
+      entryVolumeTarget,
+      contextualOiMinPct,
+      oiContext,
+      momentumMinConfirmations
+    );
+
   return {
     entryMode,
+    entryVolumeTarget,
     entryModeOk:
       entryMode !==
       'WAIT_SETUP',
@@ -2476,7 +2566,8 @@ export async function scanMarket({
   minQuoteVolume = 20_000_000,
   minScore = 70,
   preCandidateMinScore = 60,
-  minVolumeRatio = 0.60,
+  minVolumeRatio = 0.45,
+  pullbackMinVolumeRatio = 0.55,
   minOiPct = 0.50,
   hardMinVolumeRatio = 0.40,
   oiRejectPct = -1.00,
@@ -2491,13 +2582,15 @@ export async function scanMarket({
   requireContextualOi = true,
   pullbackLookback = 7,
   pullbackTouchAtr = 0.35,
+  pullbackMaxDistanceAtrMin = 0.90,
+  pullbackMaxDistanceAtrMax = 1.25,
   triggerMinBodyAtr = 0.12,
   contextualOiMinPct = 0.05,
   contextualPriceMinPct = 0.03,
   momentumMinConfirmations = 2,
   breakoutEnabled = true,
   breakoutMinScore = 82,
-  breakoutMinVolumeRatio = 0.80,
+  breakoutMinVolumeRatio = 1.25,
   breakoutMinDirectionEdge = 10,
   breakoutMinBodyAtr = 0.20
 } = {}) {
@@ -2795,7 +2888,11 @@ export async function scanMarket({
           touchAtr:
             pullbackTouchAtr,
           minBodyAtr:
-            triggerMinBodyAtr
+            triggerMinBodyAtr,
+          maxDistanceAtrMin:
+            pullbackMaxDistanceAtrMin,
+          maxDistanceAtrMax:
+            pullbackMaxDistanceAtrMax
         });
 
       const pullbackTriggerOk =
@@ -2819,21 +2916,6 @@ export async function scanMarket({
       const contextualOiOk =
         !requireContextualOi ||
         oiContext.confirmed;
-
-      const momentum =
-        momentumBundleStatus(
-          sig.side,
-          t5,
-          oiPct,
-          minVolumeRatio,
-          minOiPct,
-          oiContext,
-          momentumMinConfirmations
-        );
-
-      const momentumOk =
-        !requireMomentumBundle ||
-        momentum.confirmed;
 
       const breakout =
         breakoutStrongStatus({
@@ -2872,6 +2954,27 @@ export async function scanMarket({
       const balancedEntryOk =
         entryMode !==
         'WAIT_SETUP';
+
+      const entryVolumeTarget =
+        entryMode ===
+          'BREAKOUT_STRONG'
+          ? breakoutMinVolumeRatio
+          : pullbackMinVolumeRatio;
+
+      const momentum =
+        momentumBundleStatus(
+          sig.side,
+          t5,
+          oiPct,
+          entryVolumeTarget,
+          minOiPct,
+          oiContext,
+          momentumMinConfirmations
+        );
+
+      const momentumOk =
+        !requireMomentumBundle ||
+        momentum.confirmed;
 
       const antiChase =
         antiChaseStatus(
@@ -2964,7 +3067,7 @@ export async function scanMarket({
 
         if (!momentum.volumeOk) {
           missing.push(
-            `volume ${momentum.volumeRatio.toFixed(2)}x abaixo de ${minVolumeRatio.toFixed(2)}x`
+            `volume ${momentum.volumeRatio.toFixed(2)}x abaixo de ${Number(momentum.minVolumeRatio || minVolumeRatio).toFixed(2)}x`
           );
         }
 
@@ -3083,6 +3186,7 @@ export async function scanMarket({
         pullback,
         breakout,
         entryMode,
+        entryVolumeTarget,
         balancedEntryOk,
         oiContext,
         oiLongPct,
@@ -3297,8 +3401,8 @@ export function signalText(s) {
     `${s.btcScoreAdjustment ? `₿ Ajuste BTC: ${s.btcScoreAdjustment > 0 ? '+' : ''}${s.btcScoreAdjustment}\n` : ''}` +
     `💪 Força: <b>${signalStrength(s.score)}</b>\n` +
     `🔎 Confirmação: <b>${s.confirmation.label}</b>\n` +
-    `${s.entryMode ? `🧭 Modo de entrada: <b>${s.entryMode}</b>\n` : ''}` +
-    `${s.pullback ? `↩️ Pullback: ${s.pullback.confirmed ? 'CONFIRMADO' : 'AGUARDANDO'} · ${s.pullback.reason}\n` : ''}` +
+    `${s.entryMode ? `🧭 Modo de entrada: <b>${s.entryMode}</b> · vol alvo ${fmt(s.entryVolumeTarget, 2)}x\n` : ''}` +
+    `${s.pullback ? `↩️ Pullback: ${s.pullback.confirmed ? 'CONFIRMADO' : 'AGUARDANDO'} · EMA distância ${fmt(s.pullback.distanceAtr, 2)}/${fmt(s.pullback.maxDistanceAtr, 2)} ATR · ${s.pullback.reason}\n` : ''}` +
     `${s.breakout?.qualified ? `🚀 Breakout forte: CONFIRMADO · corpo ${fmt(s.breakout.bodyAtr, 2)} ATR\n` : ''}` +
     `${s.oiContext ? `📈 OI contextual: ${s.oiContext.regime} · OI ${s.oiContext.oiPct >= 0 ? '+' : ''}${fmt(s.oiContext.oiPct, 2)}% · preço30m ${s.oiContext.pricePct >= 0 ? '+' : ''}${fmt(s.oiContext.pricePct, 2)}%\n` : ''}` +
     `${s.momentum ? `🚦 Momentum: ${s.momentum.confirmationCount}/${s.momentum.minConfirmations} · Vol ${s.momentum.volumeOk ? 'OK' : 'NÃO'} · OI ${s.momentum.oiOk ? 'OK' : 'NÃO'} · MACD ${s.momentum.macdOk ? 'OK' : 'NÃO'}\n` : ''}` +
@@ -3338,7 +3442,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.7.6: Performance Guard por lado/setup + Directional Audit. ` +
+    `<i>V1.7.7: universo líquido dinâmico + volume por setup + EMA adaptativa. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

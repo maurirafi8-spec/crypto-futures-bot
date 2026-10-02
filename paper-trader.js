@@ -4220,7 +4220,7 @@ export function paperStatusText() {
       : null;
 
   return [
-    '🧠 <b>PAPER TRADING — V1.7.6 PERFORMANCE GUARD</b>',
+    '🌐 <b>PAPER TRADING — V1.7.7 LIQUID UNIVERSE</b>',
     '',
     `Status: ${cfg.enabled ? '✅ ATIVO' : '⛔ DESATIVADO'} · ${state.paused ? '⏸ PAUSADO' : '▶️ RODANDO'}`,
     `💰 Banca inicial: ${state.startingBalance.toFixed(2)} USDC`,
@@ -4243,6 +4243,7 @@ export function paperStatusText() {
     `⏳ Stale: ${cfg.scalpStaleConsecutiveChecks} checks · ${cfg.scalpStaleDeteriorationCount}/3 deteriorações · MFE ${cfg.scalpStaleMinProgressR.toFixed(2)}R/${cfg.scalpStaleHardProgressR.toFixed(2)}R`,
     `🧠 Smart Stop: estrutura 5m + ATR · alvo 1.25–2.00 ATR`,
     `🧭 Entradas: PULLBACK preferencial + BREAKOUT FORTE`,
+    `🌐 Scanner: universo dinâmico 40–50 líquidos · frequência vem da cobertura, não de afrouxar risco`,
     `🚀 Breakout PAPER: score ${cfg.breakoutMinScore}+ · IA ${cfg.breakoutMinAiConfidence}%+`,
     `📊 Diagnóstico: MFE/MAE por trade ATIVO`,
     `🛡 Profit Protect: ${cfg.profitProtectEnabled ? 'ATIVO' : 'INATIVO'} · buffer ${cfg.profitProtectBufferPctNotional.toFixed(2)}% do notional`,

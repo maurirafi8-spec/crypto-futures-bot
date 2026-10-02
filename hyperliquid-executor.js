@@ -67,7 +67,7 @@ export function hyperConfig() {
       numEnv('HYPERLIQUID_AUTO_MIN_AI_CONFIDENCE', 70, 0, 100),
 
     minScore:
-      numEnv('HYPERLIQUID_AUTO_MIN_SCORE', 75, 0, 100),
+      numEnv('HYPERLIQUID_AUTO_MIN_SCORE', 80, 0, 100),
 
     maxOpenPositions: Math.trunc(
       numEnv('HYPERLIQUID_MAX_OPEN_POSITIONS', 1, 1, 10)
