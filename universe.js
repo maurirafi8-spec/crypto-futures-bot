@@ -1,4 +1,4 @@
-// V1.7.7 — LIQUID UNIVERSE
+// V1.7.8 — LIQUID UNIVERSE preserved + AI EFFICIENCY GUARD
 // O scheduler aprende o volume 24h de cada ativo conforme os lotes normais
 // são escaneados. Assim não adicionamos chamadas extras de OHLCV e evitamos
 // pressionar o rate limit da Coinalyze.

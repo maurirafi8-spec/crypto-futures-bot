@@ -4220,7 +4220,7 @@ export function paperStatusText() {
       : null;
 
   return [
-    '🌐 <b>PAPER TRADING — V1.7.7 LIQUID UNIVERSE</b>',
+    '🤖 <b>PAPER TRADING — V1.7.8 AI EFFICIENCY GUARD</b>',
     '',
     `Status: ${cfg.enabled ? '✅ ATIVO' : '⛔ DESATIVADO'} · ${state.paused ? '⏸ PAUSADO' : '▶️ RODANDO'}`,
     `💰 Banca inicial: ${state.startingBalance.toFixed(2)} USDC`,

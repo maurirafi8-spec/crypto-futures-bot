@@ -10,7 +10,7 @@ const SIGNAL_SCHEMA = {
     },
     confidence: {
       type: 'number',
-      minimum: 0,
+      minimum: 1,
       maximum: 100
     },
     risk: {
@@ -188,7 +188,8 @@ function systemPrompt() {
     'APPROVE apenas quando o conjunto estiver coerente e sem contradição relevante.',
     'WAIT quando faltar confirmação, houver esticamento ou sinais mistos.',
     'REJECT quando houver contradição importante, risco ruim ou contexto contrário.',
-    'Não mude o lado do candidato. Se preferir o lado oposto, use REJECT.'
+    'Não mude o lado do candidato. Se preferir o lado oposto, use REJECT.',
+    'confidence é obrigatória e deve ser um número de 1 a 100. Nunca retorne 0 e nunca omita confidence.'
   ].join(' ');
 }
 
@@ -197,7 +198,7 @@ function jsonOnlyPrompt(payload) {
     systemPrompt(),
     'Retorne SOMENTE um objeto JSON válido, sem markdown e sem texto extra.',
     'Formato obrigatório:',
-    '{"decision":"APPROVE|WATCH|WAIT|REJECT","confidence":0,"risk":"LOW|MEDIUM|HIGH","style":"SCALP|NORMAL","reason":"texto curto","warnings":[]}',
+    '{"decision":"APPROVE|WATCH|WAIT|REJECT","confidence":75,"risk":"LOW|MEDIUM|HIGH","style":"SCALP|NORMAL","reason":"texto curto","warnings":[]}',
     'Dados:',
     JSON.stringify(payload)
   ].join('\n');
@@ -264,7 +265,7 @@ function normalizeParsed(obj) {
   const confidenceValid =
     confidencePresent &&
     Number.isFinite(confidenceNumber) &&
-    confidenceNumber >= 0 &&
+    confidenceNumber > 0 &&
     confidenceNumber <= 100;
 
   let decision =
@@ -516,7 +517,7 @@ async function fetchOpenRouter({ apiKey, body, timeoutMs }) {
         'HTTP-Referer':
           process.env.OPENROUTER_SITE_URL ||
           'https://crypto-futures-bot.onrender.com',
-        'X-Title': 'Crypto Futures Scanner V1.7.7 Free'
+        'X-Title': 'Crypto Futures Scanner V1.7.8 Free'
       },
       body: JSON.stringify(body),
       signal: controller.signal
@@ -1558,6 +1559,24 @@ export async function analyzeSignalWithAI(
     options.callMode ||
     'NORMAL';
 
+  const allowGeminiFallback =
+    options.allowGeminiFallback !==
+    false;
+
+  const maxApiRequests =
+    Number.isFinite(
+      Number(
+        options.maxApiRequests
+      )
+    )
+      ? Math.max(
+          1,
+          Number(
+            options.maxApiRequests
+          )
+        )
+      : Number.POSITIVE_INFINITY;
+
   const timeoutMs =
     Number(
       options.timeoutMs ||
@@ -1572,7 +1591,9 @@ export async function analyzeSignalWithAI(
   // vai direto ao Gemini em vez de perder tempo em novos 429.
   if (
     circuit.blocked &&
-    geminiFallbackConfigured()
+    geminiFallbackConfigured() &&
+    allowGeminiFallback &&
+    maxApiRequests >= 1
   ) {
     return analyzeSignalWithGemini(
       signal,
@@ -1593,8 +1614,26 @@ export async function analyzeSignalWithAI(
     );
   }
 
+  if (
+    circuit.blocked &&
+    geminiFallbackConfigured() &&
+    !allowGeminiFallback
+  ) {
+    throw makeAiError(
+      'Cap diário local sem espaço para fallback Gemini',
+      {
+        status: 429,
+        diagnostic:
+          `circuit-breaker ${circuit.remainingMin}min; fallback bloqueado pelo orçamento local`
+      }
+    );
+  }
+
   if (!openRouterKey) {
-    if (geminiFallbackConfigured()) {
+    if (
+      geminiFallbackConfigured() &&
+      allowGeminiFallback
+    ) {
       return analyzeSignalWithGemini(
         signal,
         {
@@ -1626,7 +1665,19 @@ export async function analyzeSignalWithAI(
       error
     );
 
+    const openRouterRequests =
+      Math.max(
+        1,
+        Number(
+          error?.apiRequestCount ||
+          1
+        )
+      );
+
     if (
+      !allowGeminiFallback ||
+      openRouterRequests >=
+        maxApiRequests ||
       !shouldUseGeminiAfter(error)
     ) {
       throw error;

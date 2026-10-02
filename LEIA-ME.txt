@@ -1,95 +1,67 @@
-CRYPTO FUTURES SCANNER V1.7.7 — LIQUID UNIVERSE
+CRYPTO FUTURES SCANNER V1.7.8 — AI EFFICIENCY GUARD
 
 OBJETIVO
-Aumentar a frequência SEM voltar a baixar demais a qualidade.
+Parar de desperdiçar Gemini/OpenRouter em PRE_CANDIDATE que ainda não
+tem condição técnica de virar entrada.
 
-A mudança principal é aumentar a COBERTURA do mercado.
-Em vez de insistir nos mesmos 20–30 pares, o bot trabalha com até 50
-USDT perpétuos líquidos e aprende o ranking de volume 24h conforme escaneia.
+NOVO FLUXO
 
-UNIVERSO DINÂMICO
-- Seed amplo de ativos líquidos.
-- Confirma se o ativo existe como USDT perpetual com OHLCV no provedor.
-- Ranking principal por volume 24h realmente observado no scan.
-- Ativos abaixo de $20M/dia caem para o fim da fila.
-- Top líquidos são revisitados periodicamente.
-- BTC/ETH/SOL continuam revisados para manter contexto macro, mas não
-  roubam um slot em TODOS os scans.
-- PAPER/WAIT/IA pendente continuam prioritários.
+1) HARD REJECT ANTES DA IA
+Pré-candidato é descartado sem IA quando houver trava forte:
+- score abaixo do piso técnico;
+- volume abaixo do piso absoluto;
+- 1H claramente contrário;
+- movimento >= 1.70 ATR da EMA20 sem reteste;
+- regime BTC fortemente contrário;
+- OI contextual fortemente contrário.
 
-RATE LIMIT
-O ranking NÃO faz chamadas extras de OHLCV.
-Ele aprende quoteVolume24h usando os snapshots que o scan normal já buscou.
-Isso preserva a Coinalyze.
+2) WATCH TÉCNICA SEM IA
+Score 60–67 sem hard reject:
+- entra em watch técnica;
+- ganha prioridade no scheduler;
+- é rechecado pelos próximos scans;
+- NÃO chama Gemini/OpenRouter.
+Só chama IA quando virar STANDARD.
 
-Com 50 ativos e lote 4/minuto, o universo tende a ser revisto em cerca de
-13–18 minutos, dependendo de posições/watchlist/hotlist.
+3) IA SÓ PARA STANDARD
+PRE_CANDIDATE não entra mais em validateSignalsWithAI().
 
-VOLUME DIFERENTE POR TIPO DE ENTRADA
+4) CONFIDENCE GUARD 2.0
+confidence obrigatória: 1–100.
+WAIT/REJECT/WATCH com 0 ou ausente aparecem como "—".
+APPROVE com 0/ausente vira WAIT e não abre trade.
+Vale para principal, rescue e Gemini fallback.
 
-PULLBACK
-- score 68+
-- IA 65%+
-- volume de trigger alvo: 0.55x
-- momentum continua 2 de 3: volume / OI contextual / MACD
-- portanto volume <0.55x não mata sozinho se OI + MACD confirmarem
+5) CAP DIÁRIO
+O contador local nunca mostra acima do limite.
+70/70 fica 70/70 · CAP ATINGIDO.
+Quando só há 1 vaga, não inicia fluxo que possa gastar primary + fallback.
 
-BREAKOUT_STRONG
-- score 82+
-- IA PAPER 75%+
-- volume mínimo: 1.25x
-- OI contextual favorável obrigatório no setup
-- MACD alinhado
-- 1H + 15m alinhados
-- candle forte
+6) /IA
+Mostra a WATCH TÉCNICA SEM IA separada do histórico da IA.
 
-DISTÂNCIA DA EMA20 ADAPTATIVA
-Não usa um percentual fixo igual para BTC e memecoins.
-
-A tolerância é baseada no ATR da própria moeda:
-- baixa volatilidade: ~0.90 ATR
-- média volatilidade: interpolado
-- alta volatilidade: até ~1.25 ATR
-
-Assim ativos voláteis ganham mais espaço sem afrouxar BTC/ETH demais.
-
-PERFORMANCE GUARD
-Mantido integralmente:
-- Side Guard LONG/SHORT
-- Setup Guard PULLBACK/BREAKOUT
-- Performance Quality
-- /performance
-- Directional Audit em /debug
-
-GESTÃO
-Mantido:
-- Smart Stop 1.25–2 ATR
-- Profit Protect
+MANTIDO
+- Liquid Universe até 50 pares
+- ranking por volume
+- lotes de 4 por minuto
+- Pullback preferencial
+- Breakout Strong
+- Momentum 2/3
+- Performance Guard
+- Directional Audit
+- Smart Stop
 - Stop Gain Runner
-- Adaptive Stale 60/90
-- Net R/R 1.50
+- Adaptive Stale
 - MFE/MAE
-- risco PAPER 0.75%
-- margem 15%
-- alavancagem simulada 2x
-
-HYPERLIQUID ASSINADO / EXECUÇÃO
-O mínimo padrão de score foi mantido MAIS rígido em 80.
-A frequência extra deve vir primeiro do PAPER + universo maior.
-Só faz sentido afrouxar execução depois de estatística consistente.
-
-COMANDO
-/scheduler
-Mostra tamanho do universo, quantos já tiveram volume observado,
-quantos estão acima do mínimo de liquidez, top volume e último lote.
+- Net R/R 1.50
+- Telegram Safe
+- HOLD AI
+- Gemini fallback
 
 ENV OPCIONAL
-DYNAMIC_UNIVERSE_SIZE=50
-DYNAMIC_UNIVERSE_REFRESH_MINUTES=30
-PULLBACK_TRIGGER_MIN_VOLUME_RATIO=0.55
-PULLBACK_MAX_DISTANCE_ATR_MIN=0.90
-PULLBACK_MAX_DISTANCE_ATR_MAX=1.25
-QUALITY_BREAKOUT_MIN_VOLUME_RATIO=1.25
-MIN_QUOTE_VOLUME_USDT=20000000
-
-HYPERLIQUID_AUTO_MIN_SCORE=80
+AI_EFFICIENCY_GUARD_ENABLED=true
+AI_HARD_REJECT_DISTANCE_ATR=1.70
+AI_TECH_WATCH_TTL_MINUTES=60
+AI_TECH_WATCH_MAX=12
+PRE_CANDIDATE_MIN_SCORE=60
+AI_DAILY_LIMIT=70

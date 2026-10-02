@@ -54,6 +54,10 @@ import {
   LiquidUniverseManager,
   DEFAULT_LIQUID_UNIVERSE_BASES
 } from './universe.js';
+import {
+  classifyAIEfficiencyCandidate,
+  clampDailyUsage
+} from './ai-efficiency.js';
 
 const cfg = {
   token: process.env.BOT_TOKEN,
@@ -257,6 +261,37 @@ const cfg = {
       )
     ),
 
+  aiEfficiencyGuardEnabled:
+    String(process.env.AI_EFFICIENCY_GUARD_ENABLED || 'true')
+      .toLowerCase() !== 'false',
+
+  aiHardRejectDistanceAtr:
+    Math.max(
+      1.30,
+      Math.min(
+        3.00,
+        Number(process.env.AI_HARD_REJECT_DISTANCE_ATR || 1.70)
+      )
+    ),
+
+  aiTechnicalWatchTtlMin:
+    Math.max(
+      15,
+      Math.min(
+        180,
+        Number(process.env.AI_TECH_WATCH_TTL_MINUTES || 60)
+      )
+    ),
+
+  aiTechnicalWatchMax:
+    Math.max(
+      4,
+      Math.min(
+        30,
+        Number(process.env.AI_TECH_WATCH_MAX || 12)
+      )
+    ),
+
   aiEnabled: String(process.env.AI_ENABLED || 'true').toLowerCase() !== 'false',
   aiMinConfidence: Number(process.env.AI_MIN_CONFIDENCE || 65),
   aiFailOpen: String(process.env.AI_FAIL_OPEN || 'false').toLowerCase() === 'true',
@@ -425,6 +460,11 @@ const aiDecisionCache = new Map();
 // com os próximos candles fechados.
 const aiWaitWatchlist = new Map();
 
+// V1.7.8: PRE_CANDIDATE deixa de gastar IA.
+// Fica numa watchlist puramente técnica até virar STANDARD
+// ou expirar / cair em hard reject.
+const technicalWatchlist = new Map();
+
 const universeManager =
   new LiquidUniverseManager({
     seedBases:
@@ -449,6 +489,291 @@ function baseFromSymbol(symbol) {
     .replace(/PERP.*$/, '');
 }
 
+
+function technicalWatchKey(
+  signal
+) {
+  return (
+    `${String(signal?.symbol || '').toUpperCase()}:` +
+    `${String(signal?.side || '').toUpperCase()}`
+  );
+}
+
+function pruneTechnicalWatchlist() {
+  const ttlMs =
+    cfg.aiTechnicalWatchTtlMin *
+    60_000;
+
+  const now =
+    Date.now();
+
+  for (
+    const [key, item] of
+    technicalWatchlist.entries()
+  ) {
+    if (
+      !item?.updatedAt ||
+      now -
+        item.updatedAt >
+        ttlMs
+    ) {
+      technicalWatchlist.delete(
+        key
+      );
+    }
+  }
+
+  if (
+    technicalWatchlist.size >
+    cfg.aiTechnicalWatchMax
+  ) {
+    const ordered =
+      [...technicalWatchlist.entries()]
+        .sort(
+          (a, b) =>
+            Number(
+              b[1]?.score ||
+              0
+            ) -
+            Number(
+              a[1]?.score ||
+              0
+            )
+        );
+
+    technicalWatchlist.clear();
+
+    for (
+      const [key, item] of
+      ordered.slice(
+        0,
+        cfg.aiTechnicalWatchMax
+      )
+    ) {
+      technicalWatchlist.set(
+        key,
+        item
+      );
+    }
+  }
+}
+
+function updateTechnicalWatchlist({
+  preCandidates = [],
+  mathSignals = [],
+  snapshots = []
+} = {}) {
+  if (
+    !cfg.aiEfficiencyGuardEnabled
+  ) {
+    technicalWatchlist.clear();
+
+    return {
+      watch: [],
+      hardRejected: []
+    };
+  }
+
+  pruneTechnicalWatchlist();
+
+  for (
+    const signal of
+    mathSignals
+  ) {
+    technicalWatchlist.delete(
+      technicalWatchKey(
+        signal
+      )
+    );
+  }
+
+  const hardRejected = [];
+  const watch = [];
+
+  for (
+    const signal of
+    preCandidates
+  ) {
+    const assessment =
+      classifyAIEfficiencyCandidate(
+        {
+          ...signal,
+          candidateTier:
+            'PRE_CANDIDATE'
+        },
+        {
+          preCandidateMinScore:
+            cfg.preCandidateMinScore,
+          hardMinVolumeRatio:
+            cfg.hardMinVolumeRatio,
+          hardDistanceAtr:
+            cfg.aiHardRejectDistanceAtr,
+          contextualOiMinPct:
+            cfg.contextualOiMinPct
+        }
+      );
+
+    const key =
+      technicalWatchKey(
+        signal
+      );
+
+    if (
+      assessment.class ===
+      'HARD_REJECT'
+    ) {
+      technicalWatchlist.delete(
+        key
+      );
+
+      hardRejected.push({
+        ...signal,
+        aiEfficiency:
+          assessment
+      });
+
+      continue;
+    }
+
+    const item = {
+      symbol:
+        signal.symbol,
+      side:
+        signal.side,
+      score:
+        Number(
+          signal.score ||
+          0
+        ),
+      volumeRatio:
+        adaptiveVolumeRatio(
+          signal
+        ),
+      oiPct:
+        Number(
+          signal.oiPct ||
+          0
+        ),
+      reason:
+        signal.rejectionReason ||
+        signal.rejectionReasons?.[0] ||
+        'aguardando melhora técnica',
+      updatedAt:
+        Date.now(),
+      firstSeenAt:
+        technicalWatchlist.get(
+          key
+        )?.firstSeenAt ||
+        Date.now()
+    };
+
+    technicalWatchlist.set(
+      key,
+      item
+    );
+
+    watch.push({
+      ...signal,
+      aiEfficiency:
+        assessment
+    });
+  }
+
+  const currentKeys =
+    new Set(
+      snapshots.map(
+        s =>
+          technicalWatchKey(
+            s
+          )
+      )
+    );
+
+  const validKeys =
+    new Set([
+      ...preCandidates.map(
+        s =>
+          technicalWatchKey(
+            s
+          )
+      ),
+      ...mathSignals.map(
+        s =>
+          technicalWatchKey(
+            s
+          )
+      )
+    ]);
+
+  for (
+    const key of
+    currentKeys
+  ) {
+    if (
+      !validKeys.has(
+        key
+      )
+    ) {
+      technicalWatchlist.delete(
+        key
+      );
+    }
+  }
+
+  pruneTechnicalWatchlist();
+
+  return {
+    watch,
+    hardRejected
+  };
+}
+
+function technicalWatchlistText() {
+  pruneTechnicalWatchlist();
+
+  if (
+    !technicalWatchlist.size
+  ) {
+    return (
+      '🟡 <b>WATCH TÉCNICA SEM IA</b>\n' +
+      'Nenhum pré-candidato aguardando melhora.'
+    );
+  }
+
+  const items =
+    [...technicalWatchlist.values()]
+      .sort(
+        (a, b) =>
+          b.score -
+          a.score
+      )
+      .slice(
+        0,
+        8
+      );
+
+  const lines = [
+    `🟡 <b>WATCH TÉCNICA SEM IA</b> · ${technicalWatchlist.size}`,
+    '<i>Pré-candidatos são rechecados pelo scanner e só chamam IA quando viram STANDARD.</i>',
+    ''
+  ];
+
+  for (
+    const item of
+    items
+  ) {
+    lines.push(
+      `• ${item.symbol} ${item.side} · score ${item.score} · ` +
+      `vol ${item.volumeRatio.toFixed(2)}x · ` +
+      `OI ${item.oiPct >= 0 ? '+' : ''}${item.oiPct.toFixed(2)}%`
+    );
+  }
+
+  return lines.join(
+    '\n'
+  );
+}
+
 function urgentScanBases() {
   const values = [];
 
@@ -460,6 +785,22 @@ function urgentScanBases() {
   for (const watch of aiWaitWatchlist.values()) {
     const base = baseFromSymbol(watch.symbol);
     if (base) values.push(base);
+  }
+
+  pruneTechnicalWatchlist();
+
+  for (
+    const watch of
+    technicalWatchlist.values()
+  ) {
+    const base =
+      baseFromSymbol(
+        watch.symbol
+      );
+
+    if (base) {
+      values.push(base);
+    }
   }
 
   if (pendingAiCandidate?.symbol) {
@@ -541,6 +882,7 @@ function scanSchedulerText() {
     `🔄 Ciclo esperado: ~${Math.ceil(cfg.dynamicUniverseSize / cfg.scanBatchSize)}–${Math.ceil(cfg.dynamicUniverseSize / Math.max(2, cfg.scanBatchSize - 1))} min\n` +
     `₿ BTC/ETH/SOL: revisão periódica, não ocupam slot em todo scan\n` +
     `📌 WATCH/PAPER prioritários: ${urgent.length ? urgent.join(', ') : 'nenhum'}\n` +
+    `🟡 Watch técnica sem IA: ${technicalWatchlist.size}\n` +
     `Último lote: ${status.lastBatch.length ? status.lastBatch.join(', ') : 'ainda não executado'}` +
     `${lastUniverseRefreshError ? `\n⚠️ Último refresh: ${lastUniverseRefreshError}` : ''}`
   );
@@ -570,12 +912,22 @@ function refreshAIBudgetDay() {
 function aiBudgetStats() {
   refreshAIBudgetDay();
   return {
-    used: aiCallsToday,
+    used: Math.min(
+      aiCallsToday,
+      cfg.aiDailyLimit
+    ),
     completed: aiCompletedToday,
     failed: aiFailedToday,
     rescueCalls: aiRescueCallsToday,
     limit: cfg.aiDailyLimit,
-    remaining: Math.max(0, cfg.aiDailyLimit - aiCallsToday),
+    remaining: Math.max(
+      0,
+      cfg.aiDailyLimit -
+      Math.min(
+        aiCallsToday,
+        cfg.aiDailyLimit
+      )
+    ),
     minGapMin: cfg.aiMinGapMin,
     cacheMin: cfg.aiCacheMin,
     priorityEnabled: cfg.aiPriorityEnabled,
@@ -1326,7 +1678,16 @@ function aiCallPermission(signal) {
 function registerAICall(mode = 'NORMAL') {
   refreshAIBudgetDay();
 
-  aiCallsToday += 1;
+  const usage =
+    clampDailyUsage(
+      aiCallsToday,
+      1,
+      cfg.aiDailyLimit
+    );
+
+  aiCallsToday =
+    usage.nextUsed;
+
   aiLastCallAt = Date.now();
   lastAiCallMode = mode;
 
@@ -1343,6 +1704,59 @@ function registerAICall(mode = 'NORMAL') {
   }
 
   lastAiSkipReason = '';
+}
+
+function registerAIExtraRequests(
+  extraRequests,
+  meta = null
+) {
+  const extra =
+    Math.max(
+      0,
+      Number(
+        extraRequests ||
+        0
+      )
+    );
+
+  if (!extra) {
+    return {
+      counted: 0,
+      overflow: 0
+    };
+  }
+
+  const usage =
+    clampDailyUsage(
+      aiCallsToday,
+      extra,
+      cfg.aiDailyLimit
+    );
+
+  aiCallsToday =
+    usage.nextUsed;
+
+  aiRescueCallsToday +=
+    extra;
+
+  if (meta) {
+    meta.apiCalls +=
+      usage.counted;
+
+    meta.rescueCalls +=
+      extra;
+  }
+
+  if (
+    usage.overflow >
+    0
+  ) {
+    console.warn(
+      `[ai] cap lógico protegido: ${usage.overflow} request(s) extra não elevaram o contador além de ${cfg.aiDailyLimit}`
+    );
+  }
+
+  return usage;
 }
 
 function aiWaitInfo(signal = null) {
@@ -2063,7 +2477,7 @@ function validAIConfidence(value) {
 
   return (
     Number.isFinite(n) &&
-    n >= 0 &&
+    n > 0 &&
     n <= 100
   );
 }
@@ -2105,12 +2519,15 @@ function enforceAIConfidenceGuard(ai) {
       ? Number(ai.confidence)
       : null;
 
+  const decision =
+    String(
+      ai.decision ||
+      ''
+    ).toUpperCase();
+
   if (
-    String(ai.decision || '').toUpperCase() === 'APPROVE' &&
-    (
-      !valid ||
-      confidence <= 0
-    )
+    decision === 'APPROVE' &&
+    !valid
   ) {
     return {
       ...ai,
@@ -2126,16 +2543,28 @@ function enforceAIConfidenceGuard(ai) {
       ).startsWith('APPROVE bloqueado:')
         ? ai.reason
         : (
-            'APPROVE bloqueado: confidence ausente/inválida. ' +
+            'APPROVE bloqueado: confidence ausente/inválida/0%. ' +
             String(ai.reason || 'Sem justificativa')
           ).slice(0, 240)
+    };
+  }
+
+  if (!valid) {
+    return {
+      ...ai,
+      confidence: null,
+      confidenceValid: false,
+      confidenceGuarded:
+        Boolean(
+          ai.confidenceGuarded
+        )
     };
   }
 
   return {
     ...ai,
     confidence,
-    confidenceValid: valid
+    confidenceValid: true
   };
 }
 
@@ -2242,6 +2671,15 @@ function aiHistoryText() {
     );
   }
 
+  pruneTechnicalWatchlist();
+
+  if (technicalWatchlist.size) {
+    lines.push(
+      ...(lines.length ? ['', '────────────'] : []),
+      technicalWatchlistText()
+    );
+  }
+
   if (!aiHistory.length) {
     const extra = lastAiEvent?.message
       ? `Último evento: ${lastAiEvent.message}`
@@ -2252,7 +2690,8 @@ function aiHistoryText() {
       '🤖 <b>Histórico da IA</b>',
       extra,
       `🟦 Gemini fallback: ${geminiFallbackConfigured() ? 'CONFIGURADO' : 'NÃO CONFIGURADO'} · ${geminiFallbackModel()}`,
-      `🆓 Tentativas IA hoje: ${budget.used}/${budget.limit}`,
+      `🆓 Tentativas IA hoje: ${budget.used}/${budget.limit}` +
+        `${budget.remaining === 0 ? ' · 🛑 CAP ATINGIDO' : ''}`,
       `✅ Concluídas: ${budget.completed} · ⚠️ Falhas: ${budget.failed} · 🛟 Rescue: ${budget.rescueCalls}`
     );
 
@@ -2264,7 +2703,8 @@ function aiHistoryText() {
     `🤖 <b>Histórico da IA desde o último deploy</b>`,
     `OpenRouter: <code>${aiModel()}</code>`,
     `🟦 Gemini fallback: ${geminiFallbackConfigured() ? 'CONFIGURADO' : 'NÃO CONFIGURADO'} · <code>${geminiFallbackModel()}</code>`,
-    `🆓 Tentativas IA hoje: ${budget.used}/${budget.limit} (${budget.remaining} restantes)`,
+    `🆓 Tentativas IA hoje: ${budget.used}/${budget.limit} (${budget.remaining} restantes)` +
+      `${budget.remaining === 0 ? ' · 🛑 CAP ATINGIDO' : ''}`,
     `✅ Análises concluídas: ${budget.completed} · ⚠️ Falhas: ${budget.failed}`,
     `🛟 Requests de rescue: ${budget.rescueCalls}`,
     `⚡ Scalp rápido hoje: ${budget.priorityUsed}/${budget.priorityLimit}`,
@@ -2580,6 +3020,12 @@ function scanNoSignalText(report) {
     ...(a?.waitRecheckCalls
       ? [`🔄 ${a.waitRecheckCalls} recheck(s) inteligente(s) de WAIT`]
       : []),
+    ...(a?.technicalWatch
+      ? [`🟡 ${a.technicalWatch} pré-candidato(s) em WATCH TÉCNICA sem gastar IA`]
+      : []),
+    ...(a?.technicalHardReject
+      ? [`🧱 ${a.technicalHardReject} hard reject(s) antes da IA`]
+      : []),
     `🎯 0 sinais liberados`
   ];
 
@@ -2651,6 +3097,8 @@ async function validateSignalsWithAI(signals) {
     lowConfidence: 0,
     errors: 0,
     completed: 0,
+    technicalWatch: 0,
+    technicalHardReject: 0,
     skipReason: ''
   };
 
@@ -2880,6 +3328,13 @@ async function validateSignalsWithAI(signals) {
           : '')
       );
 
+      const budgetRemainingBefore =
+        Math.max(
+          0,
+          cfg.aiDailyLimit -
+          aiCallsToday
+        );
+
       registerAICall(permission.mode);
       freshCallsUsed += 1;
       meta.apiCalls += 1;
@@ -2898,10 +3353,28 @@ async function validateSignalsWithAI(signals) {
 
       // O primeiro request já foi contabilizado por registerAICall().
       // Rescue só é permitido se ainda houver pelo menos 1 vaga na cota diária.
-      const allowRescue = aiCallsToday < cfg.aiDailyLimit;
+      const openRouterCircuit =
+        openRouterCircuitStatus();
+
+      const directGeminiRoute =
+        Boolean(
+          openRouterCircuit?.blocked &&
+          geminiFallbackConfigured()
+        );
+
+      const allowRescue =
+        budgetRemainingBefore >= 2;
+
+      const allowGeminiFallback =
+        directGeminiRoute
+          ? budgetRemainingBefore >= 1
+          : budgetRemainingBefore >= 2;
 
       const aiRaw = await analyzeSignalWithAI(s, {
         allowRescue,
+        allowGeminiFallback,
+        maxApiRequests:
+          budgetRemainingBefore,
         callMode: permission.mode
       });
 
@@ -2911,10 +3384,10 @@ async function validateSignalsWithAI(signals) {
       );
 
       if (extraRequests > 0) {
-        aiCallsToday += extraRequests;
-        aiRescueCallsToday += extraRequests;
-        meta.apiCalls += extraRequests;
-        meta.rescueCalls += extraRequests;
+        registerAIExtraRequests(
+          extraRequests,
+          meta
+        );
       }
 
       const ai =
@@ -2961,10 +3434,10 @@ async function validateSignalsWithAI(signals) {
       );
 
       if (extraRequests > 0) {
-        aiCallsToday += extraRequests;
-        aiRescueCallsToday += extraRequests;
-        meta.apiCalls += extraRequests;
-        meta.rescueCalls += extraRequests;
+        registerAIExtraRequests(
+          extraRequests,
+          meta
+        );
       }
 
       const errMsg = String(error?.message || error || 'erro desconhecido')
@@ -3118,6 +3591,13 @@ async function doScan({
     await updateTrackedSignals(snapshots);
     reconcileWaitWatchlist(snapshots);
 
+    const aiEfficiency =
+      updateTechnicalWatchlist({
+        preCandidates,
+        mathSignals,
+        snapshots
+      });
+
     console.log(
       `[scan] ${mathSignals.length} sinais matemáticos >= ${cfg.minScore}; ` +
       `${preCandidates.length} pré-candidato(s) >= ${cfg.preCandidateMinScore}`
@@ -3131,47 +3611,108 @@ async function doScan({
       `1H ${cfg.require1hConfirmation ? 'obrigatório' : 'flexível'}`
     );
 
-    // V1.3.7.1:
+    if (
+      cfg.aiEfficiencyGuardEnabled
+    ) {
+      console.log(
+        `[ai-efficiency] watch técnica ${aiEfficiency.watch.length} · ` +
+        `hard reject ${aiEfficiency.hardRejected.length} · ` +
+        `IA reservada apenas para STANDARD`
+      );
+
+      for (
+        const rejected of
+        aiEfficiency.hardRejected.slice(
+          0,
+          3
+        )
+      ) {
+        console.log(
+          `[ai-efficiency] ${rejected.symbol} ${rejected.side}: HARD_REJECT — ` +
+          rejected.aiEfficiency.reasons.join(' · ')
+        );
+      }
+    }
+
+    // V1.7.8:
+    // IA não avalia mais PRE_CANDIDATE.
+    // Eles ficam na watch técnica e só gastam cota quando viram STANDARD.
+
     // Como o plano grátis avalia apenas 1 candidato por janela,
     // primeiro colocamos qualquer setup PRIORITÁRIO no topo.
     // Só depois vêm os candidatos normais, ordenados por score/volume/OI.
     let aiInput;
 
-    if (mathSignals.length) {
-      const standardSignals = mathSignals.map(s => ({
+    const standardSignals =
+      mathSignals.map(s => ({
         ...s,
-        candidateTier: 'STANDARD'
+        candidateTier:
+          'STANDARD'
       }));
 
-      standardSignals.sort((a, b) => {
-        const aPriority = aiPriorityRank(a);
-        const bPriority = aiPriorityRank(b);
+    standardSignals.sort((a, b) => {
+      const aPriority =
+        aiPriorityRank(a);
 
-        if (aPriority !== bPriority) {
-          return bPriority - aPriority;
-        }
+      const bPriority =
+        aiPriorityRank(b);
 
-        if (b.score !== a.score) {
-          return b.score - a.score;
-        }
+      if (
+        aPriority !==
+        bPriority
+      ) {
+        return (
+          bPriority -
+          aPriority
+        );
+      }
 
-        const bVol = Number(b.t15?.volumeRatio || 0);
-        const aVol = Number(a.t15?.volumeRatio || 0);
+      if (
+        b.score !==
+        a.score
+      ) {
+        return (
+          b.score -
+          a.score
+        );
+      }
 
-        if (bVol !== aVol) {
-          return bVol - aVol;
-        }
+      const bVol =
+        Number(
+          b.t15?.volumeRatio ||
+          0
+        );
 
-        return Number(b.oiPct || 0) - Number(a.oiPct || 0);
-      });
+      const aVol =
+        Number(
+          a.t15?.volumeRatio ||
+          0
+        );
 
-      aiInput = standardSignals;
-    } else {
-      aiInput = preCandidates.slice(0, cfg.aiMaxCandidates).map(s => ({
-        ...s,
-        candidateTier: 'PRE_CANDIDATE'
-      }));
-    }
+      if (
+        bVol !==
+        aVol
+      ) {
+        return (
+          bVol -
+          aVol
+        );
+      }
+
+      return (
+        Number(
+          b.oiPct ||
+          0
+        ) -
+        Number(
+          a.oiPct ||
+          0
+        )
+      );
+    });
+
+    aiInput =
+      standardSignals;
 
     if (aiInput.length) {
       for (const candidate of aiInput.slice(0, cfg.aiMaxCandidates)) {
@@ -3195,6 +3736,13 @@ async function doScan({
     }
 
     const aiResult = await validateSignalsWithAI(aiInput);
+
+    aiResult.meta.technicalWatch =
+      aiEfficiency.watch.length;
+
+    aiResult.meta.technicalHardReject =
+      aiEfficiency.hardRejected.length;
+
     const signals = aiResult.approved;
 
     // V1.3.8:
@@ -3262,6 +3810,8 @@ async function doScan({
       durationMs: Date.now() - startedAt,
       math: debug,
       ai: aiResult.meta,
+      technicalWatch:
+        technicalWatchlist.size,
       finalSignals: signals.length,
       pendingAI: pendingAiCandidate
         ? { ...pendingAiCandidate }
@@ -3353,7 +3903,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.7.7 LIQUID UNIVERSE</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.7.8 AI EFFICIENCY GUARD</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o próximo lote agora\n' +
       '/scheduler — ver rotação automática de 1 minuto\n' +
@@ -3393,7 +3943,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.7.7 LIQUID UNIVERSE\n` +
+      `✅ Online — V1.7.8 AI EFFICIENCY GUARD\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🛡 Modo: CONFIDENCE GUARD V1.5.9\n` +
       `🤖 APPROVE exige confidence válida; ausente/0% vira WAIT\n` +
@@ -3410,7 +3960,7 @@ async function handleMessage(msg) {
       `🪜 Stop Gain Runner: TP1→BE · TP2→TP1 · TP3→TP2 · TP4+ sobe por degraus\n` +
       `⏳ Adaptive Stale: revisão 60m · 2 checks · 2/3 deteriorações · hard 90m · timeout 2h\n` +
       `🧠 Performance Guard: lado/setup ruim pausa 90m · qualidade geral sobe score/IA\n` +
-      `🌐 V1.7.7: universo dinâmico ${cfg.dynamicUniverseSize} ativos · ranking por volume observado\n` +
+      `🤖 V1.7.8: AI Efficiency Guard · IA só para STANDARD · pré-candidatos em watch técnica\n` +
       `⚖️ Perfil: BALANCED ACTIVE · qualidade antes de quantidade\n` +
       `⭐ Score mínimo para sinal: ${cfg.minScore}\n` +
       `⚖️ Direction Balance: ATIVO · LONG/SHORT simétricos\n` +
@@ -3444,6 +3994,7 @@ async function handleMessage(msg) {
       `✅ IA concluídas: ${aiBudgetStats().completed} · ⚠️ falhas: ${aiBudgetStats().failed}\n` +
       `🧠 Modelo principal: ${aiModel()}\n` +
       `🛟 Rescue IA: ${aiRescueEnabled() ? 'ATIVO' : 'INATIVO'} · requests extras ${aiBudgetStats().rescueCalls}\n` +
+      `🧱 AI Efficiency: ${cfg.aiEfficiencyGuardEnabled ? 'ATIVO' : 'INATIVO'} · hard reject ${cfg.aiHardRejectDistanceAtr.toFixed(2)} ATR · watch técnica ${technicalWatchlist.size}\n` +
       `🛟 Modelo rescue: ${aiRescueEnabled() ? aiRescueModel() : '—'}\n` +
       `🧰 Tool calling principal: ${aiToolCallingEnabled() ? 'ATIVO (roteamento flexível)' : 'INATIVO'}\n` +
       `🧠 Reasoning explícito: ${aiReasoningMode()}\n` +
@@ -3848,7 +4399,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.7.7-liquid-universe',
+    version: '1.7.8-ai-efficiency-guard',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -3867,6 +4418,12 @@ http.createServer((req, res) => {
     aiWaitRecheckEnabled: cfg.aiWaitRecheckEnabled,
     aiWaitRecheckToday: aiWaitRecheckCallsToday,
     aiWaitWatching: aiWaitWatchlist.size,
+    aiEfficiencyGuardEnabled:
+      cfg.aiEfficiencyGuardEnabled,
+    aiTechnicalWatching:
+      technicalWatchlist.size,
+    aiHardRejectDistanceAtr:
+      cfg.aiHardRejectDistanceAtr,
     aiWaitStandardMinConfidence: cfg.aiWaitRecheckMinConfidence,
     aiWaitConditionalMinConfidence: cfg.aiWaitConditionalMinConfidence,
     aiWaitConditionalScore: cfg.aiWaitConditionalScore,
@@ -3896,7 +4453,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.7.7 LIQUID UNIVERSE pronto ✅');
+console.log('Crypto Futures Scanner V1.7.8 AI EFFICIENCY GUARD pronto ✅');
 
 // Em rolling deploy o processo antigo do Render pode permanecer vivo por
 // alguns segundos. Um pequeno atraso evita duas instâncias consumindo a

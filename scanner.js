@@ -3442,7 +3442,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.7.7: universo líquido dinâmico + volume por setup + EMA adaptativa. ` +
+    `<i>V1.7.8: universo líquido + AI Efficiency Guard; pré-candidatos não gastam IA. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }
