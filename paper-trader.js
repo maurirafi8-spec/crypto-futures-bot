@@ -178,6 +178,64 @@ export function paperConfig() {
     performanceQualityAiBoost:
       numEnv('PAPER_PERFORMANCE_QUALITY_AI_BOOST', 4, 0, 30),
 
+    // V1.7.9 ADAPTIVE QUALITY
+    // Um lado degradado não volta direto ao filtro normal após a pausa.
+    // Ele entra em PROBATION até a janela recente recuperar PF + win rate.
+    sideProbationEnabled:
+      String(process.env.PAPER_SIDE_PROBATION_ENABLED || 'true')
+        .toLowerCase() !== 'false',
+
+    sideRecoveryMinProfitFactor:
+      numEnv('PAPER_SIDE_RECOVERY_MIN_PF', 0.80, 0, 5),
+
+    sideRecoveryMinWinRatePct:
+      numEnv('PAPER_SIDE_RECOVERY_MIN_WIN_RATE_PCT', 40, 0, 100),
+
+    sideProbationMinScore:
+      numEnv('PAPER_SIDE_PROBATION_MIN_SCORE', 82, 68, 100),
+
+    sideProbationMinAi:
+      numEnv('PAPER_SIDE_PROBATION_MIN_AI', 72, 0, 100),
+
+    sideProbationRequireMomentum3:
+      String(process.env.PAPER_SIDE_PROBATION_REQUIRE_MOMENTUM3 || 'true')
+        .toLowerCase() !== 'false',
+
+    sideProbationRequirePullback:
+      String(process.env.PAPER_SIDE_PROBATION_REQUIRE_PULLBACK || 'true')
+        .toLowerCase() !== 'false',
+
+    sideProbationRequireOi:
+      String(process.env.PAPER_SIDE_PROBATION_REQUIRE_OI || 'true')
+        .toLowerCase() !== 'false',
+
+    // Tiers de score: a amostra atual mostrou os trades <80 muito mais frágeis.
+    scoreTierEnabled:
+      String(process.env.PAPER_SCORE_TIER_ENABLED || 'true')
+        .toLowerCase() !== 'false',
+
+    scoreTierLowMax:
+      numEnv('PAPER_SCORE_TIER_LOW_MAX', 74, 68, 79),
+
+    scoreTierMidMax:
+      numEnv('PAPER_SCORE_TIER_MID_MAX', 79, 75, 84),
+
+    scoreTierLowMinAi:
+      numEnv('PAPER_SCORE_TIER_LOW_MIN_AI', 78, 0, 100),
+
+    scoreTierMidMinAi:
+      numEnv('PAPER_SCORE_TIER_MID_MIN_AI', 72, 0, 100),
+
+    scoreTierLowMinEdge:
+      numEnv('PAPER_SCORE_TIER_LOW_MIN_EDGE', 8, 0, 50),
+
+    scoreTierMidMinEdge:
+      numEnv('PAPER_SCORE_TIER_MID_MIN_EDGE', 6, 0, 50),
+
+    scoreTierRequireMomentum3:
+      String(process.env.PAPER_SCORE_TIER_REQUIRE_MOMENTUM3 || 'true')
+        .toLowerCase() !== 'false',
+
     profitProtectEnabled:
       String(process.env.PAPER_PROFIT_PROTECT_ENABLED || 'true')
         .toLowerCase() !== 'false',
@@ -757,7 +815,10 @@ function performanceCircuitStatus(
   ) {
     return {
       active: false,
+      probation: false,
       poor: false,
+      degraded: false,
+      recovered: true,
       kind,
       value: normalized,
       metrics:
@@ -771,7 +832,10 @@ function performanceCircuitStatus(
   ) {
     return {
       active: false,
+      probation: false,
       poor: false,
+      degraded: false,
+      recovered: true,
       kind,
       value: normalized,
       metrics:
@@ -808,6 +872,10 @@ function performanceCircuitStatus(
       trades
     );
 
+  const enough =
+    metrics.total >=
+    cfg.performanceMinTrades;
+
   const pfBad =
     metrics.profitFactor !==
       Infinity &&
@@ -823,8 +891,7 @@ function performanceCircuitStatus(
     cfg.performanceRecentLosses;
 
   const poor =
-    metrics.total >=
-      cfg.performanceMinTrades &&
+    enough &&
     pfBad &&
     winRateBad &&
     lossStreakBad;
@@ -847,17 +914,77 @@ function performanceCircuitStatus(
         )
       : 0;
 
+  // SETUP mantém a lógica anterior.
+  if (
+    kind !== 'SIDE' ||
+    !cfg.sideProbationEnabled
+  ) {
+    return {
+      active:
+        poor &&
+        remainingMin > 0,
+      probation: false,
+      poor,
+      degraded:
+        poor,
+      recovered:
+        !poor,
+      kind,
+      value:
+        normalized,
+      metrics,
+      remainingMin,
+      elapsedMin
+    };
+  }
+
+  // SIDE: recuperação precisa ser real.
+  // Não basta apenas acabar o relógio de 90m.
+  const pfRecovered =
+    metrics.profitFactor ===
+      Infinity ||
+    metrics.profitFactor >=
+      cfg.sideRecoveryMinProfitFactor;
+
+  const winRateRecovered =
+    metrics.winRate >=
+    cfg.sideRecoveryMinWinRatePct;
+
+  const recovered =
+    !enough ||
+    (
+      pfRecovered &&
+      winRateRecovered
+    );
+
+  const degraded =
+    enough &&
+    !recovered;
+
+  const active =
+    poor &&
+    remainingMin > 0;
+
+  const probation =
+    degraded &&
+    !active;
+
   return {
-    active:
-      poor &&
-      remainingMin > 0,
+    active,
+    probation,
     poor,
+    degraded,
+    recovered,
     kind,
     value:
       normalized,
     metrics,
     remainingMin,
-    elapsedMin
+    elapsedMin,
+    recoveryPf:
+      cfg.sideRecoveryMinProfitFactor,
+    recoveryWinRate:
+      cfg.sideRecoveryMinWinRatePct
   };
 }
 
@@ -1011,6 +1138,195 @@ function lossBrakeStatus() {
   };
 }
 
+
+function signalMomentumCount(
+  signal
+) {
+  return Number(
+    signal?.momentum?.confirmationCount ||
+    0
+  );
+}
+
+function signalOiConfirmed(
+  signal
+) {
+  return Boolean(
+    signal?.oiContext?.confirmed
+  );
+}
+
+function signalPullbackConfirmed(
+  signal
+) {
+  return (
+    String(
+      signal?.entryMode ||
+      ''
+    ).toUpperCase() ===
+      'PULLBACK' &&
+    Boolean(
+      signal?.pullback?.confirmed
+    )
+  );
+}
+
+function signalStructureAligned(
+  signal
+) {
+  return (
+    Boolean(
+      signal?.pullback?.structure1hOk
+    ) &&
+    Boolean(
+      signal?.pullback?.structure15Ok
+    )
+  );
+}
+
+function scoreTierRequirements(
+  signal,
+  cfg
+) {
+  const score =
+    Number(
+      signal?.score ||
+      0
+    );
+
+  if (
+    !cfg.scoreTierEnabled ||
+    score >= 80
+  ) {
+    return {
+      tier:
+        score >= 80
+          ? 'HIGH_80_PLUS'
+          : 'OFF',
+      strict: false,
+      minAi:
+        cfg.minAiConfidence,
+      minEdge: 0
+    };
+  }
+
+  const low =
+    score <=
+    cfg.scoreTierLowMax;
+
+  return {
+    tier:
+      low
+        ? 'LOW_68_74'
+        : 'MID_75_79',
+    strict: true,
+    minAi:
+      low
+        ? cfg.scoreTierLowMinAi
+        : cfg.scoreTierMidMinAi,
+    minEdge:
+      low
+        ? cfg.scoreTierLowMinEdge
+        : cfg.scoreTierMidMinEdge
+  };
+}
+
+function strictTechnicalQuality(
+  signal,
+  {
+    minEdge = 0,
+    requireMomentum3 = true,
+    requirePullback = true,
+    requireOi = true
+  } = {}
+) {
+  const reasons = [];
+
+  if (
+    requirePullback &&
+    !signalPullbackConfirmed(
+      signal
+    )
+  ) {
+    reasons.push(
+      'pullback confirmado obrigatório'
+    );
+  }
+
+  if (
+    requireMomentum3 &&
+    signalMomentumCount(
+      signal
+    ) < 3
+  ) {
+    reasons.push(
+      `momentum ${signalMomentumCount(signal)}/3`
+    );
+  }
+
+  if (
+    requireOi &&
+    !signalOiConfirmed(
+      signal
+    )
+  ) {
+    reasons.push(
+      `OI ${signal?.oiContext?.regime || 'neutro'}`
+    );
+  }
+
+  if (
+    !signalStructureAligned(
+      signal
+    )
+  ) {
+    reasons.push(
+      '1H+15m não alinhados'
+    );
+  }
+
+  if (
+    signal?.antiChase?.ok ===
+      false
+  ) {
+    reasons.push(
+      'anti-chase bloqueado'
+    );
+  }
+
+  if (
+    signal?.btcRegime?.ok ===
+      false ||
+    signal?.btcRegime?.strongOpposite
+  ) {
+    reasons.push(
+      'BTC contrário'
+    );
+  }
+
+  const edge =
+    Number(
+      signal?.directionEdge ||
+      0
+    );
+
+  if (
+    edge <
+    minEdge
+  ) {
+    reasons.push(
+      `edge ${edge} < ${minEdge}`
+    );
+  }
+
+  return {
+    ok:
+      reasons.length ===
+      0,
+    reasons
+  };
+}
+
 function eligibility(signal) {
   const cfg = paperConfig();
   const brake =
@@ -1074,27 +1390,107 @@ function eligibility(signal) {
     overallPerformanceQualityStatus();
 
   const isBreakout =
-    String(
-      signal?.entryMode ||
-      ''
-    ).toUpperCase() ===
+    signalSetup ===
       'BREAKOUT_STRONG';
 
+  const tier =
+    scoreTierRequirements(
+      signal,
+      cfg
+    );
+
+  if (
+    tier.strict
+  ) {
+    const strict =
+      strictTechnicalQuality(
+        signal,
+        {
+          minEdge:
+            tier.minEdge,
+          requireMomentum3:
+            cfg.scoreTierRequireMomentum3,
+          requirePullback:
+            true,
+          requireOi:
+            true
+        }
+      );
+
+    if (!strict.ok) {
+      return {
+        ok: false,
+        reason:
+          `SCORE TIER ${tier.tier}: ` +
+          strict.reasons.join(' · ')
+      };
+    }
+  }
+
+  if (
+    sideGuard.probation
+  ) {
+    const probationStrict =
+      strictTechnicalQuality(
+        signal,
+        {
+          minEdge:
+            Math.max(
+              8,
+              tier.minEdge ||
+              0
+            ),
+          requireMomentum3:
+            cfg.sideProbationRequireMomentum3,
+          requirePullback:
+            cfg.sideProbationRequirePullback,
+          requireOi:
+            cfg.sideProbationRequireOi
+        }
+      );
+
+    if (!probationStrict.ok) {
+      const m =
+        sideGuard.metrics;
+
+      return {
+        ok: false,
+        reason:
+          `SIDE PROBATION ${signalSide}: ` +
+          `${m.wins}W/${m.losses}L · PF ${Number.isFinite(m.profitFactor) ? m.profitFactor.toFixed(2) : '∞'} · ` +
+          probationStrict.reasons.join(' · ')
+      };
+    }
+  }
+
   const baseMinAiConfidence =
-    isBreakout
-      ? Math.max(
-          cfg.minAiConfidence,
-          cfg.breakoutMinAiConfidence
-        )
-      : cfg.minAiConfidence;
+    Math.max(
+      isBreakout
+        ? Math.max(
+            cfg.minAiConfidence,
+            cfg.breakoutMinAiConfidence
+          )
+        : cfg.minAiConfidence,
+      tier.strict
+        ? tier.minAi
+        : 0,
+      sideGuard.probation
+        ? cfg.sideProbationMinAi
+        : 0
+    );
 
   const baseMinScore =
-    isBreakout
-      ? Math.max(
-          cfg.minScore,
-          cfg.breakoutMinScore
-        )
-      : cfg.minScore;
+    Math.max(
+      isBreakout
+        ? Math.max(
+            cfg.minScore,
+            cfg.breakoutMinScore
+          )
+        : cfg.minScore,
+      sideGuard.probation
+        ? cfg.sideProbationMinScore
+        : 0
+    );
 
   const effectiveMinAiConfidence =
     baseMinAiConfidence +
@@ -1158,7 +1554,8 @@ function eligibility(signal) {
         `${isBreakout ? ' (BREAKOUT FORTE)' : ''}` +
         `${brake.active ? ` (LOSS BRAKE ${brake.count} perdas · ${brake.remainingMin.toFixed(0)}m)` : ''}` +
         `${quality.active ? ' (PERFORMANCE QUALITY)' : ''}` +
-        `${quality.active ? ' (PERFORMANCE QUALITY)' : ''}`
+        `${tier.strict ? ` (${tier.tier})` : ''}` +
+        `${sideGuard.probation ? ` (SIDE PROBATION ${signalSide})` : ''}`
     };
   }
 
@@ -1171,6 +1568,8 @@ function eligibility(signal) {
       reason:
         `score ${signal?.score || 0} < ${effectiveMinScore}` +
         `${isBreakout ? ' (BREAKOUT FORTE)' : ''}` +
+        `${tier.strict ? ` (${tier.tier})` : ''}` +
+        `${sideGuard.probation ? ` (SIDE PROBATION ${signalSide})` : ''}` +
         `${brake.active ? ` (LOSS BRAKE ${brake.count} perdas · ${brake.remainingMin.toFixed(0)}m)` : ''}`
     };
   }
@@ -4125,10 +4524,87 @@ export function paperPerformanceText() {
     guard
   ) =>
     guard.active
-      ? `⛔ ${guard.remainingMin.toFixed(0)}m`
-      : guard.poor
-        ? '🟡 janela ruim, pausa cumprida'
-        : '✅ OK';
+      ? `⛔ PAUSA ${guard.remainingMin.toFixed(0)}m`
+      : guard.probation
+        ? `🟠 PROBATION · precisa PF ${Number(guard.recoveryPf || 0).toFixed(2)}+ / WR ${Number(guard.recoveryWinRate || 0).toFixed(0)}%+`
+        : guard.poor
+          ? '🟡 janela ruim, pausa cumprida'
+          : '✅ OK';
+
+
+  const scoreSideGroups = [
+    {
+      label: 'LONG score 60–69',
+      side: 'LONG',
+      min: 60,
+      max: 69
+    },
+    {
+      label: 'LONG score 70–79',
+      side: 'LONG',
+      min: 70,
+      max: 79
+    },
+    {
+      label: 'LONG score 80+',
+      side: 'LONG',
+      min: 80,
+      max: 999
+    },
+    {
+      label: 'SHORT score 60–69',
+      side: 'SHORT',
+      min: 60,
+      max: 69
+    },
+    {
+      label: 'SHORT score 70–79',
+      side: 'SHORT',
+      min: 70,
+      max: 79
+    },
+    {
+      label: 'SHORT score 80+',
+      side: 'SHORT',
+      min: 80,
+      max: 999
+    }
+  ].map(
+    item => ({
+      label:
+        item.label,
+      metrics:
+        tradeMetrics(
+          state.closedTrades
+            .filter(t => {
+              const side =
+                String(
+                  t?.side ||
+                  ''
+                ).toUpperCase();
+
+              const score =
+                Number(
+                  t?.score ||
+                  0
+                );
+
+              return (
+                side ===
+                  item.side &&
+                score >=
+                  item.min &&
+                score <=
+                  item.max
+              );
+            })
+            .slice(
+              0,
+              20
+            )
+        )
+    })
+  );
 
   const lines = [
     '🧠 <b>PERFORMANCE GUARD</b>',
@@ -4165,6 +4641,20 @@ export function paperPerformanceText() {
       .map(
         x =>
           `• ${x.label}: ${x.metrics.total} · PF ${fmtPf(x.metrics.profitFactor)} · ${fmtSigned(x.metrics.pnl)} USDC`
+      ),
+    '',
+    '<b>Score + direção</b>',
+    ...scoreSideGroups
+      .filter(
+        x =>
+          x.metrics.total >
+          0
+      )
+      .map(
+        x =>
+          `• ${x.label}: ${x.metrics.total} · ` +
+          `${x.metrics.wins}W/${x.metrics.losses}L · ` +
+          `PF ${fmtPf(x.metrics.profitFactor)} · ${fmtSigned(x.metrics.pnl)} USDC`
       ),
     '',
     '<b>Faixa da IA</b>',
@@ -4220,7 +4710,7 @@ export function paperStatusText() {
       : null;
 
   return [
-    '🤖 <b>PAPER TRADING — V1.7.8 AI EFFICIENCY GUARD</b>',
+    '🧠 <b>PAPER TRADING — V1.7.9 ADAPTIVE QUALITY</b>',
     '',
     `Status: ${cfg.enabled ? '✅ ATIVO' : '⛔ DESATIVADO'} · ${state.paused ? '⏸ PAUSADO' : '▶️ RODANDO'}`,
     `💰 Banca inicial: ${state.startingBalance.toFixed(2)} USDC`,
@@ -4234,6 +4724,8 @@ export function paperStatusText() {
     `🔒 1 posição por moeda: ${cfg.onePositionPerSymbol ? 'ATIVO' : 'INATIVO'}`,
     `🧯 Loss Brake: ${cfg.lossBrakeEnabled ? 'ATIVO' : 'INATIVO'} · após ${cfg.lossBrakeConsecutive} perdas: +${cfg.lossBrakeScoreBoost} score / +${cfg.lossBrakeAiBoost}% IA por ${cfg.lossBrakeMinutes}m`,
     `🧠 Performance Guard: ${cfg.performanceGuardEnabled ? 'ATIVO' : 'INATIVO'} · lado/setup · janela ${cfg.performanceLookback} · pausa ${cfg.performancePauseMin.toFixed(0)}m`,
+    `🟠 Side Probation: ${cfg.sideProbationEnabled ? 'ATIVO' : 'INATIVO'} · recuperação PF ${cfg.sideRecoveryMinProfitFactor.toFixed(2)}+ / WR ${cfg.sideRecoveryMinWinRatePct.toFixed(0)}%+`,
+    `🎚 Score Tiers: ${cfg.scoreTierEnabled ? 'ATIVO' : 'INATIVO'} · 68–74 elite · 75–79 estrito · 80+ normal`,
     `📈 Performance Quality: ${cfg.performanceQualityEnabled ? 'ATIVO' : 'INATIVO'} · PF ${cfg.performanceQualityMinPf.toFixed(2)} / payoff ${cfg.performanceQualityMinPayoff.toFixed(2)}`,
     `🔒 Margem usada: ${used.toFixed(2)} USDC`,
     `💳 Disponível: ${available.toFixed(2)} USDC`,

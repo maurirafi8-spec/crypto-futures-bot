@@ -3442,7 +3442,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.7.8: universo líquido + AI Efficiency Guard; pré-candidatos não gastam IA. ` +
+    `<i>V1.7.9: universo líquido + AI Efficiency + Adaptive Quality por score/lado. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

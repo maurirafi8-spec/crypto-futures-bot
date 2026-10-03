@@ -1,67 +1,157 @@
-CRYPTO FUTURES SCANNER V1.7.8 — AI EFFICIENCY GUARD
+CRYPTO FUTURES SCANNER V1.7.9 — ADAPTIVE QUALITY
 
 OBJETIVO
-Parar de desperdiçar Gemini/OpenRouter em PRE_CANDIDATE que ainda não
-tem condição técnica de virar entrada.
+Usar o histórico real do PAPER para deixar o bot mais seletivo
+somente onde a performance está ruim, sem estragar os grupos saudáveis.
 
-NOVO FLUXO
+DADOS QUE MOTIVARAM ESTA VERSÃO
+O bot mostrou:
+- LONG melhor que SHORT;
+- SHORT com PF muito baixo;
+- score 70–79 muito fraco;
+- score 80+ muito melhor;
+- Stop Gain Runner funcionando bem em tendências fortes.
 
-1) HARD REJECT ANTES DA IA
-Pré-candidato é descartado sem IA quando houver trava forte:
-- score abaixo do piso técnico;
-- volume abaixo do piso absoluto;
-- 1H claramente contrário;
-- movimento >= 1.70 ATR da EMA20 sem reteste;
-- regime BTC fortemente contrário;
-- OI contextual fortemente contrário.
+Por isso esta versão NÃO mexe em:
+- Smart Stop;
+- Stop Gain Runner;
+- Net R/R;
+- Adaptive Stale;
+- targets.
 
-2) WATCH TÉCNICA SEM IA
-Score 60–67 sem hard reject:
-- entra em watch técnica;
-- ganha prioridade no scheduler;
-- é rechecado pelos próximos scans;
-- NÃO chama Gemini/OpenRouter.
-Só chama IA quando virar STANDARD.
+1) SIDE PROBATION
 
-3) IA SÓ PARA STANDARD
-PRE_CANDIDATE não entra mais em validateSignalsWithAI().
+Antes:
+lado ruim pausava 90 min e depois voltava imediatamente ao filtro normal.
 
-4) CONFIDENCE GUARD 2.0
-confidence obrigatória: 1–100.
-WAIT/REJECT/WATCH com 0 ou ausente aparecem como "—".
-APPROVE com 0/ausente vira WAIT e não abre trade.
-Vale para principal, rescue e Gemini fallback.
+Agora:
+lado ruim:
+PAUSA 90 min
+↓
+PROBATION
+↓
+só volta ao normal quando a janela recente recuperar:
 
-5) CAP DIÁRIO
-O contador local nunca mostra acima do limite.
-70/70 fica 70/70 · CAP ATINGIDO.
-Quando só há 1 vaga, não inicia fluxo que possa gastar primary + fallback.
+PF >= 0.80
+E
+win rate >= 40%
 
-6) /IA
-Mostra a WATCH TÉCNICA SEM IA separada do histórico da IA.
+Durante PROBATION, por padrão:
+score >= 82
+IA >= 72%
+PULLBACK confirmado
+momentum 3/3
+OI contextual confirmado
+1H + 15m alinhados
+anti-chase OK
+regime BTC OK
+edge >= 8
 
-MANTIDO
-- Liquid Universe até 50 pares
-- ranking por volume
-- lotes de 4 por minuto
-- Pullback preferencial
+Assim um SHORT degradado ainda pode provar que o mercado mudou,
+mas não volta a operar normalmente só porque o relógio terminou.
+
+2) SCORE TIERS
+
+Score 68–74:
+não é banido.
+Só pode gastar IA/entrar quando o setup técnico é ELITE:
+- PULLBACK confirmado;
+- momentum 3/3;
+- OI contextual;
+- 1H + 15m;
+- edge >= 8;
+- volume >= 0.60x;
+- IA PAPER >= 78%.
+
+Score 75–79:
+modo ESTRITO:
+- PULLBACK confirmado;
+- momentum 3/3;
+- OI contextual;
+- 1H + 15m;
+- edge >= 6;
+- volume >= 0.55x;
+- IA PAPER >= 72%.
+
+Score 80+:
+fluxo Balanced Active normal.
+
+BREAKOUT:
+continua com as regras próprias fortes (82+ / IA 75%+).
+
+3) ECONOMIA DE IA
+
+A V1.7.8 já impedia PRE_CANDIDATE de gastar IA.
+
+Agora a V1.7.9 também segura STANDARD de score 68–79
+quando ele não cumpre as exigências técnicas do tier.
+
+Ele vai para WATCH TÉCNICA SEM IA e é rechecado depois.
+
+Isso evita gastar Gemini/OpenRouter em setups que o PAPER
+acabaria bloqueando de qualquer jeito.
+
+4) PERFORMANCE / SCORE + DIREÇÃO
+
+/performance agora inclui combinações:
+
+LONG score 60–69
+LONG score 70–79
+LONG score 80+
+SHORT score 60–69
+SHORT score 70–79
+SHORT score 80+
+
+Assim dá para descobrir se um problema vem do score,
+do lado, ou da combinação dos dois.
+
+5) O QUE FOI PRESERVADO
+
+- Universo líquido dinâmico 40–50
+- AI Efficiency Guard
+- Hard Reject sem IA
+- Watch técnica
+- Confidence Guard
+- Balanced Active
+- Pullback
 - Breakout Strong
-- Momentum 2/3
+- Momentum
+- Regime BTC
 - Performance Guard
-- Directional Audit
-- Smart Stop
+- Performance Quality
+- Loss Brake
+- Smart Stop 1.25–2 ATR
+- Profit Protect
 - Stop Gain Runner
-- Adaptive Stale
+- Adaptive Stale 60/90
 - MFE/MAE
 - Net R/R 1.50
 - Telegram Safe
 - HOLD AI
-- Gemini fallback
+- Gemini Rescue
 
 ENV OPCIONAL
-AI_EFFICIENCY_GUARD_ENABLED=true
-AI_HARD_REJECT_DISTANCE_ATR=1.70
-AI_TECH_WATCH_TTL_MINUTES=60
-AI_TECH_WATCH_MAX=12
-PRE_CANDIDATE_MIN_SCORE=60
-AI_DAILY_LIMIT=70
+
+ADAPTIVE_QUALITY_ENABLED=true
+ADAPTIVE_LOW_MIN_EDGE=8
+ADAPTIVE_MID_MIN_EDGE=6
+ADAPTIVE_LOW_MIN_VOLUME=0.60
+ADAPTIVE_MID_MIN_VOLUME=0.55
+
+PAPER_SIDE_PROBATION_ENABLED=true
+PAPER_SIDE_RECOVERY_MIN_PF=0.80
+PAPER_SIDE_RECOVERY_MIN_WIN_RATE_PCT=40
+PAPER_SIDE_PROBATION_MIN_SCORE=82
+PAPER_SIDE_PROBATION_MIN_AI=72
+PAPER_SIDE_PROBATION_REQUIRE_MOMENTUM3=true
+PAPER_SIDE_PROBATION_REQUIRE_PULLBACK=true
+PAPER_SIDE_PROBATION_REQUIRE_OI=true
+
+PAPER_SCORE_TIER_ENABLED=true
+PAPER_SCORE_TIER_LOW_MAX=74
+PAPER_SCORE_TIER_MID_MAX=79
+PAPER_SCORE_TIER_LOW_MIN_AI=78
+PAPER_SCORE_TIER_MID_MIN_AI=72
+PAPER_SCORE_TIER_LOW_MIN_EDGE=8
+PAPER_SCORE_TIER_MID_MIN_EDGE=6
+PAPER_SCORE_TIER_REQUIRE_MOMENTUM3=true
