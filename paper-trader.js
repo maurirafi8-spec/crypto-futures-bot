@@ -37,7 +37,7 @@ export function paperConfig() {
       numEnv('PAPER_STARTING_BALANCE_USDC', 50, 10, 1_000_000),
 
     riskPct:
-      numEnv('PAPER_RISK_PER_TRADE_PCT', 0.75, 0.1, 10),
+      numEnv('PAPER_RISK_PER_TRADE_PCT', 0.50, 0.1, 10),
 
     leverage:
       intEnv('PAPER_LEVERAGE', 2, 1, 50),
@@ -208,6 +208,46 @@ export function paperConfig() {
     sideProbationRequireOi:
       String(process.env.PAPER_SIDE_PROBATION_REQUIRE_OI || 'true')
         .toLowerCase() !== 'false',
+
+    // V1.8.0 SETUP HEALTH
+    setupProbationEnabled:
+      String(process.env.PAPER_SETUP_PROBATION_ENABLED || 'true')
+        .toLowerCase() !== 'false',
+
+    setupRecoveryMinProfitFactor:
+      numEnv('PAPER_SETUP_RECOVERY_MIN_PF', 0.80, 0, 5),
+
+    setupRecoveryMinWinRatePct:
+      numEnv('PAPER_SETUP_RECOVERY_MIN_WIN_RATE_PCT', 35, 0, 100),
+
+    setupProbationMinScore:
+      numEnv('PAPER_SETUP_PROBATION_MIN_SCORE', 88, 68, 100),
+
+    setupProbationMinAi:
+      numEnv('PAPER_SETUP_PROBATION_MIN_AI', 78, 0, 100),
+
+    setupProbationRequireMomentum3:
+      String(process.env.PAPER_SETUP_PROBATION_REQUIRE_MOMENTUM3 || 'true')
+        .toLowerCase() !== 'false',
+
+    setupProbationRequireOi:
+      String(process.env.PAPER_SETUP_PROBATION_REQUIRE_OI || 'true')
+        .toLowerCase() !== 'false',
+
+    setupProbationRequireTrend:
+      String(process.env.PAPER_SETUP_PROBATION_REQUIRE_TREND || 'true')
+        .toLowerCase() !== 'false',
+
+    setupProbationRequireStrongTrigger:
+      String(process.env.PAPER_SETUP_PROBATION_REQUIRE_STRONG_TRIGGER || 'true')
+        .toLowerCase() !== 'false',
+
+    performanceRiskThrottleEnabled:
+      String(process.env.PAPER_PERFORMANCE_RISK_THROTTLE_ENABLED || 'true')
+        .toLowerCase() !== 'false',
+
+    performanceRiskPct:
+      numEnv('PAPER_PERFORMANCE_RISK_PCT', 0.50, 0.1, 10),
 
     // Tiers de score: a amostra atual mostrou os trades <80 muito mais frágeis.
     scoreTierEnabled:
@@ -804,9 +844,7 @@ function performanceCircuitStatus(
     paperConfig();
 
   const normalized =
-    String(
-      value || ''
-    )
+    String(value || '')
       .toUpperCase();
 
   if (
@@ -821,8 +859,7 @@ function performanceCircuitStatus(
       recovered: true,
       kind,
       value: normalized,
-      metrics:
-        tradeMetrics([])
+      metrics: tradeMetrics([])
     };
   }
 
@@ -838,8 +875,7 @@ function performanceCircuitStatus(
       recovered: true,
       kind,
       value: normalized,
-      metrics:
-        tradeMetrics([])
+      metrics: tradeMetrics([])
     };
   }
 
@@ -848,10 +884,8 @@ function performanceCircuitStatus(
       trade => {
         if (kind === 'SIDE') {
           return (
-            String(
-              trade?.side ||
-              ''
-            ).toUpperCase() ===
+            String(trade?.side || '')
+              .toUpperCase() ===
             normalized
           );
         }
@@ -868,17 +902,14 @@ function performanceCircuitStatus(
     );
 
   const metrics =
-    tradeMetrics(
-      trades
-    );
+    tradeMetrics(trades);
 
   const enough =
     metrics.total >=
     cfg.performanceMinTrades;
 
   const pfBad =
-    metrics.profitFactor !==
-      Infinity &&
+    metrics.profitFactor !== Infinity &&
     metrics.profitFactor <
       cfg.performanceMinProfitFactor;
 
@@ -901,8 +932,7 @@ function performanceCircuitStatus(
       ? (
         Date.now() -
         metrics.newestClosedAt
-      ) /
-        60_000
+      ) / 60_000
       : Infinity;
 
   const remainingMin =
@@ -914,41 +944,46 @@ function performanceCircuitStatus(
         )
       : 0;
 
-  // SETUP mantém a lógica anterior.
-  if (
-    kind !== 'SIDE' ||
-    !cfg.sideProbationEnabled
-  ) {
+  const probationEnabled =
+    kind === 'SIDE'
+      ? cfg.sideProbationEnabled
+      : cfg.setupProbationEnabled;
+
+  const recoveryPf =
+    kind === 'SIDE'
+      ? cfg.sideRecoveryMinProfitFactor
+      : cfg.setupRecoveryMinProfitFactor;
+
+  const recoveryWinRate =
+    kind === 'SIDE'
+      ? cfg.sideRecoveryMinWinRatePct
+      : cfg.setupRecoveryMinWinRatePct;
+
+  if (!probationEnabled) {
     return {
       active:
         poor &&
         remainingMin > 0,
       probation: false,
       poor,
-      degraded:
-        poor,
-      recovered:
-        !poor,
+      degraded: poor,
+      recovered: !poor,
       kind,
-      value:
-        normalized,
+      value: normalized,
       metrics,
       remainingMin,
       elapsedMin
     };
   }
 
-  // SIDE: recuperação precisa ser real.
-  // Não basta apenas acabar o relógio de 90m.
   const pfRecovered =
-    metrics.profitFactor ===
-      Infinity ||
+    metrics.profitFactor === Infinity ||
     metrics.profitFactor >=
-      cfg.sideRecoveryMinProfitFactor;
+      recoveryPf;
 
   const winRateRecovered =
     metrics.winRate >=
-    cfg.sideRecoveryMinWinRatePct;
+    recoveryWinRate;
 
   const recovered =
     !enough ||
@@ -976,15 +1011,12 @@ function performanceCircuitStatus(
     degraded,
     recovered,
     kind,
-    value:
-      normalized,
+    value: normalized,
     metrics,
     remainingMin,
     elapsedMin,
-    recoveryPf:
-      cfg.sideRecoveryMinProfitFactor,
-    recoveryWinRate:
-      cfg.sideRecoveryMinWinRatePct
+    recoveryPf,
+    recoveryWinRate
   };
 }
 
@@ -1048,6 +1080,35 @@ function overallPerformanceQualityStatus() {
         : 0
   };
 }
+
+function effectiveRiskStatus() {
+  const cfg =
+    paperConfig();
+
+  const quality =
+    overallPerformanceQualityStatus();
+
+  const throttled =
+    cfg.performanceRiskThrottleEnabled &&
+    quality.active;
+
+  const riskPct =
+    throttled
+      ? Math.min(
+          cfg.riskPct,
+          cfg.performanceRiskPct
+        )
+      : cfg.riskPct;
+
+  return {
+    riskPct,
+    throttled,
+    configuredRiskPct:
+      cfg.riskPct,
+    quality
+  };
+}
+
 
 export function paperPerformanceGuardPreview({
   side = 'LONG',
@@ -1237,7 +1298,9 @@ function strictTechnicalQuality(
     minEdge = 0,
     requireMomentum3 = true,
     requirePullback = true,
-    requireOi = true
+    requireOi = true,
+    requireTrendRegime = false,
+    requireStrongTrigger = false
   } = {}
 ) {
   const reasons = [];
@@ -1282,6 +1345,30 @@ function strictTechnicalQuality(
   ) {
     reasons.push(
       '1H+15m não alinhados'
+    );
+  }
+
+  if (
+    requireTrendRegime &&
+    String(
+      signal?.marketRegime?.regime ||
+      ''
+    ).toUpperCase() !==
+      'TREND'
+  ) {
+    reasons.push(
+      `regime ${signal?.marketRegime?.regime || 'UNKNOWN'}; exige TREND`
+    );
+  }
+
+  if (
+    requireStrongTrigger &&
+    !Boolean(
+      signal?.pullback?.strongTrigger
+    )
+  ) {
+    reasons.push(
+      'trigger forte/reclaim EMA20 não confirmado'
     );
   }
 
@@ -1413,6 +1500,10 @@ function eligibility(signal) {
           requirePullback:
             true,
           requireOi:
+            true,
+          requireTrendRegime:
+            true,
+          requireStrongTrigger:
             true
         }
       );
@@ -1443,9 +1534,14 @@ function eligibility(signal) {
           requireMomentum3:
             cfg.sideProbationRequireMomentum3,
           requirePullback:
-            cfg.sideProbationRequirePullback,
+            cfg.sideProbationRequirePullback &&
+            signalSetup === 'PULLBACK',
           requireOi:
-            cfg.sideProbationRequireOi
+            cfg.sideProbationRequireOi,
+          requireTrendRegime:
+            signalSetup === 'PULLBACK',
+          requireStrongTrigger:
+            signalSetup === 'PULLBACK'
         }
       );
 
@@ -1463,6 +1559,50 @@ function eligibility(signal) {
     }
   }
 
+  if (
+    setupGuard.probation
+  ) {
+    const isPullback =
+      signalSetup === 'PULLBACK';
+
+    const setupStrict =
+      strictTechnicalQuality(
+        signal,
+        {
+          minEdge:
+            isPullback
+              ? 8
+              : 10,
+          requireMomentum3:
+            cfg.setupProbationRequireMomentum3,
+          requirePullback:
+            isPullback,
+          requireOi:
+            cfg.setupProbationRequireOi,
+          requireTrendRegime:
+            isPullback &&
+            cfg.setupProbationRequireTrend,
+          requireStrongTrigger:
+            isPullback &&
+            cfg.setupProbationRequireStrongTrigger
+        }
+      );
+
+    if (!setupStrict.ok) {
+      const m =
+        setupGuard.metrics;
+
+      return {
+        ok: false,
+        reason:
+          `SETUP PROBATION ${signalSetup}: ` +
+          `${m.wins}W/${m.losses}L · ` +
+          `PF ${Number.isFinite(m.profitFactor) ? m.profitFactor.toFixed(2) : '∞'} · ` +
+          setupStrict.reasons.join(' · ')
+      };
+    }
+  }
+
   const baseMinAiConfidence =
     Math.max(
       isBreakout
@@ -1476,6 +1616,9 @@ function eligibility(signal) {
         : 0,
       sideGuard.probation
         ? cfg.sideProbationMinAi
+        : 0,
+      setupGuard.probation
+        ? cfg.setupProbationMinAi
         : 0
     );
 
@@ -1489,6 +1632,9 @@ function eligibility(signal) {
         : cfg.minScore,
       sideGuard.probation
         ? cfg.sideProbationMinScore
+        : 0,
+      setupGuard.probation
+        ? cfg.setupProbationMinScore
         : 0
     );
 
@@ -1555,7 +1701,8 @@ function eligibility(signal) {
         `${brake.active ? ` (LOSS BRAKE ${brake.count} perdas · ${brake.remainingMin.toFixed(0)}m)` : ''}` +
         `${quality.active ? ' (PERFORMANCE QUALITY)' : ''}` +
         `${tier.strict ? ` (${tier.tier})` : ''}` +
-        `${sideGuard.probation ? ` (SIDE PROBATION ${signalSide})` : ''}`
+        `${sideGuard.probation ? ` (SIDE PROBATION ${signalSide})` : ''}` +
+        `${setupGuard.probation ? ` (SETUP PROBATION ${signalSetup})` : ''}`
     };
   }
 
@@ -1570,6 +1717,7 @@ function eligibility(signal) {
         `${isBreakout ? ' (BREAKOUT FORTE)' : ''}` +
         `${tier.strict ? ` (${tier.tier})` : ''}` +
         `${sideGuard.probation ? ` (SIDE PROBATION ${signalSide})` : ''}` +
+        `${setupGuard.probation ? ` (SETUP PROBATION ${signalSetup})` : ''}` +
         `${brake.active ? ` (LOSS BRAKE ${brake.count} perdas · ${brake.remainingMin.toFixed(0)}m)` : ''}`
     };
   }
@@ -2202,11 +2350,17 @@ export function maybeOpenPaperPosition(signal) {
         entryFill
       );
 
+    const riskStatus =
+      effectiveRiskStatus();
+
+    const effectiveRiskPct =
+      riskStatus.riskPct;
+
     const riskBudget =
       Math.max(
         0,
         state.balance *
-        cfg.riskPct / 100
+        effectiveRiskPct / 100
       );
 
     // V1.6.5:
@@ -2363,6 +2517,20 @@ export function maybeOpenPaperPosition(signal) {
         Number(signal.oiContext?.oiPct ?? signal.oiPct ?? 0),
       setupPrice30mPct:
         Number(signal.oiContext?.pricePct || 0),
+      setupMarketRegime:
+        signal.marketRegime?.regime || null,
+      setupMarketRegimeReason:
+        signal.marketRegime?.reason || null,
+      setupPullbackStrongTrigger:
+        Boolean(signal.pullback?.strongTrigger),
+      setupPullbackTriggerQuality:
+        Number(signal.pullback?.triggerQuality || 0),
+      setupEmaSlope15:
+        Number(signal.pullback?.slope15 || signal.marketRegime?.slope15 || 0),
+      setupEmaSlope1h:
+        Number(signal.pullback?.slope1h || signal.marketRegime?.slope1h || 0),
+      effectiveRiskPct:
+        Number(effectiveRiskPct),
 
       mfeR: 0,
       maeR: 0,
@@ -2529,7 +2697,8 @@ export function maybeOpenPaperPosition(signal) {
         `⚖️ R/R líquido projetado: ${Number(position.projectedNetRR).toFixed(2)} · mínimo ${cfg.minNetRR.toFixed(2)}\n` +
         `${cfg.trailingRunnerEnabled ? `🪜 Stop Gain: TP1→BE líquido · TP2→TP1 · TP3→TP2 · depois runner sobe por degraus\n` : ''}` +
         `${cfg.trailingRunnerEnabled ? `🏃 Saídas: 30% / 30% / ${cfg.tp3ClosePct.toFixed(0)}% · runner ${Math.max(0, 40 - cfg.tp3ClosePct).toFixed(0)}%\n` : ''}` +
-        `🎚 Teto de risco da banca: ${riskBudget.toFixed(3)} USDC (${cfg.riskPct.toFixed(2)}%)\n` +
+        `🌦 Regime: ${position.setupMarketRegime || 'UNKNOWN'} · trigger ${position.setupPullbackTriggerQuality || 0}/5\n` +
+        `🎚 Teto de risco da banca: ${riskBudget.toFixed(3)} USDC (${effectiveRiskPct.toFixed(2)}%)${riskStatus.throttled ? ' · THROTTLE QUALIDADE' : ''}\n` +
         `💸 Taxa de entrada simulada: ${entryFee.toFixed(4)} USDC`
     };
   } catch (error) {
@@ -2690,6 +2859,7 @@ function positionCloseMessage(closed) {
     `📊 Retorno sobre margem: ${closed.returnOnMarginPct >= 0 ? '+' : ''}${closed.returnOnMarginPct.toFixed(2)}%\n` +
     `📈 MFE: +${Number(closed.mfeR || 0).toFixed(2)}R · 📉 MAE: -${Number(closed.maeR || 0).toFixed(2)}R\n` +
     `${closed.setupOiContextRegime ? `🧭 Setup: ${closed.setupEntryMode || 'PULLBACK'} · ${closed.setupOiContextRegime} · pullback ${closed.setupPullbackConfirmed ? 'SIM' : 'NÃO'}\n` : ''}` +
+    `${closed.setupMarketRegime ? `🌦 Regime: ${closed.setupMarketRegime} · trigger ${Number(closed.setupPullbackTriggerQuality || 0)}/5\n` : ''}` +
     `🏦 Banca: ${state.balance.toFixed(2)} USDC`
   );
 }
@@ -4606,6 +4776,56 @@ export function paperPerformanceText() {
     })
   );
 
+  const setupSideGroups = [
+    ['PULLBACK LONG', 'PULLBACK', 'LONG'],
+    ['PULLBACK SHORT', 'PULLBACK', 'SHORT'],
+    ['BREAKOUT LONG', 'BREAKOUT_STRONG', 'LONG'],
+    ['BREAKOUT SHORT', 'BREAKOUT_STRONG', 'SHORT']
+  ].map(
+    ([label, setup, side]) => ({
+      label,
+      metrics:
+        tradeMetrics(
+          state.closedTrades
+            .filter(t =>
+              String(
+                t?.setupEntryMode ||
+                'PULLBACK'
+              ).toUpperCase() ===
+                setup &&
+              String(t?.side || '')
+                .toUpperCase() ===
+                side
+            )
+            .slice(0, 20)
+        )
+    })
+  );
+
+  const regimeGroups = [
+    'TREND',
+    'CHOP',
+    'EXPANSION',
+    'TRANSITION'
+  ].map(
+    regime => ({
+      label: regime,
+      metrics:
+        tradeMetrics(
+          state.closedTrades
+            .filter(
+              t =>
+                String(
+                  t?.setupMarketRegime ||
+                  ''
+                ).toUpperCase() ===
+                regime
+            )
+            .slice(0, 20)
+        )
+    })
+  );
+
   const lines = [
     '🧠 <b>PERFORMANCE GUARD</b>',
     '',
@@ -4630,6 +4850,28 @@ export function paperPerformanceText() {
     `   Guard BREAKOUT: ${guardLabel(breakoutGuard)}`,
     '',
     `<b>Quality boost:</b> ${quality.active ? `🟠 ATIVO · +${cfg.performanceQualityScoreBoost} score / +${cfg.performanceQualityAiBoost}% IA` : '✅ INATIVO'}`,
+    '',
+    '<b>Setup + direção</b>',
+    ...setupSideGroups
+      .filter(x => x.metrics.total > 0)
+      .map(
+        x =>
+          `• ${x.label}: ${x.metrics.total} · ` +
+          `${x.metrics.wins}W/${x.metrics.losses}L · ` +
+          `PF ${fmtPf(x.metrics.profitFactor)} · ${fmtSigned(x.metrics.pnl)} USDC · ` +
+          `MFE +${x.metrics.avgMfe.toFixed(2)}R / MAE -${x.metrics.avgMae.toFixed(2)}R`
+      ),
+    '',
+    '<b>Market Regime</b>',
+    ...regimeGroups
+      .filter(x => x.metrics.total > 0)
+      .map(
+        x =>
+          `• ${x.label}: ${x.metrics.total} · ` +
+          `${x.metrics.wins}W/${x.metrics.losses}L · ` +
+          `PF ${fmtPf(x.metrics.profitFactor)} · ${fmtSigned(x.metrics.pnl)} USDC · ` +
+          `MFE +${x.metrics.avgMfe.toFixed(2)}R / MAE -${x.metrics.avgMae.toFixed(2)}R`
+      ),
     '',
     '<b>Faixa de score</b>',
     ...scoreBands
@@ -4681,6 +4923,8 @@ export function paperStatusText() {
   ensureDay();
 
   const cfg = paperConfig();
+  const currentRisk =
+    effectiveRiskStatus();
   const stats = closedStats();
   const equity = currentEquity();
   const unrealized = currentUnrealized();
@@ -4710,7 +4954,7 @@ export function paperStatusText() {
       : null;
 
   return [
-    '🧠 <b>PAPER TRADING — V1.7.9 ADAPTIVE QUALITY</b>',
+    '🌦 <b>PAPER TRADING — V1.8.0 REGIME + SETUP HEALTH</b>',
     '',
     `Status: ${cfg.enabled ? '✅ ATIVO' : '⛔ DESATIVADO'} · ${state.paused ? '⏸ PAUSADO' : '▶️ RODANDO'}`,
     `💰 Banca inicial: ${state.startingBalance.toFixed(2)} USDC`,
@@ -4725,11 +4969,13 @@ export function paperStatusText() {
     `🧯 Loss Brake: ${cfg.lossBrakeEnabled ? 'ATIVO' : 'INATIVO'} · após ${cfg.lossBrakeConsecutive} perdas: +${cfg.lossBrakeScoreBoost} score / +${cfg.lossBrakeAiBoost}% IA por ${cfg.lossBrakeMinutes}m`,
     `🧠 Performance Guard: ${cfg.performanceGuardEnabled ? 'ATIVO' : 'INATIVO'} · lado/setup · janela ${cfg.performanceLookback} · pausa ${cfg.performancePauseMin.toFixed(0)}m`,
     `🟠 Side Probation: ${cfg.sideProbationEnabled ? 'ATIVO' : 'INATIVO'} · recuperação PF ${cfg.sideRecoveryMinProfitFactor.toFixed(2)}+ / WR ${cfg.sideRecoveryMinWinRatePct.toFixed(0)}%+`,
+    `🧭 Setup Probation: ${cfg.setupProbationEnabled ? 'ATIVO' : 'INATIVO'} · recuperação PF ${cfg.setupRecoveryMinProfitFactor.toFixed(2)}+ / WR ${cfg.setupRecoveryMinWinRatePct.toFixed(0)}%+`,
+    `🌦 Regime Filter: PULLBACK só TREND · BREAKOUT priorizado EXPANSION`,
     `🎚 Score Tiers: ${cfg.scoreTierEnabled ? 'ATIVO' : 'INATIVO'} · 68–74 elite · 75–79 estrito · 80+ normal`,
     `📈 Performance Quality: ${cfg.performanceQualityEnabled ? 'ATIVO' : 'INATIVO'} · PF ${cfg.performanceQualityMinPf.toFixed(2)} / payoff ${cfg.performanceQualityMinPayoff.toFixed(2)}`,
     `🔒 Margem usada: ${used.toFixed(2)} USDC`,
     `💳 Disponível: ${available.toFixed(2)} USDC`,
-    `⚖️ Risco por trade: ${cfg.riskPct.toFixed(2)}%`,
+    `⚖️ Risco por trade: ${currentRisk.riskPct.toFixed(2)}%${currentRisk.throttled ? ` · THROTTLE (config ${cfg.riskPct.toFixed(2)}%)` : ''}`,
     `⚙️ Alavancagem simulada: ${cfg.leverage}x`,
     `⚡ Scalp: ${cfg.scalpMode ? 'ATIVO' : 'INATIVO'} · stale adaptativo ${cfg.scalpStaleMin}/${cfg.scalpStaleMaxMin} min · máx ${cfg.maxHoldHours}h`,
     `⏳ Stale: ${cfg.scalpStaleConsecutiveChecks} checks · ${cfg.scalpStaleDeteriorationCount}/3 deteriorações · MFE ${cfg.scalpStaleMinProgressR.toFixed(2)}R/${cfg.scalpStaleHardProgressR.toFixed(2)}R`,

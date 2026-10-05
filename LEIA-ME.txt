@@ -1,157 +1,59 @@
-CRYPTO FUTURES SCANNER V1.7.9 — ADAPTIVE QUALITY
+CRYPTO FUTURES SCANNER V1.8.0 — REGIME + SETUP HEALTH
 
-OBJETIVO
-Usar o histórico real do PAPER para deixar o bot mais seletivo
-somente onde a performance está ruim, sem estragar os grupos saudáveis.
+FOCO
+Os perdedores mostraram MFE baixo e MAE alto: o gargalo era seleção/trigger.
 
-DADOS QUE MOTIVARAM ESTA VERSÃO
-O bot mostrou:
-- LONG melhor que SHORT;
-- SHORT com PF muito baixo;
-- score 70–79 muito fraco;
-- score 80+ muito melhor;
-- Stop Gain Runner funcionando bem em tendências fortes.
+MARKET REGIME
+TREND: 15m+1H alinhados, EMA20 inclinada, EMAs separadas.
+CHOP: lateralidade, slopes fracos, EMAs comprimidas.
+EXPANSION: tendência + impulso + volume.
+TRANSITION: estrutura ainda sem regime limpo.
 
-Por isso esta versão NÃO mexe em:
-- Smart Stop;
-- Stop Gain Runner;
-- Net R/R;
-- Adaptive Stale;
-- targets.
+PULLBACK
+Só abre em TREND.
+Trigger V2 exige slope 1H/15m, reteste, reclaim EMA20, rejeição e distância válida.
+O sinal mostra trigger X/5.
 
-1) SIDE PROBATION
+BREAKOUT STRONG
+Permitido em TREND/EXPANSION.
+Em EXPANSION ganha prioridade.
 
-Antes:
-lado ruim pausava 90 min e depois voltava imediatamente ao filtro normal.
+SETUP PROBATION
+Setup degradado não volta ao normal só após 90m.
+Recuperação padrão: PF >= 0.80 E win rate >= 35%.
+Pullback em probation exige score >= 88, IA >= 78%, momentum 3/3,
+OI confirmado, TREND, trigger forte e edge >= 8.
 
-Agora:
-lado ruim:
-PAUSA 90 min
-↓
-PROBATION
-↓
-só volta ao normal quando a janela recente recuperar:
+SIDE PROBATION
+Mantido. Breakout forte não é mais bloqueado por não ser Pullback.
 
-PF >= 0.80
-E
-win rate >= 40%
+RISK THROTTLE
+Default PAPER: 0.50%.
+Com Performance Quality ATIVO:
+risco efetivo = min(risco configurado, 0.50%).
+Isso protege mesmo com env antigo em 0.75%.
 
-Durante PROBATION, por padrão:
-score >= 82
-IA >= 72%
-PULLBACK confirmado
-momentum 3/3
-OI contextual confirmado
-1H + 15m alinhados
-anti-chase OK
-regime BTC OK
-edge >= 8
+/performance
+Inclui PULLBACK/BREAKOUT por lado e TREND/CHOP/EXPANSION/TRANSITION,
+com PF, PnL, MFE e MAE.
 
-Assim um SHORT degradado ainda pode provar que o mercado mudou,
-mas não volta a operar normalmente só porque o relógio terminou.
+MANTIDO
+Smart Stop, Profit Protect, Stop Gain Runner, Adaptive Stale, Net R/R,
+AI Efficiency, Adaptive Quality, Performance Guard, Loss Brake,
+universo 40–50, Gemini Rescue, HOLD AI e Telegram Safe.
 
-2) SCORE TIERS
+ENVS OPCIONAIS
+PAPER_RISK_PER_TRADE_PCT=0.50
+PAPER_SETUP_PROBATION_ENABLED=true
+PAPER_SETUP_RECOVERY_MIN_PF=0.80
+PAPER_SETUP_RECOVERY_MIN_WIN_RATE_PCT=35
+PAPER_SETUP_PROBATION_MIN_SCORE=88
+PAPER_SETUP_PROBATION_MIN_AI=78
+PAPER_SETUP_PROBATION_REQUIRE_MOMENTUM3=true
+PAPER_SETUP_PROBATION_REQUIRE_OI=true
+PAPER_SETUP_PROBATION_REQUIRE_TREND=true
+PAPER_SETUP_PROBATION_REQUIRE_STRONG_TRIGGER=true
+PAPER_PERFORMANCE_RISK_THROTTLE_ENABLED=true
+PAPER_PERFORMANCE_RISK_PCT=0.50
 
-Score 68–74:
-não é banido.
-Só pode gastar IA/entrar quando o setup técnico é ELITE:
-- PULLBACK confirmado;
-- momentum 3/3;
-- OI contextual;
-- 1H + 15m;
-- edge >= 8;
-- volume >= 0.60x;
-- IA PAPER >= 78%.
-
-Score 75–79:
-modo ESTRITO:
-- PULLBACK confirmado;
-- momentum 3/3;
-- OI contextual;
-- 1H + 15m;
-- edge >= 6;
-- volume >= 0.55x;
-- IA PAPER >= 72%.
-
-Score 80+:
-fluxo Balanced Active normal.
-
-BREAKOUT:
-continua com as regras próprias fortes (82+ / IA 75%+).
-
-3) ECONOMIA DE IA
-
-A V1.7.8 já impedia PRE_CANDIDATE de gastar IA.
-
-Agora a V1.7.9 também segura STANDARD de score 68–79
-quando ele não cumpre as exigências técnicas do tier.
-
-Ele vai para WATCH TÉCNICA SEM IA e é rechecado depois.
-
-Isso evita gastar Gemini/OpenRouter em setups que o PAPER
-acabaria bloqueando de qualquer jeito.
-
-4) PERFORMANCE / SCORE + DIREÇÃO
-
-/performance agora inclui combinações:
-
-LONG score 60–69
-LONG score 70–79
-LONG score 80+
-SHORT score 60–69
-SHORT score 70–79
-SHORT score 80+
-
-Assim dá para descobrir se um problema vem do score,
-do lado, ou da combinação dos dois.
-
-5) O QUE FOI PRESERVADO
-
-- Universo líquido dinâmico 40–50
-- AI Efficiency Guard
-- Hard Reject sem IA
-- Watch técnica
-- Confidence Guard
-- Balanced Active
-- Pullback
-- Breakout Strong
-- Momentum
-- Regime BTC
-- Performance Guard
-- Performance Quality
-- Loss Brake
-- Smart Stop 1.25–2 ATR
-- Profit Protect
-- Stop Gain Runner
-- Adaptive Stale 60/90
-- MFE/MAE
-- Net R/R 1.50
-- Telegram Safe
-- HOLD AI
-- Gemini Rescue
-
-ENV OPCIONAL
-
-ADAPTIVE_QUALITY_ENABLED=true
-ADAPTIVE_LOW_MIN_EDGE=8
-ADAPTIVE_MID_MIN_EDGE=6
-ADAPTIVE_LOW_MIN_VOLUME=0.60
-ADAPTIVE_MID_MIN_VOLUME=0.55
-
-PAPER_SIDE_PROBATION_ENABLED=true
-PAPER_SIDE_RECOVERY_MIN_PF=0.80
-PAPER_SIDE_RECOVERY_MIN_WIN_RATE_PCT=40
-PAPER_SIDE_PROBATION_MIN_SCORE=82
-PAPER_SIDE_PROBATION_MIN_AI=72
-PAPER_SIDE_PROBATION_REQUIRE_MOMENTUM3=true
-PAPER_SIDE_PROBATION_REQUIRE_PULLBACK=true
-PAPER_SIDE_PROBATION_REQUIRE_OI=true
-
-PAPER_SCORE_TIER_ENABLED=true
-PAPER_SCORE_TIER_LOW_MAX=74
-PAPER_SCORE_TIER_MID_MAX=79
-PAPER_SCORE_TIER_LOW_MIN_AI=78
-PAPER_SCORE_TIER_MID_MIN_AI=72
-PAPER_SCORE_TIER_LOW_MIN_EDGE=8
-PAPER_SCORE_TIER_MID_MIN_EDGE=6
-PAPER_SCORE_TIER_REQUIRE_MOMENTUM3=true
+Paper trading é simulação e não garante resultado real.

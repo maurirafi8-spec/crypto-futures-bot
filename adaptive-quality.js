@@ -132,6 +132,21 @@ export function classifyAdaptiveQualityTechnical(
       pullback.confirmed
     );
 
+  const strongTrigger =
+    bool(
+      pullback.strongTrigger,
+      bool(
+        pullback.confirmed
+      )
+    );
+
+  const trendRegime =
+    String(
+      signal?.marketRegime?.regime ||
+      ''
+    ).toUpperCase() ===
+    'TREND';
+
   const momentum3of3 =
     n(
       momentum.confirmationCount
@@ -187,6 +202,18 @@ export function classifyAdaptiveQualityTechnical(
   if (!pullbackOk) {
     reasons.push(
       'score abaixo de 80 exige PULLBACK confirmado'
+    );
+  }
+
+  if (!strongTrigger) {
+    reasons.push(
+      'trigger forte/reclaim da EMA20 não confirmado'
+    );
+  }
+
+  if (!trendRegime) {
+    reasons.push(
+      `regime ${signal?.marketRegime?.regime || 'UNKNOWN'}; score <80 exige TREND`
     );
   }
 

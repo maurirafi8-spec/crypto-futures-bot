@@ -1,4 +1,4 @@
-// V1.7.9 — LIQUID UNIVERSE preserved + ADAPTIVE QUALITY
+// V1.8.0 — LIQUID UNIVERSE preserved + REGIME SETUP HEALTH
 // O scheduler aprende o volume 24h de cada ativo conforme os lotes normais
 // são escaneados. Assim não adicionamos chamadas extras de OHLCV e evitamos
 // pressionar o rate limit da Coinalyze.

@@ -1059,12 +1059,226 @@ export function adaptivePullbackDistancePreview(
   );
 }
 
+
+function ema20SlopeAtr(
+  candles = [],
+  steps = 3
+) {
+  if (
+    !Array.isArray(candles) ||
+    candles.length < 60 + steps
+  ) {
+    return 0;
+  }
+
+  const current =
+    analyzeTf(candles);
+
+  const previous =
+    analyzeTf(
+      candles.slice(
+        0,
+        -steps
+      )
+    );
+
+  const atrValue =
+    Math.max(
+      finiteNumber(current?.atr, 0),
+      finiteNumber(current?.price, 0) * 0.001
+    );
+
+  if (atrValue <= 0) {
+    return 0;
+  }
+
+  return (
+    finiteNumber(current?.ema20, 0) -
+    finiteNumber(previous?.ema20, 0)
+  ) / atrValue;
+}
+
+function signedForSide(
+  side,
+  value
+) {
+  const n =
+    finiteNumber(value, 0);
+
+  return side === 'SHORT'
+    ? -n
+    : n;
+}
+
+function marketRegimeStatus({
+  side,
+  t5,
+  t15,
+  t1h,
+  t4h,
+  candles5m = [],
+  candles15m = [],
+  candles1h = []
+}) {
+  const structure15 =
+    directionalStructure(t15);
+
+  const structure1h =
+    directionalStructure(t1h);
+
+  const structure4h =
+    directionalStructure(t4h);
+
+  const slope15Raw =
+    ema20SlopeAtr(
+      candles15m,
+      3
+    );
+
+  const slope1hRaw =
+    ema20SlopeAtr(
+      candles1h,
+      3
+    );
+
+  const slope15 =
+    signedForSide(
+      side,
+      slope15Raw
+    );
+
+  const slope1h =
+    signedForSide(
+      side,
+      slope1hRaw
+    );
+
+  const atr1h =
+    Math.max(
+      finiteNumber(t1h?.atr, 0),
+      finiteNumber(t1h?.price, 0) * 0.001
+    );
+
+  const emaSpread1h =
+    atr1h > 0
+      ? Math.abs(
+          finiteNumber(t1h?.ema20, 0) -
+          finiteNumber(t1h?.ema50, 0)
+        ) / atr1h
+      : 0;
+
+  const last5 =
+    last(candles5m);
+
+  const atr5 =
+    Math.max(
+      finiteNumber(t5?.atr, 0),
+      finiteNumber(t5?.price, 0) * 0.001
+    );
+
+  const body5 =
+    last5 && atr5 > 0
+      ? Math.abs(
+          Number(last5.close) -
+          Number(last5.open)
+        ) / atr5
+      : 0;
+
+  const volumeRatio =
+    finiteNumber(
+      t5?.volumeRatio,
+      0
+    );
+
+  const aligned15 =
+    structure15 === side;
+
+  const aligned1h =
+    structure1h === side;
+
+  const aligned4h =
+    structure4h === side;
+
+  const expansion =
+    aligned15 &&
+    aligned1h &&
+    slope15 >= 0.08 &&
+    slope1h >= 0.05 &&
+    body5 >= 0.35 &&
+    volumeRatio >= 1.15;
+
+  const trend =
+    aligned15 &&
+    aligned1h &&
+    slope15 >= 0.04 &&
+    slope1h >= 0.025 &&
+    emaSpread1h >= 0.18;
+
+  const chop =
+    (
+      structure15 === 'MIXED' &&
+      structure1h === 'MIXED'
+    ) ||
+    (
+      Math.abs(slope15Raw) < 0.035 &&
+      Math.abs(slope1hRaw) < 0.025 &&
+      emaSpread1h < 0.18
+    );
+
+  const regime =
+    expansion
+      ? 'EXPANSION'
+      : trend
+        ? 'TREND'
+        : chop
+          ? 'CHOP'
+          : 'TRANSITION';
+
+  return {
+    regime,
+    pullbackAllowed:
+      regime === 'TREND',
+    breakoutAllowed:
+      regime === 'EXPANSION' ||
+      regime === 'TREND',
+    aligned15,
+    aligned1h,
+    aligned4h,
+    structure15,
+    structure1h,
+    structure4h,
+    slope15,
+    slope1h,
+    slope15Raw,
+    slope1hRaw,
+    emaSpread1h,
+    body5,
+    volumeRatio,
+    reason:
+      regime === 'TREND'
+        ? `TREND: 15m+1H alinhados · slope15 ${slope15.toFixed(2)} ATR · slope1H ${slope1h.toFixed(2)} ATR`
+        : regime === 'EXPANSION'
+          ? `EXPANSION: tendência + volume ${volumeRatio.toFixed(2)}x + corpo ${body5.toFixed(2)} ATR`
+          : regime === 'CHOP'
+            ? `CHOP: estrutura/slope fracos · spread1H ${emaSpread1h.toFixed(2)} ATR`
+            : 'TRANSITION: estrutura ainda sem regime limpo'
+  };
+}
+
+export function marketRegimePreview(
+  args = {}
+) {
+  return marketRegimeStatus(args);
+}
+
 function pullbackTriggerStatus({
   side,
   t5,
   t15,
   t1h,
   candles5m = [],
+  candles15m = [],
+  candles1h = [],
   lookback = 7,
   touchAtr = 0.35,
   minBodyAtr = 0.12,
@@ -1118,6 +1332,38 @@ function pullbackTriggerStatus({
   const structure1hOk =
     trend1h === side;
 
+  const slope15Raw =
+    ema20SlopeAtr(
+      candles15m,
+      3
+    );
+
+  const slope1hRaw =
+    ema20SlopeAtr(
+      candles1h,
+      3
+    );
+
+  const slope15 =
+    signedForSide(
+      side,
+      slope15Raw
+    );
+
+  const slope1h =
+    signedForSide(
+      side,
+      slope1hRaw
+    );
+
+  const slope15Ok =
+    candles15m.length < 63 ||
+    slope15 >= 0.035;
+
+  const slope1hOk =
+    candles1h.length < 63 ||
+    slope1h >= 0.020;
+
   if (
     !Array.isArray(candles5m) ||
     candles5m.length <
@@ -1137,6 +1383,14 @@ function pullbackTriggerStatus({
       bodyAtr: 0,
       distanceAtr: 99,
       closeLocation: 0,
+      reclaimOk: false,
+      rejectionOk: false,
+      strongTrigger: false,
+      triggerQuality: 0,
+      slope15,
+      slope1h,
+      slope15Ok,
+      slope1hOk,
       reason:
         'histórico insuficiente para pullback'
     };
@@ -1284,31 +1538,113 @@ function pullbackTriggerStatus({
           notExtended
         : false;
 
+  const reclaimOk =
+    side === 'LONG'
+      ? (
+        low <=
+          ema20 +
+          atrValue * 0.45 &&
+        close > ema20
+      )
+      : side === 'SHORT'
+        ? (
+          high >=
+            ema20 -
+            atrValue * 0.45 &&
+          close < ema20
+        )
+        : false;
+
+  const lowerWick =
+    Math.max(
+      0,
+      Math.min(open, close) -
+      low
+    );
+
+  const upperWick =
+    Math.max(
+      0,
+      high -
+      Math.max(open, close)
+    );
+
+  const bodySafe =
+    Math.max(
+      body,
+      atrValue * 0.03
+    );
+
+  const rejectionOk =
+    side === 'LONG'
+      ? (
+        closeLocation >= 0.68 ||
+        lowerWick / bodySafe >= 0.35
+      )
+      : side === 'SHORT'
+        ? (
+          closeLocation <= 0.32 ||
+          upperWick / bodySafe >= 0.35
+        )
+        : false;
+
+  const triggerQuality =
+    [
+      triggerOk,
+      reclaimOk,
+      rejectionOk,
+      slope15Ok,
+      slope1hOk
+    ].filter(Boolean).length;
+
+  const strongTrigger =
+    triggerOk &&
+    reclaimOk &&
+    rejectionOk &&
+    slope15Ok &&
+    slope1hOk;
+
   const confirmed =
     structure15Ok &&
     structure1hOk &&
     pullbackFound &&
-    triggerOk;
+    strongTrigger;
 
   const reason =
     !structure1hOk
       ? `1H ${trend1h} não confirma ${side}`
       : !structure15Ok
         ? `15m ${trend15} não confirma ${side}`
-        : !pullbackFound
-          ? `sem pullback/reteste EMA20-EMA50 nos últimos ${lookback} candles`
-          : !triggerOk
-            ? `pullback ocorreu, mas trigger 5m ainda não confirmou (corpo ${bodyAtr.toFixed(2)} ATR; distância ${distanceAtr.toFixed(2)}/${maxDistanceAtr.toFixed(2)} ATR)`
-            : `trend 1H+15m + pullback + trigger 5m confirmados`;
+        : !slope1hOk
+          ? `EMA20 1H sem inclinação suficiente (${slope1h.toFixed(3)} ATR)`
+          : !slope15Ok
+            ? `EMA20 15m sem inclinação suficiente (${slope15.toFixed(3)} ATR)`
+            : !pullbackFound
+              ? `sem pullback/reteste EMA20-EMA50 nos últimos ${lookback} candles`
+              : !triggerOk
+                ? `pullback ocorreu, mas candle 5m ainda não confirmou (corpo ${bodyAtr.toFixed(2)} ATR; distância ${distanceAtr.toFixed(2)}/${maxDistanceAtr.toFixed(2)} ATR)`
+                : !reclaimOk
+                  ? 'trigger sem reclaim real da EMA20'
+                  : !rejectionOk
+                    ? `trigger sem rejeição forte da região (closeLocation ${closeLocation.toFixed(2)})`
+                    : 'trend + slope + reteste + reclaim + rejeição 5m confirmados';
 
   return {
     confirmed,
     pullbackFound,
     triggerOk,
+    reclaimOk,
+    rejectionOk,
+    strongTrigger,
+    triggerQuality,
     structure15Ok,
     structure1hOk,
     trend15,
     trend1h,
+    slope15,
+    slope1h,
+    slope15Ok,
+    slope1hOk,
     bodyAtr,
     distanceAtr,
     maxDistanceAtr,
@@ -1323,6 +1659,8 @@ export function pullbackEnginePreview({
   t15,
   t1h,
   candles5m,
+  candles15m = [],
+  candles1h = [],
   oiHistory = [],
   c15 = [],
   lookback = 7,
@@ -1338,6 +1676,8 @@ export function pullbackEnginePreview({
       t15,
       t1h,
       candles5m,
+      candles15m,
+      candles1h,
       lookback,
       touchAtr,
       minBodyAtr
@@ -1803,7 +2143,10 @@ export function balancedEntryPreview({
   t5,
   t15,
   t1h,
+  t4h = null,
   candles5m = [],
+  candles15m = [],
+  candles1h = [],
   c15 = [],
   oiHistory = [],
   score = 68,
@@ -1827,6 +2170,8 @@ export function balancedEntryPreview({
       t15,
       t1h,
       candles5m,
+      candles15m,
+      candles1h,
       lookback: 7,
       touchAtr: 0.35,
       minBodyAtr: 0.12,
@@ -1834,6 +2179,19 @@ export function balancedEntryPreview({
         pullbackMaxDistanceAtrMin,
       maxDistanceAtrMax:
         pullbackMaxDistanceAtrMax
+    });
+
+  const marketRegime =
+    marketRegimeStatus({
+      side,
+      t5,
+      t15,
+      t1h,
+      t4h:
+        t4h || t1h,
+      candles5m,
+      candles15m,
+      candles1h
     });
 
   const oiContext =
@@ -1869,11 +2227,24 @@ export function balancedEntryPreview({
     });
 
   const entryMode =
-    pullback.confirmed
-      ? 'PULLBACK'
-      : breakout.qualified
-        ? 'BREAKOUT_STRONG'
-        : 'WAIT_SETUP';
+    (
+      marketRegime.regime ===
+        'EXPANSION' &&
+      breakout.qualified &&
+      marketRegime.breakoutAllowed
+    )
+      ? 'BREAKOUT_STRONG'
+      : (
+        pullback.confirmed &&
+        marketRegime.pullbackAllowed
+      )
+        ? 'PULLBACK'
+        : (
+          breakout.qualified &&
+          marketRegime.breakoutAllowed
+        )
+          ? 'BREAKOUT_STRONG'
+          : 'WAIT_SETUP';
 
   const entryVolumeTarget =
     entryMode ===
@@ -1899,6 +2270,7 @@ export function balancedEntryPreview({
       entryMode !==
       'WAIT_SETUP',
     pullback,
+    marketRegime,
     oiContext,
     momentum,
     breakout
@@ -2883,6 +3255,10 @@ export async function scanMarket({
           t1h,
           candles5m:
             c5,
+          candles15m:
+            c15,
+          candles1h:
+            c1h,
           lookback:
             pullbackLookback,
           touchAtr:
@@ -2917,6 +3293,22 @@ export async function scanMarket({
         !requireContextualOi ||
         oiContext.confirmed;
 
+      const marketRegime =
+        marketRegimeStatus({
+          side:
+            sig.side,
+          t5,
+          t15,
+          t1h,
+          t4h,
+          candles5m:
+            c5,
+          candles15m:
+            c15,
+          candles1h:
+            c1h
+        });
+
       const breakout =
         breakoutStrongStatus({
           side:
@@ -2942,14 +3334,26 @@ export async function scanMarket({
         });
 
       const entryMode =
-        pullback.confirmed
-          ? 'PULLBACK'
+        (
+          marketRegime.regime ===
+            'EXPANSION' &&
+          breakoutEnabled &&
+          breakout.qualified &&
+          marketRegime.breakoutAllowed
+        )
+          ? 'BREAKOUT_STRONG'
           : (
-            breakoutEnabled &&
-            breakout.qualified
+            pullback.confirmed &&
+            marketRegime.pullbackAllowed
           )
-            ? 'BREAKOUT_STRONG'
-            : 'WAIT_SETUP';
+            ? 'PULLBACK'
+            : (
+              breakoutEnabled &&
+              breakout.qualified &&
+              marketRegime.breakoutAllowed
+            )
+              ? 'BREAKOUT_STRONG'
+              : 'WAIT_SETUP';
 
       const balancedEntryOk =
         entryMode !==
@@ -3092,7 +3496,13 @@ export async function scanMarket({
         !balancedEntryOk
       ) {
         rejectionReasons.push(
-          `Entrada aguardando setup: pullback não confirmado; breakout forte: ${breakout.reason}`
+          `Market Regime ${marketRegime.regime}: ${marketRegime.reason}; ` +
+          `pullback ${marketRegime.pullbackAllowed ? 'permitido' : 'bloqueado'}; ` +
+          `breakout ${marketRegime.breakoutAllowed ? 'permitido' : 'bloqueado'}`
+        );
+
+        rejectionReasons.push(
+          `Entrada aguardando setup: pullback ${pullback.reason}; breakout forte: ${breakout.reason}`
         );
       }
 
@@ -3184,6 +3594,7 @@ export async function scanMarket({
           btcContextForScore,
         momentum,
         pullback,
+        marketRegime,
         breakout,
         entryMode,
         entryVolumeTarget,
@@ -3211,6 +3622,8 @@ export async function scanMarket({
           oneHourConfirmationOk,
           momentumOk,
           balancedEntryOk,
+          marketRegimeOk:
+            balancedEntryOk,
           pullbackTriggerOk,
           contextualOiOk,
           antiChaseOk,
@@ -3402,7 +3815,8 @@ export function signalText(s) {
     `💪 Força: <b>${signalStrength(s.score)}</b>\n` +
     `🔎 Confirmação: <b>${s.confirmation.label}</b>\n` +
     `${s.entryMode ? `🧭 Modo de entrada: <b>${s.entryMode}</b> · vol alvo ${fmt(s.entryVolumeTarget, 2)}x\n` : ''}` +
-    `${s.pullback ? `↩️ Pullback: ${s.pullback.confirmed ? 'CONFIRMADO' : 'AGUARDANDO'} · EMA distância ${fmt(s.pullback.distanceAtr, 2)}/${fmt(s.pullback.maxDistanceAtr, 2)} ATR · ${s.pullback.reason}\n` : ''}` +
+    `${s.marketRegime ? `🌦 Regime: ${s.marketRegime.regime} · ${s.marketRegime.reason}\n` : ''}` +
+    `${s.pullback ? `↩️ Pullback: ${s.pullback.confirmed ? 'CONFIRMADO' : 'AGUARDANDO'} · trigger ${s.pullback.triggerQuality ?? 0}/5 · EMA distância ${fmt(s.pullback.distanceAtr, 2)}/${fmt(s.pullback.maxDistanceAtr, 2)} ATR · ${s.pullback.reason}\n` : ''}` +
     `${s.breakout?.qualified ? `🚀 Breakout forte: CONFIRMADO · corpo ${fmt(s.breakout.bodyAtr, 2)} ATR\n` : ''}` +
     `${s.oiContext ? `📈 OI contextual: ${s.oiContext.regime} · OI ${s.oiContext.oiPct >= 0 ? '+' : ''}${fmt(s.oiContext.oiPct, 2)}% · preço30m ${s.oiContext.pricePct >= 0 ? '+' : ''}${fmt(s.oiContext.pricePct, 2)}%\n` : ''}` +
     `${s.momentum ? `🚦 Momentum: ${s.momentum.confirmationCount}/${s.momentum.minConfirmations} · Vol ${s.momentum.volumeOk ? 'OK' : 'NÃO'} · OI ${s.momentum.oiOk ? 'OK' : 'NÃO'} · MACD ${s.momentum.macdOk ? 'OK' : 'NÃO'}\n` : ''}` +
@@ -3442,7 +3856,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.7.9: universo líquido + AI Efficiency + Adaptive Quality por score/lado. ` +
+    `<i>V1.8.0: Regime + Setup Health · Pullback só TREND · breakout priorizado em EXPANSION. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

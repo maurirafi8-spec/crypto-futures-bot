@@ -4069,7 +4069,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.7.9 ADAPTIVE QUALITY</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.8.0 REGIME + SETUP HEALTH</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o próximo lote agora\n' +
       '/scheduler — ver rotação automática de 1 minuto\n' +
@@ -4109,7 +4109,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.7.9 ADAPTIVE QUALITY\n` +
+      `✅ Online — V1.8.0 REGIME + SETUP HEALTH\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🛡 Modo: CONFIDENCE GUARD V1.5.9\n` +
       `🤖 APPROVE exige confidence válida; ausente/0% vira WAIT\n` +
@@ -4126,7 +4126,7 @@ async function handleMessage(msg) {
       `🪜 Stop Gain Runner: TP1→BE · TP2→TP1 · TP3→TP2 · TP4+ sobe por degraus\n` +
       `⏳ Adaptive Stale: revisão 60m · 2 checks · 2/3 deteriorações · hard 90m · timeout 2h\n` +
       `🧠 Performance Guard: lado/setup ruim pausa 90m · qualidade geral sobe score/IA\n` +
-      `🧠 V1.7.9: Adaptive Quality · tiers de score + probation por lado · IA só em setup elegível\n` +
+      `🌦 V1.8.0: Regime + Setup Health · Pullback só TREND · setup ruim entra em probation\n` +
       `⚖️ Perfil: BALANCED ACTIVE · qualidade antes de quantidade\n` +
       `⭐ Score mínimo para sinal: ${cfg.minScore}\n` +
       `⚖️ Direction Balance: ATIVO · LONG/SHORT simétricos\n` +
@@ -4565,7 +4565,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.7.9-adaptive-quality',
+    version: '1.8.0-regime-setup-health',
     scanning,
     activeSignals: activeSignals.size,
     results: resultHistory.length,
@@ -4619,7 +4619,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.7.9 ADAPTIVE QUALITY pronto ✅');
+console.log('Crypto Futures Scanner V1.8.0 REGIME + SETUP HEALTH pronto ✅');
 
 // Em rolling deploy o processo antigo do Render pode permanecer vivo por
 // alguns segundos. Um pequeno atraso evita duas instâncias consumindo a
