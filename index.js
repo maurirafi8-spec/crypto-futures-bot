@@ -28,6 +28,7 @@ import {
 } from './hyperliquid-executor.js';
 import {
   paperConfig,
+  paperEligibilityPreview,
   maybeOpenPaperPosition,
   updatePaperTrading,
   paperStatusText,
@@ -61,6 +62,9 @@ import {
 import {
   classifyAdaptiveQualityTechnical
 } from './adaptive-quality.js';
+import {
+  ConfirmedEntryManager
+} from './confirmed-entry.js';
 
 const cfg = {
   token: process.env.BOT_TOKEN,
@@ -439,7 +443,52 @@ const cfg = {
     Math.max(
       0.45,
       Number(process.env.ADAPTIVE_MID_MIN_VOLUME || 0.55)
-    )
+    ),
+
+  confirmedEntryEnabled:
+    String(process.env.CONFIRMED_ENTRY_ENABLED || 'true')
+      .toLowerCase() !== 'false',
+
+  confirmedEntryPullbackOnly:
+    String(process.env.CONFIRMED_ENTRY_PULLBACK_ONLY || 'true')
+      .toLowerCase() !== 'false',
+
+  confirmedEntryMaxWaitBars:
+    Math.max(
+      1,
+      Math.min(
+        3,
+        Number(process.env.CONFIRMED_ENTRY_MAX_WAIT_BARS || 1)
+      )
+    ),
+
+  confirmedEntryMinVolumeRatio:
+    Math.max(
+      0.30,
+      Number(process.env.CONFIRMED_ENTRY_MIN_VOLUME_RATIO || 0.55)
+    ),
+
+  confirmedEntryVolumeResumeMultiplier:
+    Math.max(
+      0.80,
+      Number(process.env.CONFIRMED_ENTRY_VOLUME_RESUME_MULTIPLIER || 1.05)
+    ),
+
+  confirmedEntryMaxChaseAtr:
+    Math.max(
+      0.30,
+      Number(process.env.CONFIRMED_ENTRY_MAX_CHASE_ATR || 0.90)
+    ),
+
+  confirmedEntryMaxOppositeExcursionAtr:
+    Math.max(
+      0.20,
+      Number(process.env.CONFIRMED_ENTRY_MAX_OPPOSITE_EXCURSION_ATR || 0.55)
+    ),
+
+  confirmedEntryNotifyInvalidated:
+    String(process.env.CONFIRMED_ENTRY_NOTIFY_INVALIDATED || 'true')
+      .toLowerCase() !== 'false'
 };
 
 if (!cfg.token) throw new Error('BOT_TOKEN não configurado');
@@ -495,6 +544,31 @@ const aiWaitWatchlist = new Map();
 // Fica numa watchlist puramente técnica até virar STANDARD
 // ou expirar / cair em hard reject.
 const technicalWatchlist = new Map();
+
+// V1.8.1: IA aprova o primeiro trigger, mas o PAPER só entra
+// quando o PRÓXIMO candle 5m fechado confirma a continuidade.
+const confirmedEntryManager =
+  new ConfirmedEntryManager({
+    enabled:
+      cfg.confirmedEntryEnabled,
+    pullbackOnly:
+      cfg.confirmedEntryPullbackOnly,
+    maxWaitBars:
+      cfg.confirmedEntryMaxWaitBars,
+    minVolumeRatio:
+      cfg.confirmedEntryMinVolumeRatio,
+    volumeResumeMultiplier:
+      cfg.confirmedEntryVolumeResumeMultiplier,
+    maxChaseAtr:
+      cfg.confirmedEntryMaxChaseAtr,
+    maxOppositeExcursionAtr:
+      cfg.confirmedEntryMaxOppositeExcursionAtr,
+    requireTrend: true,
+    require4h: true,
+    requireOi: true,
+    requireBtc: true,
+    requireExhaustionOk: true
+  });
 
 const universeManager =
   new LiquidUniverseManager({
@@ -866,6 +940,10 @@ function urgentScanBases() {
     if (base) values.push(base);
   }
 
+  for (const base of confirmedEntryManager.bases()) {
+    if (base) values.push(base);
+  }
+
   for (const watch of aiWaitWatchlist.values()) {
     const base = baseFromSymbol(watch.symbol);
     if (base) values.push(base);
@@ -965,7 +1043,8 @@ function scanSchedulerText() {
     `🔥 Top volume observado: ${status.top.length ? status.top.join(' · ') : 'aprendendo o universo...'}\n` +
     `🔄 Ciclo esperado: ~${Math.ceil(cfg.dynamicUniverseSize / cfg.scanBatchSize)}–${Math.ceil(cfg.dynamicUniverseSize / Math.max(2, cfg.scanBatchSize - 1))} min\n` +
     `₿ BTC/ETH/SOL: revisão periódica, não ocupam slot em todo scan\n` +
-    `📌 WATCH/PAPER prioritários: ${urgent.length ? urgent.join(', ') : 'nenhum'}\n` +
+    `📌 WATCH/PAPER/ARMED prioritários: ${urgent.length ? urgent.join(', ') : 'nenhum'}\n` +
+    `🟠 Confirmed Entry ARMED: ${confirmedEntryManager.size()}\n` +
     `🟡 Watch técnica sem IA: ${technicalWatchlist.size}\n` +
     `Último lote: ${status.lastBatch.length ? status.lastBatch.join(', ') : 'ainda não executado'}` +
     `${lastUniverseRefreshError ? `\n⚠️ Último refresh: ${lastUniverseRefreshError}` : ''}`
@@ -2967,7 +3046,10 @@ function lastScanDebugText() {
     `🔄 Rechecks inteligentes de WAIT: ${a?.waitRecheckCalls ?? 0}`,
     `♻️ Respostas vindas do cache: ${a?.cacheHits ?? 0}`,
     `⏸ Sem vaga nova neste scan: ${a?.freshDeferred ?? 0}`,
-    `🎯 Sinais liberados: ${lastScanReport.finalSignals ?? 0}`
+    `🎯 Sinais liberados: ${lastScanReport.finalSignals ?? 0}`,
+    `🟠 ARMED aguardando 2º candle: ${lastScanReport.confirmedEntryArmed ?? confirmedEntryManager.size()}`,
+    `✅ Confirmed Entry abertas neste scan: ${lastScanReport.confirmedEntryOpened ?? 0}`,
+    `❌ ARMED invalidados neste scan: ${lastScanReport.confirmedEntryInvalidated ?? 0}`
   ];
 
   if (
@@ -3110,6 +3192,7 @@ function scanNoSignalText(report) {
     ...(a?.technicalHardReject
       ? [`🧱 ${a.technicalHardReject} hard reject(s) antes da IA`]
       : []),
+    `🟠 ARMED aguardando 2º candle: ${report.confirmedEntryArmed ?? confirmedEntryManager.size()}`,
     `🎯 0 sinais liberados`
   ];
 
@@ -3585,6 +3668,84 @@ async function validateSignalsWithAI(signals) {
   };
 }
 
+async function processConfirmedEntrySnapshots(
+  snapshots = []
+) {
+  const cycle =
+    confirmedEntryManager.processSnapshots(
+      snapshots
+    );
+
+  const openedSignals = [];
+
+  for (const item of cycle.invalidated) {
+    console.log(
+      `[confirmed-entry] ${item.item.signal.symbol} ${item.item.signal.side}: CANCELADO — ${item.reason}`
+    );
+
+    if (
+      cfg.confirmedEntryNotifyInvalidated
+    ) {
+      await notify(
+        `❌ <b>PAPER ARMED CANCELADO — ${item.item.signal.symbol} ${item.item.signal.side}</b>\n` +
+        `${item.reason}\n` +
+        `Nenhuma entrada foi aberta.`
+      );
+    }
+  }
+
+  for (const item of cycle.confirmed) {
+    const signal =
+      item.signal;
+
+    const paperOpen =
+      maybeOpenPaperPosition(
+        signal
+      );
+
+    if (paperOpen.opened) {
+      console.log(
+        `[confirmed-entry] CONFIRMADO ${signal.symbol} ${signal.side} · ` +
+        `entrada ${signal.entry} · IA reaproveitada ${Math.round(signal.ai?.confidence || 0)}%`
+      );
+
+      await notify(
+        item.message
+      );
+
+      await notify(
+        paperOpen.message
+      );
+
+      openedSignals.push(
+        signal
+      );
+
+      // Hyperliquid, se algum dia estiver explicitamente habilitado,
+      // também recebe apenas a entrada já confirmada em 2 etapas.
+      await maybeExecuteHyper(
+        signal
+      );
+    } else {
+      console.log(
+        `[confirmed-entry] ${signal.symbol}: confirmou 2º candle, ` +
+        `mas PAPER bloqueou — ${paperOpen.reason}`
+      );
+
+      await notify(
+        `⚠️ <b>CONFIRMED ENTRY SEM ABERTURA — ${signal.symbol} ${signal.side}</b>\n` +
+        `O segundo candle confirmou, mas a trava PAPER bloqueou a entrada:\n` +
+        `${paperOpen.reason}`
+      );
+    }
+  }
+
+  return {
+    ...cycle,
+    openedSignals
+  };
+}
+
 async function doScan({
   forceReply = false,
   marketBases = null,
@@ -3672,18 +3833,36 @@ async function doScan({
       await notify(event);
     }
 
-    await updateTrackedSignals(snapshots);
+    // V1.8.1: resolve primeiro os setups que já estavam ARMED.
+    // Essa etapa NÃO chama IA novamente.
+    const confirmedEntryCycle =
+      await processConfirmedEntrySnapshots(
+        snapshots
+      );
+
+    // Tracker legado de TP/STOP desativado.
+    // O PAPER é a única fonte de verdade para gestão da posição.
     reconcileWaitWatchlist(snapshots);
+
+    const mathSignalsForAI =
+      mathSignals.filter(
+        signal =>
+          !confirmedEntryManager.shouldSkipAi(
+            signal
+          )
+      );
 
     const aiEfficiency =
       updateTechnicalWatchlist({
         preCandidates,
-        mathSignals,
+        mathSignals:
+          mathSignalsForAI,
         snapshots
       });
 
     console.log(
       `[scan] ${mathSignals.length} sinais matemáticos >= ${cfg.minScore}; ` +
+      `${mathSignals.length - mathSignalsForAI.length} já ARMED/resolvido neste candle; ` +
       `${preCandidates.length} pré-candidato(s) >= ${cfg.preCandidateMinScore}`
     );
 
@@ -3730,7 +3909,7 @@ async function doScan({
     const adaptiveQualityWatch = [];
 
     const standardSignals =
-      mathSignals
+      mathSignalsForAI
         .map(s => ({
           ...s,
           candidateTier:
@@ -3942,21 +4121,73 @@ async function doScan({
       `[scan] ${signals.length} sinais liberados após camada IA`
     );
 
-    // Paper trading automático é independente do Telegram.
-    // O próprio módulo aplica score/confiança/cooldown/máx posições.
+    const directSignals = [];
+    const newlyArmedSignals = [];
+
+    // V1.8.1 CONFIRMED ENTRY:
+    // Pullback aprovado pela IA NÃO abre imediatamente.
+    // Primeiro passa pelo gate PAPER e vira ARMED; a entrada real só acontece
+    // se o próximo candle 5m fechado confirmar o rompimento.
     for (const signal of signals) {
+      if (
+        confirmedEntryManager.shouldArm(
+          signal
+        )
+      ) {
+        const paperGate =
+          paperEligibilityPreview(
+            signal
+          );
+
+        if (!paperGate.ok) {
+          console.log(
+            `[confirmed-entry] ${signal.symbol}: não armou — ${paperGate.reason}`
+          );
+          continue;
+        }
+
+        const armed =
+          confirmedEntryManager.arm(
+            signal
+          );
+
+        if (armed.armed) {
+          if (armed.created) {
+            newlyArmedSignals.push(
+              signal
+            );
+
+            console.log(
+              `[confirmed-entry] ARMED ${signal.symbol} ${signal.side} · ` +
+              `triggerBar ${signal.t5?.openTime || 0} · IA já aprovada`
+            );
+
+            await notify(
+              armed.message
+            );
+          }
+
+          continue;
+        }
+
+        console.log(
+          `[confirmed-entry] ${signal.symbol}: falhou ao armar — ${armed.reason}`
+        );
+        continue;
+      }
+
+      directSignals.push(
+        signal
+      );
+
       const paperOpen =
         maybeOpenPaperPosition(signal);
 
       if (paperOpen.opened) {
         console.log(
-          `[paper] aberto ${signal.symbol} ${signal.side} · ` +
-          `IA ${Math.round(signal.ai?.confidence || 0)}% · score ${signal.score}`
+          `[paper] aberto direto ${signal.symbol} ${signal.side} · ` +
+          `setup ${signal.entryMode} · IA ${Math.round(signal.ai?.confidence || 0)}% · score ${signal.score}`
         );
-
-        // V1.5.8: PAPER passa a ser a única fonte de mensagens de TP/STOP
-        // para esta posição.
-        detachTrackerForPaper(signal);
 
         await notify(
           paperOpen.message
@@ -3968,6 +4199,18 @@ async function doScan({
       }
     }
 
+    aiResult.meta.confirmedEntryArmed =
+      confirmedEntryManager.size();
+
+    aiResult.meta.confirmedEntryNewArmed =
+      newlyArmedSignals.length;
+
+    aiResult.meta.confirmedEntryOpened =
+      confirmedEntryCycle.openedSignals.length;
+
+    aiResult.meta.confirmedEntryInvalidated =
+      confirmedEntryCycle.invalidated.length;
+
     lastScanReport = {
       at: Date.now(),
       automatic,
@@ -3978,7 +4221,17 @@ async function doScan({
       ai: aiResult.meta,
       technicalWatch:
         technicalWatchlist.size,
-      finalSignals: signals.length,
+      confirmedEntryArmed:
+        confirmedEntryManager.size(),
+      confirmedEntryNewArmed:
+        newlyArmedSignals.length,
+      confirmedEntryOpened:
+        confirmedEntryCycle.openedSignals.length,
+      confirmedEntryInvalidated:
+        confirmedEntryCycle.invalidated.length,
+      finalSignals:
+        directSignals.length +
+        confirmedEntryCycle.openedSignals.length,
       pendingAI: pendingAiCandidate
         ? { ...pendingAiCandidate }
         : null
@@ -3986,10 +4239,15 @@ async function doScan({
 
     if (activeChatId) {
       const fresh = forceReply
-        ? signals.slice(0, 5)
-        : signals.filter(canAlert).slice(0, 5);
+        ? directSignals.slice(0, 5)
+        : directSignals.filter(canAlert).slice(0, 5);
 
-      if (forceReply && fresh.length === 0) {
+      if (
+        forceReply &&
+        fresh.length === 0 &&
+        newlyArmedSignals.length === 0 &&
+        confirmedEntryCycle.openedSignals.length === 0
+      ) {
         await sendMessage(
           cfg.token,
           activeChatId,
@@ -4000,12 +4258,17 @@ async function doScan({
       for (const s of fresh) {
         await sendMessage(cfg.token, activeChatId, signalText(s));
         markAlert(s);
-        await trackSignal(s);
+
+        // Tracker legado removido. BREAKOUT direto continua podendo seguir
+        // para Hyperliquid somente se o usuário tiver habilitado explicitamente.
         await maybeExecuteHyper(s);
       }
     }
 
-    return signals;
+    return [
+      ...confirmedEntryCycle.openedSignals,
+      ...directSignals
+    ];
   } catch (error) {
     console.error('[scan]', error.message);
 
@@ -4069,13 +4332,14 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.8.0 REGIME + SETUP HEALTH</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.8.1 CONFIRMED ENTRY</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o próximo lote agora\n' +
       '/scheduler — ver rotação automática de 1 minuto\n' +
       '/status — ver configuração\n' +
       '/top — mostrar os melhores sinais atuais\n' +
-      '/ativos — sinais em acompanhamento\n' +
+      '/armed — setups IA aprovados aguardando o 2º candle 5m\n' +
+      '/ativos — alias de /armed (tracker legado desativado)\n' +
       '/resultados — últimos resultados acompanhados\n' +
       '/ia — últimas decisões do Analista IA\n' +
       '/debug — diagnóstico do último scan\n' +
@@ -4109,11 +4373,11 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.8.0 REGIME + SETUP HEALTH\n` +
+      `✅ Online — V1.8.1 CONFIRMED ENTRY\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🛡 Modo: CONFIDENCE GUARD V1.5.9\n` +
       `🤖 APPROVE exige confidence válida; ausente/0% vira WAIT\n` +
-      `🔗 Tracker/PAPER: SINCRONIZADO · PAPER manda TP/STOP quando houver posição\n` +
+      `🔗 Gestão: PAPER é fonte única de TP/STOP · tracker legado DESATIVADO\n` +
       `🧠 Modo: DUAL AI V1.6.0\n` +
       `🟦 Gemini fallback: ${geminiFallbackConfigured() ? 'ATIVO' : 'SEM CHAVE'} · ${geminiFallbackModel()}\n` +
       `🚦 OpenRouter circuit: ${openRouterCircuitStatus().blocked ? `PAUSADO ~${openRouterCircuitStatus().remainingMin}m` : 'NORMAL'}\n` +
@@ -4126,14 +4390,17 @@ async function handleMessage(msg) {
       `🪜 Stop Gain Runner: TP1→BE · TP2→TP1 · TP3→TP2 · TP4+ sobe por degraus\n` +
       `⏳ Adaptive Stale: revisão 60m · 2 checks · 2/3 deteriorações · hard 90m · timeout 2h\n` +
       `🧠 Performance Guard: lado/setup ruim pausa 90m · qualidade geral sobe score/IA\n` +
-      `🌦 V1.8.0: Regime + Setup Health · Pullback só TREND · setup ruim entra em probation\n` +
+      `✅ V1.8.1: Confirmed Entry · 2 candles 5m · 4H obrigatório · Exhaustion Guard\n` +
+      `🟠 ARMED: ${confirmedEntryManager.size()} · IA não é chamada novamente enquanto aguarda confirmação\n` +
+      `📊 Confirmação: próximo 5m deve fechar além do candle gatilho · vol >= ${cfg.confirmedEntryMinVolumeRatio.toFixed(2)}x · retomada x${cfg.confirmedEntryVolumeResumeMultiplier.toFixed(2)}\n` +
+      `🧯 Exaustão: 4H alinhado · distância 1H controlada · sem sequência impulsiva extrema\n` +
       `⚖️ Perfil: BALANCED ACTIVE · qualidade antes de quantidade\n` +
       `⭐ Score mínimo para sinal: ${cfg.minScore}\n` +
       `⚖️ Direction Balance: ATIVO · LONG/SHORT simétricos\n` +
       `↔️ Edge direcional mínimo: ${cfg.minDirectionEdge} pontos\n` +
       `🕐 Confirmação 1H: ${cfg.require1hConfirmation ? 'OBRIGATÓRIA' : 'FLEXÍVEL'}\n` +
       `🚦 Momentum: ${cfg.requireMomentumBundle ? `${cfg.momentumMinConfirmations}/3 confirmações · Vol/MACD/OI` : 'flexível'}\n` +
-      `↩️ Entrada A: PULLBACK preferencial · 1H + 15m + trigger 5m\n` +
+      `↩️ Entrada A: PULLBACK · 4H+1H+15m · trigger V2 → ARMED → confirmação no próximo 5m\n` +
       `🚀 Entrada B: BREAKOUT FORTE · score ${cfg.breakoutMinScore}+ · vol ${cfg.breakoutMinVolumeRatio.toFixed(2)}x+ · edge ${cfg.breakoutMinDirectionEdge}+\n` +
       `📈 OI contextual: analisado no momentum; não bloqueia sozinho\n` +
       `🛑 Anti-chase/reteste: ${cfg.antiChaseEnabled ? 'ATIVO' : 'INATIVO'}\n` +
@@ -4180,7 +4447,8 @@ async function handleMessage(msg) {
       `🔄 Rechecks hoje: ${aiBudgetStats().waitRecheckUsed}/${aiBudgetStats().waitRecheckLimit} · máx ${cfg.aiWaitRecheckMaxAttempts} por setup\n` +
       `⏳ WAIT/WATCH em observação: ${aiWaitWatchlist.size}\n` +
       `🟠 Pendente de IA: ${pendingAiCandidate ? `${pendingAiCandidate.symbol} ${pendingAiCandidate.side}` : 'nenhum'}\n` +
-      `🎯 Acompanhando: ${activeSignals.size} sinal(is)\n` +
+      `🟠 Confirmed Entry ARMED: ${confirmedEntryManager.size()} setup(s)\n` +
+      `📡 Tracker legado: DESATIVADO\n` +
       `📚 Resultados registrados: ${resultHistory.length}\n` +
       `🟣 Hyperliquid: ${hyperConfig().enabled ? 'ATIVO' : 'INATIVO'} · TESTNET\n` +
       `🧾 Signed testnet ENV: ${hyperConfig().signedTestnetEnabled ? 'HABILITADO' : 'DESABILITADO'}\n` +
@@ -4190,8 +4458,15 @@ async function handleMessage(msg) {
       `🧪 Paper trading: ${paperConfig().enabled ? 'ATIVO' : 'INATIVO'} · banca ${paperStateInfo().equity.toFixed(2)} USDC\n` +
       `📌 Paper posições: ${paperStateInfo().openPositions} · fechados ${paperStateInfo().closedTrades}`
     );
-  } else if (text.startsWith('/ativos')) {
-    await sendMessage(cfg.token, activeChatId, activeSignalsText());
+  } else if (
+    text.startsWith('/armed') ||
+    text.startsWith('/ativos')
+  ) {
+    await sendMessage(
+      cfg.token,
+      activeChatId,
+      confirmedEntryManager.statusText()
+    );
   } else if (text.startsWith('/resultados')) {
     await sendMessage(cfg.token, activeChatId, resultsText());
   } else if (text.startsWith('/ia')) {
@@ -4281,7 +4556,10 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      paperStatusText()
+      paperStatusText() +
+      `
+
+🟠 Confirmed Entry ARMED: ${confirmedEntryManager.size()} setup(s)`
     );
   } else if (text.startsWith('/hyper')) {
     await sendMessage(
@@ -4565,9 +4843,12 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.8.0-regime-setup-health',
+    version: '1.8.1-confirmed-entry',
     scanning,
-    activeSignals: activeSignals.size,
+    activeSignals: 0,
+    legacyTrackerEnabled: false,
+    confirmedEntryEnabled: cfg.confirmedEntryEnabled,
+    confirmedEntryArmed: confirmedEntryManager.size(),
     results: resultHistory.length,
     aiEnabled: aiEnabledNow(),
     aiModel: aiEnabledNow() ? aiModel() : null,
@@ -4619,7 +4900,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.8.0 REGIME + SETUP HEALTH pronto ✅');
+console.log('Crypto Futures Scanner V1.8.1 CONFIRMED ENTRY pronto ✅');
 
 // Em rolling deploy o processo antigo do Render pode permanecer vivo por
 // alguns segundos. Um pequeno atraso evita duas instâncias consumindo a

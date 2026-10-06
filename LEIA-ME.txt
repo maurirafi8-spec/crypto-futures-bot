@@ -1,59 +1,193 @@
-CRYPTO FUTURES SCANNER V1.8.0 — REGIME + SETUP HEALTH
+CRYPTO FUTURES SCANNER V1.8.1 — CONFIRMED ENTRY
 
-FOCO
-Os perdedores mostraram MFE baixo e MAE alto: o gargalo era seleção/trigger.
+OBJETIVO
+A V1.8.0 mostrou que vários trades perdiam quase desde a entrada:
+MFE muito baixo e MAE perto de -1R. Esta versão muda o momento de entrada,
+sem mexer no Smart Stop, Runner e demais partes que já estavam funcionando.
 
-MARKET REGIME
-TREND: 15m+1H alinhados, EMA20 inclinada, EMAs separadas.
-CHOP: lateralidade, slopes fracos, EMAs comprimidas.
-EXPANSION: tendência + impulso + volume.
-TRANSITION: estrutura ainda sem regime limpo.
+============================================================
+1) CONFIRMED ENTRY — ENTRADA EM 2 ETAPAS
+============================================================
 
-PULLBACK
-Só abre em TREND.
-Trigger V2 exige slope 1H/15m, reteste, reclaim EMA20, rejeição e distância válida.
-O sinal mostra trigger X/5.
+PULLBACK aprovado tecnicamente + aprovado pela IA NÃO abre a posição imediatamente.
 
-BREAKOUT STRONG
-Permitido em TREND/EXPANSION.
-Em EXPANSION ganha prioridade.
+Fluxo:
 
-SETUP PROBATION
-Setup degradado não volta ao normal só após 90m.
-Recuperação padrão: PF >= 0.80 E win rate >= 35%.
-Pullback em probation exige score >= 88, IA >= 78%, momentum 3/3,
-OI confirmado, TREND, trigger forte e edge >= 8.
+Pullback V2 válido
+-> IA APPROVE
+-> PAPER gate ainda precisa estar OK
+-> ARMED
+-> nenhuma nova chamada de IA
+-> scanner prioriza a moeda a cada minuto
+-> espera o PRÓXIMO candle 5m FECHADO
 
-SIDE PROBATION
-Mantido. Breakout forte não é mais bloqueado por não ser Pullback.
+LONG:
+- próximo 5m precisa FECHAR acima da máxima do candle gatilho.
 
-RISK THROTTLE
-Default PAPER: 0.50%.
-Com Performance Quality ATIVO:
-risco efetivo = min(risco configurado, 0.50%).
-Isso protege mesmo com env antigo em 0.75%.
+SHORT:
+- próximo 5m precisa FECHAR abaixo da mínima do candle gatilho.
 
-/performance
-Inclui PULLBACK/BREAKOUT por lado e TREND/CHOP/EXPANSION/TRANSITION,
-com PF, PnL, MFE e MAE.
+Somente depois disso o PAPER abre a posição.
 
-MANTIDO
-Smart Stop, Profit Protect, Stop Gain Runner, Adaptive Stale, Net R/R,
-AI Efficiency, Adaptive Quality, Performance Guard, Loss Brake,
-universo 40–50, Gemini Rescue, HOLD AI e Telegram Safe.
+Se o próximo candle não confirmar, o ARMED é cancelado.
+Por padrão não fica esperando vários candles; a janela é 1 candle 5m.
 
-ENVS OPCIONAIS
+Comando:
+/armed
+ou
+/ativos
+
+Mostra os setups IA aprovados aguardando a segunda confirmação.
+
+============================================================
+2) IA NÃO É GASTA NOVAMENTE ENQUANTO ESTÁ ARMED
+============================================================
+
+Enquanto um ativo/lado estiver ARMED:
+- ele entra na prioridade do scheduler;
+- não volta para a fila da IA;
+- não consome Gemini/OpenRouter novamente;
+- a decisão IA já aprovada é reaproveitada se o 2º candle confirmar.
+
+Se o ciclo ARMED for resolvido no candle atual, esse mesmo candle também não
+pode disparar uma nova chamada da IA. É preciso um candle novo.
+
+============================================================
+3) RETOMADA DE VOLUME
+============================================================
+
+Durante o pullback, o volume pode cair.
+No candle de confirmação, o volume precisa retornar.
+
+Padrão:
+- volumeRatio do candle de confirmação >= 0.55x;
+- quote volume do candle de confirmação >= 1.05x a média dos candles que
+  realmente tocaram a região do pullback.
+
+Isso evita entrar em rompimento sem participação.
+
+============================================================
+4) 4H OBRIGATÓRIO PARA PULLBACK
+============================================================
+
+Pullback agora exige:
+- 4H alinhado;
+- 1H alinhado;
+- 15m alinhado;
+- EMA20 1H e 15m inclinadas;
+- reteste EMA20/EMA50;
+- reclaim da EMA20;
+- rejeição válida;
+- regime TREND.
+
+Se 4H estiver contrário ou MIXED, Pullback não é liberado.
+
+============================================================
+5) TREND EXHAUSTION GUARD
+============================================================
+
+Antes de armar um Pullback, o scanner verifica se a tendência parece madura
+ou esticada demais.
+
+Bloqueios principais:
+- 4H não confirma;
+- preço 1H muito distante da EMA20;
+- preço 1H muito distante da EMA50;
+- 4+ candles 5m impulsivos consecutivos antes do trigger;
+- RSI 1H extremo;
+- entrada muito perto do extremo recente enquanto já está longe da EMA20.
+
+O mesmo guard é rechecado no candle de confirmação.
+
+============================================================
+6) INVALIDAÇÃO AUTOMÁTICA DO ARMED
+============================================================
+
+O ARMED é cancelado se, antes da entrada:
+- direção técnica inverter;
+- regime sair de TREND/EXPANSION;
+- 4H deixar de confirmar;
+- OI contextual perder confirmação;
+- BTC ficar contrário;
+- anti-chase bloquear;
+- Trend Exhaustion Guard bloquear;
+- confirmação chegar muito esticada;
+- candle excursionar demais contra o setup;
+- próximo 5m não fechar além do candle gatilho;
+- volume não retomar.
+
+Nenhuma posição é aberta quando isso acontece.
+
+============================================================
+7) BREAKOUT STRONG
+============================================================
+
+Por padrão a V1.8.1 aplica o ARMED de 2 etapas aos PULLBACKS.
+BREAKOUT_STRONG mantém o fluxo direto atual, porque ele já possui gatilho
+específico de rompimento + volume + OI + MACD.
+
+Opcionalmente é possível experimentar ARMED em todos os setups:
+CONFIRMED_ENTRY_PULLBACK_ONLY=false
+
+O padrão recomendado nesta versão continua true enquanto coletamos dados.
+
+============================================================
+8) TRACKER LEGADO DE TP/STOP DESATIVADO
+============================================================
+
+O antigo tracker que enviava mensagens como:
+"TP1 atingido" / "STOP atingido após TP1"
+fora do PAPER foi retirado do fluxo.
+
+Agora:
+- PAPER é a fonte única para TP/STOP/Runner;
+- nenhuma nova posição é adicionada ao tracker legado;
+- o tracker legado não é atualizado nos scans.
+
+Isso evita mensagens conflitantes com a gestão PAPER.
+
+============================================================
+9) RISCO E GESTÃO PRESERVADOS
+============================================================
+
+Mantido:
+- risco PAPER padrão 0.50%;
+- Performance Risk Throttle;
+- Smart Stop;
+- Net R/R Guard >= 1.50;
+- Profit Protect;
+- Stop Gain Runner;
+- Adaptive Stale;
+- Side Probation;
+- Setup Probation;
+- Performance Guard;
+- Performance Quality;
+- Loss Brake;
+- MFE/MAE;
+- universo líquido 40–50 ativos;
+- AI Efficiency Guard;
+- Gemini Rescue;
+- HOLD AI;
+- Telegram Safe.
+
+============================================================
+10) ENVS OPCIONAIS
+============================================================
+
+CONFIRMED_ENTRY_ENABLED=true
+CONFIRMED_ENTRY_PULLBACK_ONLY=true
+CONFIRMED_ENTRY_MAX_WAIT_BARS=1
+CONFIRMED_ENTRY_MIN_VOLUME_RATIO=0.55
+CONFIRMED_ENTRY_VOLUME_RESUME_MULTIPLIER=1.05
+CONFIRMED_ENTRY_MAX_CHASE_ATR=0.90
+CONFIRMED_ENTRY_MAX_OPPOSITE_EXCURSION_ATR=0.55
+CONFIRMED_ENTRY_NOTIFY_INVALIDATED=true
+
 PAPER_RISK_PER_TRADE_PCT=0.50
-PAPER_SETUP_PROBATION_ENABLED=true
-PAPER_SETUP_RECOVERY_MIN_PF=0.80
-PAPER_SETUP_RECOVERY_MIN_WIN_RATE_PCT=35
-PAPER_SETUP_PROBATION_MIN_SCORE=88
-PAPER_SETUP_PROBATION_MIN_AI=78
-PAPER_SETUP_PROBATION_REQUIRE_MOMENTUM3=true
-PAPER_SETUP_PROBATION_REQUIRE_OI=true
-PAPER_SETUP_PROBATION_REQUIRE_TREND=true
-PAPER_SETUP_PROBATION_REQUIRE_STRONG_TRIGGER=true
-PAPER_PERFORMANCE_RISK_THROTTLE_ENABLED=true
-PAPER_PERFORMANCE_RISK_PCT=0.50
+
+IMPORTANTE SOBRE O RENDER
+Valores já definidos em Render Environment continuam tendo prioridade sobre
+os defaults do código. Se existir um ENV antigo, ele pode sobrescrever o novo
+valor padrão.
 
 Paper trading é simulação e não garante resultado real.

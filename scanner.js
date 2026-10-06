@@ -174,6 +174,8 @@ function analyzeTf(candles) {
     rsi: last(rs),
     atr: last(at),
     macdHist: last(mc.histogram),
+    quoteVolume: Number(c.quoteVolume || 0),
+    avgQuoteVolume: Number(avgVol || 0),
     volumeRatio: avgVol > 0 ? c.quoteVolume / avgVol : 1,
     bullish:
       c.close > last(e20) &&
@@ -1237,7 +1239,8 @@ function marketRegimeStatus({
   return {
     regime,
     pullbackAllowed:
-      regime === 'TREND',
+      regime === 'TREND' &&
+      aligned4h,
     breakoutAllowed:
       regime === 'EXPANSION' ||
       regime === 'TREND',
@@ -1256,7 +1259,7 @@ function marketRegimeStatus({
     volumeRatio,
     reason:
       regime === 'TREND'
-        ? `TREND: 15m+1H alinhados · slope15 ${slope15.toFixed(2)} ATR · slope1H ${slope1h.toFixed(2)} ATR`
+        ? `TREND: 15m+1H alinhados · 4H ${aligned4h ? 'OK' : 'CONTRÁRIO'} · slope15 ${slope15.toFixed(2)} ATR · slope1H ${slope1h.toFixed(2)} ATR`
         : regime === 'EXPANSION'
           ? `EXPANSION: tendência + volume ${volumeRatio.toFixed(2)}x + corpo ${body5.toFixed(2)} ATR`
           : regime === 'CHOP'
@@ -1271,11 +1274,200 @@ export function marketRegimePreview(
   return marketRegimeStatus(args);
 }
 
+function trendExhaustionStatus({
+  side,
+  t5,
+  t1h,
+  t4h,
+  candles5m = []
+}) {
+  const atr5 =
+    Math.max(
+      finiteNumber(t5?.atr, 0),
+      finiteNumber(t5?.price, 0) * 0.001
+    );
+
+  const atr1h =
+    Math.max(
+      finiteNumber(t1h?.atr, 0),
+      finiteNumber(t1h?.price, 0) * 0.001
+    );
+
+  const price5 =
+    finiteNumber(t5?.price, 0);
+
+  const price1h =
+    finiteNumber(t1h?.price, price5);
+
+  const distanceEma20_1hAtr =
+    atr1h > 0
+      ? Math.abs(
+          price1h -
+          finiteNumber(t1h?.ema20, price1h)
+        ) / atr1h
+      : 99;
+
+  const distanceEma50_1hAtr =
+    atr1h > 0
+      ? Math.abs(
+          price1h -
+          finiteNumber(t1h?.ema50, price1h)
+        ) / atr1h
+      : 99;
+
+  const rsi1h =
+    finiteNumber(t1h?.rsi, 50);
+
+  const aligned4h =
+    directionalStructure(t4h) === side;
+
+  const prior =
+    Array.isArray(candles5m)
+      ? candles5m.slice(-7, -1)
+      : [];
+
+  let impulseStreak = 0;
+
+  for (
+    let i = prior.length - 1;
+    i >= 0;
+    i -= 1
+  ) {
+    const candle = prior[i];
+    const open = finiteNumber(candle?.open, 0);
+    const close = finiteNumber(candle?.close, open);
+    const bodyAtr =
+      atr5 > 0
+        ? Math.abs(close - open) / atr5
+        : 0;
+
+    const directional =
+      side === 'LONG'
+        ? close > open
+        : close < open;
+
+    if (
+      directional &&
+      bodyAtr >= 0.35
+    ) {
+      impulseStreak += 1;
+    } else {
+      break;
+    }
+  }
+
+  const recent =
+    Array.isArray(candles5m)
+      ? candles5m.slice(-24)
+      : [];
+
+  const recentHigh =
+    recent.length
+      ? Math.max(...recent.map(c => finiteNumber(c?.high, price5)))
+      : price5;
+
+  const recentLow =
+    recent.length
+      ? Math.min(...recent.map(c => finiteNumber(c?.low, price5)))
+      : price5;
+
+  const range =
+    Math.max(
+      recentHigh - recentLow,
+      atr5 * 0.25
+    );
+
+  const rangePosition =
+    range > 0
+      ? (price5 - recentLow) / range
+      : 0.5;
+
+  const distanceEma20_5mAtr =
+    atr5 > 0
+      ? Math.abs(
+          price5 -
+          finiteNumber(t5?.ema20, price5)
+        ) / atr5
+      : 99;
+
+  const nearExtreme =
+    side === 'LONG'
+      ? rangePosition >= 0.95 &&
+        distanceEma20_5mAtr >= 0.80
+      : rangePosition <= 0.05 &&
+        distanceEma20_5mAtr >= 0.80;
+
+  const rsiExtreme =
+    side === 'LONG'
+      ? rsi1h >= 78
+      : rsi1h <= 22;
+
+  const reasons = [];
+
+  if (!aligned4h) {
+    reasons.push('4H não confirma');
+  }
+
+  if (distanceEma20_1hAtr > 2.40) {
+    reasons.push(
+      `1H ${distanceEma20_1hAtr.toFixed(2)} ATR da EMA20`
+    );
+  }
+
+  if (distanceEma50_1hAtr > 3.50) {
+    reasons.push(
+      `1H ${distanceEma50_1hAtr.toFixed(2)} ATR da EMA50`
+    );
+  }
+
+  if (impulseStreak >= 4) {
+    reasons.push(
+      `${impulseStreak} candles 5m impulsivos seguidos antes do trigger`
+    );
+  }
+
+  if (rsiExtreme) {
+    reasons.push(
+      `RSI 1H extremo ${rsi1h.toFixed(1)}`
+    );
+  }
+
+  if (nearExtreme) {
+    reasons.push(
+      `entrada perto do extremo recente (${(rangePosition * 100).toFixed(0)}% do range)`
+    );
+  }
+
+  return {
+    ok:
+      reasons.length === 0,
+    aligned4h,
+    distanceEma20_1hAtr,
+    distanceEma50_1hAtr,
+    distanceEma20_5mAtr,
+    impulseStreak,
+    rsi1h,
+    rangePosition,
+    nearExtreme,
+    reason:
+      reasons.length
+        ? reasons.join(' · ')
+        : '4H alinhado e tendência sem sinais fortes de exaustão'
+  };
+}
+
+export function trendExhaustionPreview(
+  args = {}
+) {
+  return trendExhaustionStatus(args);
+}
+
 function pullbackTriggerStatus({
   side,
   t5,
   t15,
   t1h,
+  t4h,
   candles5m = [],
   candles15m = [],
   candles1h = [],
@@ -1326,11 +1518,19 @@ function pullbackTriggerStatus({
       t1h
     );
 
+  const trend4h =
+    directionalStructure(
+      t4h
+    );
+
   const structure15Ok =
     trend15 === side;
 
   const structure1hOk =
     trend1h === side;
+
+  const structure4hOk =
+    trend4h === side;
 
   const slope15Raw =
     ema20SlopeAtr(
@@ -1378,8 +1578,10 @@ function pullbackTriggerStatus({
       triggerOk: false,
       structure15Ok,
       structure1hOk,
+      structure4hOk,
       trend15,
       trend1h,
+      trend4h,
       bodyAtr: 0,
       distanceAtr: 99,
       closeLocation: 0,
@@ -1391,6 +1593,8 @@ function pullbackTriggerStatus({
       slope1h,
       slope15Ok,
       slope1hOk,
+      pullbackAvgQuoteVolume: 0,
+      pullbackAvgVolumeRatio: 0,
       reason:
         'histórico insuficiente para pullback'
     };
@@ -1421,9 +1625,9 @@ function pullbackTriggerStatus({
     atrValue *
       touchAtr;
 
-  const pullbackFound =
+  const pullbackTouchCandles =
     side === 'LONG'
-      ? prior.some(
+      ? prior.filter(
           c =>
             Number(c.low) <=
               zoneHigh &&
@@ -1431,7 +1635,7 @@ function pullbackTriggerStatus({
               zoneLow
         )
       : side === 'SHORT'
-        ? prior.some(
+        ? prior.filter(
             c =>
               Number(c.high) >=
                 (
@@ -1452,7 +1656,31 @@ function pullbackTriggerStatus({
                     0.55
                 )
           )
-        : false;
+        : [];
+
+  const pullbackFound =
+    pullbackTouchCandles.length > 0;
+
+  const volumeSource =
+    pullbackTouchCandles.length
+      ? pullbackTouchCandles
+      : prior;
+
+  const pullbackAvgQuoteVolume =
+    volumeSource.length
+      ? volumeSource.reduce(
+          (sum, c) =>
+            sum +
+            finiteNumber(c?.quoteVolume, 0),
+          0
+        ) / volumeSource.length
+      : 0;
+
+  const pullbackAvgVolumeRatio =
+    finiteNumber(t5?.avgQuoteVolume, 0) > 0
+      ? pullbackAvgQuoteVolume /
+        finiteNumber(t5?.avgQuoteVolume, 1)
+      : 0;
 
   const open =
     Number(
@@ -1607,13 +1835,16 @@ function pullbackTriggerStatus({
   const confirmed =
     structure15Ok &&
     structure1hOk &&
+    structure4hOk &&
     pullbackFound &&
     strongTrigger;
 
   const reason =
-    !structure1hOk
-      ? `1H ${trend1h} não confirma ${side}`
-      : !structure15Ok
+    !structure4hOk
+      ? `4H ${trend4h} não confirma ${side}`
+      : !structure1hOk
+        ? `1H ${trend1h} não confirma ${side}`
+        : !structure15Ok
         ? `15m ${trend15} não confirma ${side}`
         : !slope1hOk
           ? `EMA20 1H sem inclinação suficiente (${slope1h.toFixed(3)} ATR)`
@@ -1639,12 +1870,16 @@ function pullbackTriggerStatus({
     triggerQuality,
     structure15Ok,
     structure1hOk,
+    structure4hOk,
     trend15,
     trend1h,
+    trend4h,
     slope15,
     slope1h,
     slope15Ok,
     slope1hOk,
+    pullbackAvgQuoteVolume,
+    pullbackAvgVolumeRatio,
     bodyAtr,
     distanceAtr,
     maxDistanceAtr,
@@ -1658,6 +1893,7 @@ export function pullbackEnginePreview({
   t5,
   t15,
   t1h,
+  t4h = null,
   candles5m,
   candles15m = [],
   candles1h = [],
@@ -1675,6 +1911,8 @@ export function pullbackEnginePreview({
       t5,
       t15,
       t1h,
+      t4h:
+        t4h || t1h,
       candles5m,
       candles15m,
       candles1h,
@@ -2169,6 +2407,8 @@ export function balancedEntryPreview({
       t5,
       t15,
       t1h,
+      t4h:
+        t4h || t1h,
       candles5m,
       candles15m,
       candles1h,
@@ -2192,6 +2432,16 @@ export function balancedEntryPreview({
       candles5m,
       candles15m,
       candles1h
+    });
+
+  const trendExhaustion =
+    trendExhaustionStatus({
+      side,
+      t5,
+      t1h,
+      t4h:
+        t4h || t1h,
+      candles5m
     });
 
   const oiContext =
@@ -2236,7 +2486,8 @@ export function balancedEntryPreview({
       ? 'BREAKOUT_STRONG'
       : (
         pullback.confirmed &&
-        marketRegime.pullbackAllowed
+        marketRegime.pullbackAllowed &&
+        trendExhaustion.ok
       )
         ? 'PULLBACK'
         : (
@@ -2271,6 +2522,7 @@ export function balancedEntryPreview({
       'WAIT_SETUP',
     pullback,
     marketRegime,
+    trendExhaustion,
     oiContext,
     momentum,
     breakout
@@ -3253,6 +3505,7 @@ export async function scanMarket({
           t5,
           t15,
           t1h,
+          t4h,
           candles5m:
             c5,
           candles15m:
@@ -3309,6 +3562,17 @@ export async function scanMarket({
             c1h
         });
 
+      const trendExhaustion =
+        trendExhaustionStatus({
+          side:
+            sig.side,
+          t5,
+          t1h,
+          t4h,
+          candles5m:
+            c5
+        });
+
       const breakout =
         breakoutStrongStatus({
           side:
@@ -3344,7 +3608,8 @@ export async function scanMarket({
           ? 'BREAKOUT_STRONG'
           : (
             pullback.confirmed &&
-            marketRegime.pullbackAllowed
+            marketRegime.pullbackAllowed &&
+            trendExhaustion.ok
           )
             ? 'PULLBACK'
             : (
@@ -3501,6 +3766,12 @@ export async function scanMarket({
           `breakout ${marketRegime.breakoutAllowed ? 'permitido' : 'bloqueado'}`
         );
 
+        if (!trendExhaustion.ok) {
+          rejectionReasons.push(
+            `Trend Exhaustion Guard: ${trendExhaustion.reason}`
+          );
+        }
+
         rejectionReasons.push(
           `Entrada aguardando setup: pullback ${pullback.reason}; breakout forte: ${breakout.reason}`
         );
@@ -3595,6 +3866,7 @@ export async function scanMarket({
         momentum,
         pullback,
         marketRegime,
+        trendExhaustion,
         breakout,
         entryMode,
         entryVolumeTarget,
@@ -3624,6 +3896,8 @@ export async function scanMarket({
           balancedEntryOk,
           marketRegimeOk:
             balancedEntryOk,
+          trendExhaustionOk:
+            trendExhaustion.ok,
           pullbackTriggerOk,
           contextualOiOk,
           antiChaseOk,
@@ -3816,6 +4090,7 @@ export function signalText(s) {
     `🔎 Confirmação: <b>${s.confirmation.label}</b>\n` +
     `${s.entryMode ? `🧭 Modo de entrada: <b>${s.entryMode}</b> · vol alvo ${fmt(s.entryVolumeTarget, 2)}x\n` : ''}` +
     `${s.marketRegime ? `🌦 Regime: ${s.marketRegime.regime} · ${s.marketRegime.reason}\n` : ''}` +
+    `${s.trendExhaustion ? `🧯 Exhaustion Guard: ${s.trendExhaustion.ok ? 'OK' : 'BLOQUEADO'} · ${s.trendExhaustion.reason}\n` : ''}` +
     `${s.pullback ? `↩️ Pullback: ${s.pullback.confirmed ? 'CONFIRMADO' : 'AGUARDANDO'} · trigger ${s.pullback.triggerQuality ?? 0}/5 · EMA distância ${fmt(s.pullback.distanceAtr, 2)}/${fmt(s.pullback.maxDistanceAtr, 2)} ATR · ${s.pullback.reason}\n` : ''}` +
     `${s.breakout?.qualified ? `🚀 Breakout forte: CONFIRMADO · corpo ${fmt(s.breakout.bodyAtr, 2)} ATR\n` : ''}` +
     `${s.oiContext ? `📈 OI contextual: ${s.oiContext.regime} · OI ${s.oiContext.oiPct >= 0 ? '+' : ''}${fmt(s.oiContext.oiPct, 2)}% · preço30m ${s.oiContext.pricePct >= 0 ? '+' : ''}${fmt(s.oiContext.pricePct, 2)}%\n` : ''}` +
@@ -3856,7 +4131,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.8.0: Regime + Setup Health · Pullback só TREND · breakout priorizado em EXPANSION. ` +
+    `<i>V1.8.1: Confirmed Entry · Pullback em 2 etapas · 4H obrigatório · Exhaustion Guard. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

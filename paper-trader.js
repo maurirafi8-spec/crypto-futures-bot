@@ -1793,6 +1793,11 @@ function eligibility(signal) {
   };
 }
 
+export function paperEligibilityPreview(signal) {
+  ensureDay();
+  return eligibility(signal);
+}
+
 function validateLevels(signal, entryFill) {
   const stop = Number(signal.stop);
   const tp1 = Number(signal.tp1);
@@ -2531,6 +2536,22 @@ export function maybeOpenPaperPosition(signal) {
         Number(signal.pullback?.slope1h || signal.marketRegime?.slope1h || 0),
       effectiveRiskPct:
         Number(effectiveRiskPct),
+      confirmedEntryUsed:
+        Boolean(signal.confirmedEntry),
+      confirmedEntryTriggerBarTime:
+        Number(signal.confirmedEntry?.triggerBarTime || 0),
+      confirmedEntryBarTime:
+        Number(signal.confirmedEntry?.confirmationBarTime || 0),
+      confirmedEntryChaseAtr:
+        Number(signal.confirmedEntry?.chaseAtr || 0),
+      confirmedEntryVolumeRatio:
+        Number(signal.confirmedEntry?.confirmationVolumeRatio || 0),
+      confirmedEntryOriginRegime:
+        signal.confirmedEntry?.originRegime || null,
+      confirmedEntryConfirmationRegime:
+        signal.confirmedEntry?.confirmationRegime || null,
+      confirmedEntryNoSecondAi:
+        Boolean(signal.confirmedEntry?.noSecondAiCall),
 
       mfeR: 0,
       maeR: 0,
@@ -2698,6 +2719,7 @@ export function maybeOpenPaperPosition(signal) {
         `${cfg.trailingRunnerEnabled ? `🪜 Stop Gain: TP1→BE líquido · TP2→TP1 · TP3→TP2 · depois runner sobe por degraus\n` : ''}` +
         `${cfg.trailingRunnerEnabled ? `🏃 Saídas: 30% / 30% / ${cfg.tp3ClosePct.toFixed(0)}% · runner ${Math.max(0, 40 - cfg.tp3ClosePct).toFixed(0)}%\n` : ''}` +
         `🌦 Regime: ${position.setupMarketRegime || 'UNKNOWN'} · trigger ${position.setupPullbackTriggerQuality || 0}/5\n` +
+        `${position.confirmedEntryUsed ? `✅ Confirmed Entry: 2º candle 5m · ${position.confirmedEntryOriginRegime || 'TREND'}→${position.confirmedEntryConfirmationRegime || '—'} · chase ${position.confirmedEntryChaseAtr.toFixed(2)} ATR · vol ${position.confirmedEntryVolumeRatio.toFixed(2)}x\n` : ''}` +
         `🎚 Teto de risco da banca: ${riskBudget.toFixed(3)} USDC (${effectiveRiskPct.toFixed(2)}%)${riskStatus.throttled ? ' · THROTTLE QUALIDADE' : ''}\n` +
         `💸 Taxa de entrada simulada: ${entryFee.toFixed(4)} USDC`
     };
@@ -2860,6 +2882,7 @@ function positionCloseMessage(closed) {
     `📈 MFE: +${Number(closed.mfeR || 0).toFixed(2)}R · 📉 MAE: -${Number(closed.maeR || 0).toFixed(2)}R\n` +
     `${closed.setupOiContextRegime ? `🧭 Setup: ${closed.setupEntryMode || 'PULLBACK'} · ${closed.setupOiContextRegime} · pullback ${closed.setupPullbackConfirmed ? 'SIM' : 'NÃO'}\n` : ''}` +
     `${closed.setupMarketRegime ? `🌦 Regime: ${closed.setupMarketRegime} · trigger ${Number(closed.setupPullbackTriggerQuality || 0)}/5\n` : ''}` +
+    `${closed.confirmedEntryUsed ? `✅ Confirmed Entry: SIM · chase ${Number(closed.confirmedEntryChaseAtr || 0).toFixed(2)} ATR · vol ${Number(closed.confirmedEntryVolumeRatio || 0).toFixed(2)}x\n` : ''}` +
     `🏦 Banca: ${state.balance.toFixed(2)} USDC`
   );
 }
@@ -4826,6 +4849,30 @@ export function paperPerformanceText() {
     })
   );
 
+  const confirmedEntryMetrics =
+    tradeMetrics(
+      state.closedTrades
+        .filter(
+          t =>
+            Boolean(
+              t?.confirmedEntryUsed
+            )
+        )
+        .slice(0, 20)
+    );
+
+  const directEntryMetrics =
+    tradeMetrics(
+      state.closedTrades
+        .filter(
+          t =>
+            !Boolean(
+              t?.confirmedEntryUsed
+            )
+        )
+        .slice(0, 20)
+    );
+
   const lines = [
     '🧠 <b>PERFORMANCE GUARD</b>',
     '',
@@ -4872,6 +4919,15 @@ export function paperPerformanceText() {
           `PF ${fmtPf(x.metrics.profitFactor)} · ${fmtSigned(x.metrics.pnl)} USDC · ` +
           `MFE +${x.metrics.avgMfe.toFixed(2)}R / MAE -${x.metrics.avgMae.toFixed(2)}R`
       ),
+    '',
+    '<b>Confirmação de entrada</b>',
+    `• CONFIRMED 2x5m: ${confirmedEntryMetrics.total} · ` +
+      `${confirmedEntryMetrics.wins}W/${confirmedEntryMetrics.losses}L · ` +
+      `PF ${fmtPf(confirmedEntryMetrics.profitFactor)} · ${fmtSigned(confirmedEntryMetrics.pnl)} USDC · ` +
+      `MFE +${confirmedEntryMetrics.avgMfe.toFixed(2)}R / MAE -${confirmedEntryMetrics.avgMae.toFixed(2)}R`,
+    `• DIRETA/LEGADO: ${directEntryMetrics.total} · ` +
+      `${directEntryMetrics.wins}W/${directEntryMetrics.losses}L · ` +
+      `PF ${fmtPf(directEntryMetrics.profitFactor)} · ${fmtSigned(directEntryMetrics.pnl)} USDC`,
     '',
     '<b>Faixa de score</b>',
     ...scoreBands
@@ -4954,7 +5010,7 @@ export function paperStatusText() {
       : null;
 
   return [
-    '🌦 <b>PAPER TRADING — V1.8.0 REGIME + SETUP HEALTH</b>',
+    '✅ <b>PAPER TRADING — V1.8.1 CONFIRMED ENTRY</b>',
     '',
     `Status: ${cfg.enabled ? '✅ ATIVO' : '⛔ DESATIVADO'} · ${state.paused ? '⏸ PAUSADO' : '▶️ RODANDO'}`,
     `💰 Banca inicial: ${state.startingBalance.toFixed(2)} USDC`,
@@ -4970,7 +5026,8 @@ export function paperStatusText() {
     `🧠 Performance Guard: ${cfg.performanceGuardEnabled ? 'ATIVO' : 'INATIVO'} · lado/setup · janela ${cfg.performanceLookback} · pausa ${cfg.performancePauseMin.toFixed(0)}m`,
     `🟠 Side Probation: ${cfg.sideProbationEnabled ? 'ATIVO' : 'INATIVO'} · recuperação PF ${cfg.sideRecoveryMinProfitFactor.toFixed(2)}+ / WR ${cfg.sideRecoveryMinWinRatePct.toFixed(0)}%+`,
     `🧭 Setup Probation: ${cfg.setupProbationEnabled ? 'ATIVO' : 'INATIVO'} · recuperação PF ${cfg.setupRecoveryMinProfitFactor.toFixed(2)}+ / WR ${cfg.setupRecoveryMinWinRatePct.toFixed(0)}%+`,
-    `🌦 Regime Filter: PULLBACK só TREND · BREAKOUT priorizado EXPANSION`,
+    `🌦 Regime Filter: PULLBACK só TREND · 4H obrigatório · BREAKOUT priorizado EXPANSION`,
+    `✅ Confirmed Entry: Pullback abre somente após o próximo 5m fechar além do candle gatilho`,
     `🎚 Score Tiers: ${cfg.scoreTierEnabled ? 'ATIVO' : 'INATIVO'} · 68–74 elite · 75–79 estrito · 80+ normal`,
     `📈 Performance Quality: ${cfg.performanceQualityEnabled ? 'ATIVO' : 'INATIVO'} · PF ${cfg.performanceQualityMinPf.toFixed(2)} / payoff ${cfg.performanceQualityMinPayoff.toFixed(2)}`,
     `🔒 Margem usada: ${used.toFixed(2)} USDC`,
