@@ -1,4 +1,4 @@
-// V1.8.1 — LIQUID UNIVERSE preserved + CONFIRMED ENTRY
+// V1.8.2 — LIQUID UNIVERSE preserved + ADAPTIVE HOLD
 // O scheduler aprende o volume 24h de cada ativo conforme os lotes normais
 // são escaneados. Assim não adicionamos chamadas extras de OHLCV e evitamos
 // pressionar o rate limit da Coinalyze.

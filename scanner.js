@@ -4131,7 +4131,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.8.1: Confirmed Entry · Pullback em 2 etapas · 4H obrigatório · Exhaustion Guard. ` +
+    `<i>V1.8.2: Confirmed Entry mantido + Adaptive Hold; 2h não encerra mais cegamente. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

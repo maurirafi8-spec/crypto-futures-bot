@@ -85,8 +85,25 @@ export function paperConfig() {
     cooldownMin:
       numEnv('PAPER_COOLDOWN_MINUTES', 12, 0, 1440),
 
+    // V1.8.2 ADAPTIVE HOLD
+    // PAPER_MAX_HOLD_HOURS agora é CHECKPOINT, não encerramento cego.
     maxHoldHours:
       numEnv('PAPER_MAX_HOLD_HOURS', 2, 0.5, 720),
+
+    adaptiveHoldEnabled:
+      String(process.env.PAPER_ADAPTIVE_HOLD_ENABLED || 'true')
+        .toLowerCase() !== 'false',
+
+    adaptiveHoldHardMaxHours:
+      numEnv('PAPER_ADAPTIVE_HOLD_HARD_MAX_HOURS', 6, 0, 720),
+
+    adaptiveHoldNoTimeoutAfterTp1:
+      String(process.env.PAPER_ADAPTIVE_HOLD_NO_TIMEOUT_AFTER_TP1 || 'true')
+        .toLowerCase() !== 'false',
+
+    adaptiveHoldNotifyCheckpoint:
+      String(process.env.PAPER_ADAPTIVE_HOLD_NOTIFY_CHECKPOINT || 'true')
+        .toLowerCase() !== 'false',
 
     scalpMode:
       String(process.env.PAPER_SCALP_MODE || 'true')
@@ -2552,6 +2569,9 @@ export function maybeOpenPaperPosition(signal) {
         signal.confirmedEntry?.confirmationRegime || null,
       confirmedEntryNoSecondAi:
         Boolean(signal.confirmedEntry?.noSecondAiCall),
+      adaptiveHoldCheckpointNotified: false,
+      adaptiveHoldCheckpointAt: 0,
+      adaptiveHoldCheckpointStage: 0,
 
       mfeR: 0,
       maeR: 0,
@@ -3577,6 +3597,163 @@ export function adaptiveStalePreview({
   );
 }
 
+function adaptiveHoldAssessment(
+  position,
+  {
+    ageHours = 0,
+    config = null
+  } = {}
+) {
+  const cfg =
+    config || paperConfig();
+
+  const checkpointHours =
+    Number(
+      cfg.maxHoldHours ||
+      2
+    );
+
+  const hardMaxHours =
+    Number(
+      cfg.adaptiveHoldHardMaxHours ||
+      0
+    );
+
+  const stage =
+    Number(
+      position?.stage ||
+      0
+    );
+
+  const runnerActive =
+    Boolean(
+      position?.runnerActive
+    );
+
+  const protectedTrade =
+    stage >= 1 ||
+    runnerActive;
+
+  if (
+    !cfg.adaptiveHoldEnabled
+  ) {
+    return {
+      action: 'LEGACY_TIMEOUT',
+      protectedTrade,
+      checkpointHours,
+      hardMaxHours
+    };
+  }
+
+  if (
+    ageHours <
+    checkpointHours
+  ) {
+    return {
+      action: 'WAIT',
+      protectedTrade,
+      checkpointHours,
+      hardMaxHours
+    };
+  }
+
+  if (
+    protectedTrade &&
+    cfg.adaptiveHoldNoTimeoutAfterTp1
+  ) {
+    return {
+      action: 'HOLD_PROTECTED',
+      protectedTrade: true,
+      checkpointHours,
+      hardMaxHours
+    };
+  }
+
+  if (
+    !protectedTrade &&
+    hardMaxHours > 0 &&
+    ageHours >=
+      hardMaxHours
+  ) {
+    return {
+      action: 'CLOSE_HARD_MAX',
+      protectedTrade: false,
+      checkpointHours,
+      hardMaxHours
+    };
+  }
+
+  return {
+    action: 'HOLD_UNPROTECTED',
+    protectedTrade: false,
+    checkpointHours,
+    hardMaxHours
+  };
+}
+
+export function adaptiveHoldPreview({
+  stage = 0,
+  runnerActive = false,
+  ageHours = 2,
+  config = {}
+} = {}) {
+  const cfg = {
+    ...paperConfig(),
+    ...config
+  };
+
+  return adaptiveHoldAssessment(
+    {
+      stage,
+      runnerActive
+    },
+    {
+      ageHours,
+      config: cfg
+    }
+  );
+}
+
+function adaptiveHoldCheckpointMessage(
+  position,
+  assessment
+) {
+  const checkpoint =
+    Number(
+      assessment.checkpointHours ||
+      0
+    );
+
+  if (
+    assessment.action ===
+    'HOLD_PROTECTED'
+  ) {
+    return (
+      `⏳ <b>ADAPTIVE HOLD — ${position.symbol} ${position.side}</b>\n` +
+      `Checkpoint ${checkpoint.toFixed(1)}h atingido.\n` +
+      `🛡 Trade já protegido após TP${Math.max(1, Number(position.stage || 1))}: timeout por tempo DESLIGADO.\n` +
+      `➡️ Continua até STOP / STOP GAIN / Runner.`
+    );
+  }
+
+  const hardMax =
+    Number(
+      assessment.hardMaxHours ||
+      0
+    );
+
+  return (
+    `⏳ <b>ADAPTIVE HOLD — ${position.symbol} ${position.side}</b>\n` +
+    `Checkpoint ${checkpoint.toFixed(1)}h atingido sem fechamento forçado.\n` +
+    `📈 Posição ainda sem TP1: continua com STOP/TP e gerenciamento normal.` +
+    (
+      hardMax > 0
+        ? `\n🧯 Segurança: máximo ${hardMax.toFixed(1)}h apenas se nunca alcançar TP1.`
+        : `\n🧯 Limite máximo por tempo: DESLIGADO.`
+    )
+  );
+}
+
 function updateOnePosition(position, snap) {
   const cfg = paperConfig();
   const events = [];
@@ -3750,7 +3927,7 @@ function updateOnePosition(position, snap) {
   // - 2 candles fechados consecutivos com a mesma condição ruim.
   //
   // 90m = hard stale somente se o trade nunca alcançou +0.25R.
-  // 2h = timeout absoluto já existente.
+  // 2h = checkpoint Adaptive Hold; não fecha mais cegamente.
   if (
     cfg.scalpMode &&
     position.stage === 0 &&
@@ -3859,23 +4036,92 @@ function updateOnePosition(position, snap) {
     }
   }
 
-  // Timeout: encerra pela marca atual após o máximo de permanência.
+  // V1.8.2 ADAPTIVE HOLD:
+  // 2h (ou PAPER_MAX_HOLD_HOURS) agora é checkpoint, não saída cega.
+  // Após TP1 não existe timeout absoluto; o trade segue até STOP/STOP GAIN/Runner.
+  // Antes do TP1 existe apenas um hard max de segurança (default 6h).
+  const ageHours =
+    (
+      Date.now() -
+      position.openedAt
+    ) /
+    3_600_000;
+
+  const holdAssessment =
+    adaptiveHoldAssessment(
+      position,
+      {
+        ageHours,
+        config: cfg
+      }
+    );
+
   if (
-    Date.now() - position.openedAt >=
-    cfg.maxHoldHours * 60 * 60 * 1000
+    holdAssessment.action ===
+    'LEGACY_TIMEOUT'
   ) {
     const result =
       closeRemainingAt(
         position,
         mark,
-        `TIMEOUT ${cfg.maxHoldHours}h`
+        `TIMEOUT LEGADO ${cfg.maxHoldHours}h`
       );
 
     events.push(
-      positionCloseMessage(result.closed)
+      positionCloseMessage(
+        result.closed
+      )
     );
 
     return events;
+  }
+
+  if (
+    holdAssessment.action ===
+    'CLOSE_HARD_MAX'
+  ) {
+    const result =
+      closeRemainingAt(
+        position,
+        mark,
+        `ADAPTIVE HOLD MAX ${holdAssessment.hardMaxHours}h sem TP1`
+      );
+
+    events.push(
+      positionCloseMessage(
+        result.closed
+      )
+    );
+
+    return events;
+  }
+
+  if (
+    cfg.adaptiveHoldNotifyCheckpoint &&
+    ageHours >=
+      cfg.maxHoldHours &&
+    !position.adaptiveHoldCheckpointNotified
+  ) {
+    position.adaptiveHoldCheckpointNotified =
+      true;
+
+    position.adaptiveHoldCheckpointAt =
+      Date.now();
+
+    position.adaptiveHoldCheckpointStage =
+      Number(
+        position.stage ||
+        0
+      );
+
+    events.push(
+      adaptiveHoldCheckpointMessage(
+        position,
+        holdAssessment
+      )
+    );
+
+    saveState();
   }
 
   const nextTarget =
@@ -4861,14 +5107,36 @@ export function paperPerformanceText() {
         .slice(0, 20)
     );
 
-  const directEntryMetrics =
+  const breakoutDirectMetrics =
     tradeMetrics(
       state.closedTrades
         .filter(
           t =>
             !Boolean(
               t?.confirmedEntryUsed
-            )
+            ) &&
+            String(
+              t?.setupEntryMode ||
+              ''
+            ).toUpperCase() ===
+              'BREAKOUT_STRONG'
+        )
+        .slice(0, 20)
+    );
+
+  const legacyOtherMetrics =
+    tradeMetrics(
+      state.closedTrades
+        .filter(
+          t =>
+            !Boolean(
+              t?.confirmedEntryUsed
+            ) &&
+            String(
+              t?.setupEntryMode ||
+              ''
+            ).toUpperCase() !==
+              'BREAKOUT_STRONG'
         )
         .slice(0, 20)
     );
@@ -4921,13 +5189,17 @@ export function paperPerformanceText() {
       ),
     '',
     '<b>Confirmação de entrada</b>',
-    `• CONFIRMED 2x5m: ${confirmedEntryMetrics.total} · ` +
+    `• CONFIRMED PULLBACK 2x5m: ${confirmedEntryMetrics.total} · ` +
       `${confirmedEntryMetrics.wins}W/${confirmedEntryMetrics.losses}L · ` +
       `PF ${fmtPf(confirmedEntryMetrics.profitFactor)} · ${fmtSigned(confirmedEntryMetrics.pnl)} USDC · ` +
       `MFE +${confirmedEntryMetrics.avgMfe.toFixed(2)}R / MAE -${confirmedEntryMetrics.avgMae.toFixed(2)}R`,
-    `• DIRETA/LEGADO: ${directEntryMetrics.total} · ` +
-      `${directEntryMetrics.wins}W/${directEntryMetrics.losses}L · ` +
-      `PF ${fmtPf(directEntryMetrics.profitFactor)} · ${fmtSigned(directEntryMetrics.pnl)} USDC`,
+    `• BREAKOUT DIRETO: ${breakoutDirectMetrics.total} · ` +
+      `${breakoutDirectMetrics.wins}W/${breakoutDirectMetrics.losses}L · ` +
+      `PF ${fmtPf(breakoutDirectMetrics.profitFactor)} · ${fmtSigned(breakoutDirectMetrics.pnl)} USDC · ` +
+      `MFE +${breakoutDirectMetrics.avgMfe.toFixed(2)}R / MAE -${breakoutDirectMetrics.avgMae.toFixed(2)}R`,
+    `• LEGADO/OUTROS: ${legacyOtherMetrics.total} · ` +
+      `${legacyOtherMetrics.wins}W/${legacyOtherMetrics.losses}L · ` +
+      `PF ${fmtPf(legacyOtherMetrics.profitFactor)} · ${fmtSigned(legacyOtherMetrics.pnl)} USDC`,
     '',
     '<b>Faixa de score</b>',
     ...scoreBands
@@ -5010,7 +5282,7 @@ export function paperStatusText() {
       : null;
 
   return [
-    '✅ <b>PAPER TRADING — V1.8.1 CONFIRMED ENTRY</b>',
+    '⏳ <b>PAPER TRADING — V1.8.2 ADAPTIVE HOLD</b>',
     '',
     `Status: ${cfg.enabled ? '✅ ATIVO' : '⛔ DESATIVADO'} · ${state.paused ? '⏸ PAUSADO' : '▶️ RODANDO'}`,
     `💰 Banca inicial: ${state.startingBalance.toFixed(2)} USDC`,
@@ -5034,7 +5306,8 @@ export function paperStatusText() {
     `💳 Disponível: ${available.toFixed(2)} USDC`,
     `⚖️ Risco por trade: ${currentRisk.riskPct.toFixed(2)}%${currentRisk.throttled ? ` · THROTTLE (config ${cfg.riskPct.toFixed(2)}%)` : ''}`,
     `⚙️ Alavancagem simulada: ${cfg.leverage}x`,
-    `⚡ Scalp: ${cfg.scalpMode ? 'ATIVO' : 'INATIVO'} · stale adaptativo ${cfg.scalpStaleMin}/${cfg.scalpStaleMaxMin} min · máx ${cfg.maxHoldHours}h`,
+    `⚡ Scalp: ${cfg.scalpMode ? 'ATIVO' : 'INATIVO'} · stale adaptativo ${cfg.scalpStaleMin}/${cfg.scalpStaleMaxMin} min`,
+    `⏳ Adaptive Hold: ${cfg.adaptiveHoldEnabled ? 'ATIVO' : 'INATIVO'} · checkpoint ${cfg.maxHoldHours.toFixed(1)}h · após TP1 sem timeout · sem TP1 máx ${cfg.adaptiveHoldHardMaxHours > 0 ? `${cfg.adaptiveHoldHardMaxHours.toFixed(1)}h` : 'OFF'}`,
     `⏳ Stale: ${cfg.scalpStaleConsecutiveChecks} checks · ${cfg.scalpStaleDeteriorationCount}/3 deteriorações · MFE ${cfg.scalpStaleMinProgressR.toFixed(2)}R/${cfg.scalpStaleHardProgressR.toFixed(2)}R`,
     `🧠 Smart Stop: estrutura 5m + ATR · alvo 1.25–2.00 ATR`,
     `🧭 Entradas: PULLBACK preferencial + BREAKOUT FORTE`,
@@ -5101,6 +5374,7 @@ export function paperPositionsText() {
       `TP1 ${round(p.tp1)} · TP2 ${round(p.tp2)} · TP3 ${round(p.tp3)}\n` +
       `${p.runnerActive ? `➡️ Próximo TP${(p.runnerTrailStage || 3) + 1}: ${round(p.runnerNextTrigger)}\n` : ''}` +
       `${p.stage === 0 ? `⏳ Stale checks ${Number(p.staleBadChecks || 0)}/${cfg.scalpStaleConsecutiveChecks} · MFE +${Number(p.mfeR || 0).toFixed(2)}R · estrutura ${p.staleLastStructureAligned === false ? 'NÃO ALINHADA' : 'OK'}\n` : ''}` +
+      `${p.adaptiveHoldCheckpointNotified ? `⏳ Adaptive Hold: checkpoint cumprido · ${p.stage >= 1 ? 'SEM TIMEOUT após TP1' : `aguarda STOP/TP · segurança ${cfg.adaptiveHoldHardMaxHours > 0 ? `${cfg.adaptiveHoldHardMaxHours.toFixed(1)}h` : 'OFF'}`}\n` : ''}` +
       `⚖️ R/R líquido projetado ${Number(p.projectedNetRR || 0).toFixed(2)} · ` +
       `STOP -${Number(p.projectedStopLossUsdc || 0).toFixed(3)} / ladder +${Number(p.projectedFullTpNetUsdc || 0).toFixed(3)} USDC\n` +
       `📦 Restante ${(p.remainingQty / p.initialQty * 100).toFixed(0)}% · ` +

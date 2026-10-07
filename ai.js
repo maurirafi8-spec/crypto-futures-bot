@@ -517,7 +517,7 @@ async function fetchOpenRouter({ apiKey, body, timeoutMs }) {
         'HTTP-Referer':
           process.env.OPENROUTER_SITE_URL ||
           'https://crypto-futures-bot.onrender.com',
-        'X-Title': 'Crypto Futures Scanner V1.8.1 Free'
+        'X-Title': 'Crypto Futures Scanner V1.8.2 Free'
       },
       body: JSON.stringify(body),
       signal: controller.signal
