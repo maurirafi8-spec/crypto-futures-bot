@@ -1,5 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import {
+  strategyProfileDecision,
+  highAccuracyTargets
+} from './high-accuracy.js';
 
 function boolEnv(name, fallback = false) {
   const raw = process.env[name];
@@ -72,6 +76,60 @@ export function paperConfig() {
 
     breakoutMinScore:
       numEnv('PAPER_BREAKOUT_MIN_SCORE', 82, 0, 100),
+
+    // V1.9.0 HIGH ACCURACY LAB
+    strategyProfile:
+      String(process.env.PAPER_STRATEGY_PROFILE || 'AUTO')
+        .toUpperCase(),
+
+    highAccuracyEnabled:
+      String(process.env.PAPER_HIGH_ACCURACY_ENABLED || 'true')
+        .toLowerCase() !== 'false',
+
+    highAccuracyRiskPct:
+      numEnv('PAPER_HIGH_ACCURACY_RISK_PCT', 0.35, 0.1, 2),
+
+    highAccuracyPullbackMinScore:
+      numEnv('PAPER_HIGH_ACCURACY_PULLBACK_MIN_SCORE', 84, 68, 100),
+
+    highAccuracyPullbackMinAi:
+      numEnv('PAPER_HIGH_ACCURACY_PULLBACK_MIN_AI', 78, 0, 100),
+
+    highAccuracyBreakoutMinScore:
+      numEnv('PAPER_HIGH_ACCURACY_BREAKOUT_MIN_SCORE', 88, 68, 100),
+
+    highAccuracyBreakoutMinAi:
+      numEnv('PAPER_HIGH_ACCURACY_BREAKOUT_MIN_AI', 80, 0, 100),
+
+    highAccuracyPullbackMinVolume:
+      numEnv('PAPER_HIGH_ACCURACY_PULLBACK_MIN_VOLUME', 0.65, 0.2, 5),
+
+    highAccuracyBreakoutMinVolume:
+      numEnv('PAPER_HIGH_ACCURACY_BREAKOUT_MIN_VOLUME', 1.10, 0.2, 5),
+
+    highAccuracyPullbackMinEdge:
+      numEnv('PAPER_HIGH_ACCURACY_PULLBACK_MIN_EDGE', 8, 0, 50),
+
+    highAccuracyBreakoutMinEdge:
+      numEnv('PAPER_HIGH_ACCURACY_BREAKOUT_MIN_EDGE', 10, 0, 50),
+
+    highAccuracyTp1R:
+      numEnv('PAPER_HIGH_ACCURACY_TP1_R', 0.75, 0.2, 3),
+
+    highAccuracyTp2R:
+      numEnv('PAPER_HIGH_ACCURACY_TP2_R', 1.10, 0.3, 4),
+
+    highAccuracyTp3R:
+      numEnv('PAPER_HIGH_ACCURACY_TP3_R', 1.60, 0.5, 6),
+
+    highAccuracyTp1ClosePct:
+      numEnv('PAPER_HIGH_ACCURACY_TP1_CLOSE_PCT', 50, 5, 90),
+
+    highAccuracyTp2ClosePct:
+      numEnv('PAPER_HIGH_ACCURACY_TP2_CLOSE_PCT', 35, 5, 90),
+
+    highAccuracyMinNetRR:
+      numEnv('PAPER_HIGH_ACCURACY_MIN_NET_RR', 0.70, 0.2, 3),
 
     feeRate:
       numEnv('PAPER_FEE_RATE', 0.00045, 0, 0.01),
@@ -347,6 +405,36 @@ export function paperConfig() {
       process.env.PAPER_STATE_PATH ||
       path.resolve(process.cwd(), 'paper-state.json')
   };
+}
+
+
+function highAccuracyOptions(
+  cfg
+) {
+  return {
+    enabled: cfg.highAccuracyEnabled,
+    mode: cfg.strategyProfile,
+    pullbackMinScore: cfg.highAccuracyPullbackMinScore,
+    pullbackMinAi: cfg.highAccuracyPullbackMinAi,
+    breakoutMinScore: cfg.highAccuracyBreakoutMinScore,
+    breakoutMinAi: cfg.highAccuracyBreakoutMinAi,
+    pullbackMinVolume: cfg.highAccuracyPullbackMinVolume,
+    breakoutMinVolume: cfg.highAccuracyBreakoutMinVolume,
+    pullbackMinEdge: cfg.highAccuracyPullbackMinEdge,
+    breakoutMinEdge: cfg.highAccuracyBreakoutMinEdge,
+    requireConfirmedPullback: true,
+    breakoutExpansionOnly: true
+  };
+}
+
+function strategyDecision(
+  signal,
+  cfg = paperConfig()
+) {
+  return strategyProfileDecision(
+    signal,
+    highAccuracyOptions(cfg)
+  );
 }
 
 function freshState() {
@@ -1739,6 +1827,49 @@ function eligibility(signal) {
     };
   }
 
+  const strategy =
+    strategyDecision(
+      signal,
+      cfg
+    );
+
+  if (
+    strategy.profile ===
+    'BLOCKED_HIGH_ACCURACY'
+  ) {
+    const reasons =
+      strategy.assessment?.reasons ||
+      [];
+
+    const preArmPullback =
+      signalSetup ===
+        'PULLBACK' &&
+      !signal?.confirmedEntry &&
+      reasons.length === 1 &&
+      String(
+        reasons[0] ||
+        ''
+      ).includes(
+        'CONFIRMED ENTRY'
+      );
+
+    // Em modo HIGH_ACCURACY forçado, o primeiro candle do Pullback
+    // ainda precisa passar pelo paperEligibilityPreview para poder virar ARMED.
+    // Nesse ponto a ausência do 2º candle não é falha; ela será exigida
+    // na abertura real depois da confirmação.
+    if (!preArmPullback) {
+      return {
+        ok: false,
+        reason:
+          'HIGH ACCURACY bloqueado: ' +
+          (
+            reasons.join(' · ') ||
+            'setup não qualificado'
+          )
+      };
+    }
+  }
+
   if (
     state.openPositions.length >=
     cfg.maxOpenPositions
@@ -1903,7 +2034,8 @@ function projectedTradeEconomics({
   tp1,
   tp2,
   tp3,
-  qty = 1
+  qty = 1,
+  strategyProfile = 'RUNNER'
 }) {
   const cfg = paperConfig();
 
@@ -1925,19 +2057,39 @@ function projectedTradeEconomics({
     stopLeg.fee -
     entryFee;
 
+  const highAccuracy =
+    String(strategyProfile)
+      .toUpperCase() ===
+    'HIGH_ACCURACY';
+
   const tp1Weight =
-    0.30;
+    highAccuracy
+      ? cfg.highAccuracyTp1ClosePct / 100
+      : 0.30;
 
   const tp2Weight =
-    0.30;
+    highAccuracy
+      ? cfg.highAccuracyTp2ClosePct / 100
+      : 0.30;
+
+  const runnerEnabled =
+    !highAccuracy &&
+    cfg.trailingRunnerEnabled;
 
   const tp3Weight =
-    cfg.trailingRunnerEnabled
-      ? cfg.tp3ClosePct / 100
-      : 0.40;
+    highAccuracy
+      ? Math.max(
+          0,
+          1 -
+          tp1Weight -
+          tp2Weight
+        )
+      : runnerEnabled
+        ? cfg.tp3ClosePct / 100
+        : 0.40;
 
   const runnerWeight =
-    cfg.trailingRunnerEnabled
+    runnerEnabled
       ? Math.max(
           0,
           1 -
@@ -1967,7 +2119,7 @@ function projectedTradeEconomics({
   // Para o Net R/R Guard, assume que o runner restante
   // acaba saindo em TP2. Qualquer extensão TP4+ é bônus.
   if (
-    cfg.trailingRunnerEnabled &&
+    runnerEnabled &&
     runnerWeight > 0
   ) {
     plannedLegs.push({
@@ -2086,14 +2238,25 @@ function scaledTargets(
 
 function planMeetsNetGuard(
   economics,
-  cfg
+  cfg,
+  strategyProfile = 'RUNNER'
 ) {
+  const highAccuracy =
+    String(strategyProfile)
+      .toUpperCase() ===
+    'HIGH_ACCURACY';
+
+  const minNetRR =
+    highAccuracy
+      ? cfg.highAccuracyMinNetRR
+      : cfg.minNetRR;
+
   const rrOk =
     !cfg.netRrGuardEnabled ||
     (
       economics.fullTpNet > 0 &&
       economics.netRR >=
-        cfg.minNetRR
+        minNetRR
     );
 
   const tp1Ok =
@@ -2106,7 +2269,8 @@ function planMeetsNetGuard(
 function prepareNetRRPlan({
   side,
   entryFill,
-  levels
+  levels,
+  strategyProfile = 'RUNNER'
 }) {
   const cfg = paperConfig();
 
@@ -2115,34 +2279,49 @@ function prepareNetRRPlan({
       side,
       entryFill,
       ...levels,
-      qty: 1
+      qty: 1,
+      strategyProfile
     });
 
   if (
     planMeetsNetGuard(
       originalEconomics,
-      cfg
+      cfg,
+      strategyProfile
     )
   ) {
     return {
       ok: true,
       levels,
-      economics:
-        originalEconomics,
+      economics: originalEconomics,
       targetScale: 1,
       adjusted: false,
       originalEconomics
     };
   }
 
-  if (!cfg.autoAdjustTargets) {
+  const highAccuracy =
+    String(strategyProfile)
+      .toUpperCase() ===
+    'HIGH_ACCURACY';
+
+  const requiredMinNetRR =
+    highAccuracy
+      ? cfg.highAccuracyMinNetRR
+      : cfg.minNetRR;
+
+  // HIGH ACCURACY não estica os TPs automaticamente:
+  // se o ladder curto não fecha a conta após taxas, o trade é rejeitado.
+  if (
+    highAccuracy ||
+    !cfg.autoAdjustTargets
+  ) {
     return {
       ok: false,
       reason:
         `R/R líquido ${Number(originalEconomics.netRR || 0).toFixed(2)} ` +
-        `< ${cfg.minNetRR.toFixed(2)} ou TP1 sem espaço para proteção líquida`,
-      economics:
-        originalEconomics,
+        `< ${requiredMinNetRR.toFixed(2)} ou TP1 sem espaço para proteção líquida`,
+      economics: originalEconomics,
       targetScale: 1,
       adjusted: false,
       originalEconomics
@@ -2162,13 +2341,15 @@ function prepareNetRRPlan({
       side,
       entryFill,
       ...maxLevels,
-      qty: 1
+      qty: 1,
+      strategyProfile
     });
 
   if (
     !planMeetsNetGuard(
       maxEconomics,
-      cfg
+      cfg,
+      strategyProfile
     )
   ) {
     return {
@@ -2176,37 +2357,21 @@ function prepareNetRRPlan({
       reason:
         `R/R líquido insuficiente mesmo com TPs x${cfg.maxTargetScale.toFixed(2)} ` +
         `(R/R ${Number(maxEconomics.netRR || 0).toFixed(2)})`,
-      economics:
-        maxEconomics,
-      targetScale:
-        cfg.maxTargetScale,
+      economics: maxEconomics,
+      targetScale: cfg.maxTargetScale,
       adjusted: false,
       originalEconomics
     };
   }
 
-  // Busca o menor multiplicador que satisfaz as duas condições:
-  // R/R líquido mínimo e proteção líquida possível após TP1.
   let low = 1;
-  let high =
-    cfg.maxTargetScale;
+  let high = cfg.maxTargetScale;
+  let bestScale = high;
+  let bestLevels = maxLevels;
+  let bestEconomics = maxEconomics;
 
-  let bestScale =
-    high;
-
-  let bestLevels =
-    maxLevels;
-
-  let bestEconomics =
-    maxEconomics;
-
-  for (
-    let i = 0;
-    i < 36;
-    i += 1
-  ) {
-    const mid =
-      (low + high) / 2;
+  for (let i = 0; i < 36; i += 1) {
+    const mid = (low + high) / 2;
 
     const candidateLevels =
       scaledTargets(
@@ -2221,42 +2386,32 @@ function prepareNetRRPlan({
         side,
         entryFill,
         ...candidateLevels,
-        qty: 1
+        qty: 1,
+        strategyProfile
       });
 
     if (
       planMeetsNetGuard(
         candidateEconomics,
-        cfg
+        cfg,
+        strategyProfile
       )
     ) {
-      bestScale =
-        mid;
-
-      bestLevels =
-        candidateLevels;
-
-      bestEconomics =
-        candidateEconomics;
-
-      high =
-        mid;
+      bestScale = mid;
+      bestLevels = candidateLevels;
+      bestEconomics = candidateEconomics;
+      high = mid;
     } else {
-      low =
-        mid;
+      low = mid;
     }
   }
 
   return {
     ok: true,
-    levels:
-      bestLevels,
-    economics:
-      bestEconomics,
-    targetScale:
-      bestScale,
-    adjusted:
-      bestScale > 1.0001,
+    levels: bestLevels,
+    economics: bestEconomics,
+    targetScale: bestScale,
+    adjusted: bestScale > 1.0001,
     originalEconomics
   };
 }
@@ -2312,6 +2467,28 @@ export function maybeOpenPaperPosition(signal) {
   }
 
   const cfg = paperConfig();
+
+  const strategy =
+    strategyDecision(
+      signal,
+      cfg
+    );
+
+  if (
+    strategy.profile ===
+    'BLOCKED_HIGH_ACCURACY'
+  ) {
+    return {
+      opened: false,
+      reason:
+        'HIGH ACCURACY bloqueado: ' +
+        strategy.assessment.reasons.join(' · ')
+    };
+  }
+
+  const strategyProfile =
+    strategy.profile;
+
   const rawEntry =
     Number(signal.entry);
 
@@ -2333,11 +2510,56 @@ export function maybeOpenPaperPosition(signal) {
         true
       );
 
-    const originalLevels =
+    let originalLevels =
       validateLevels(
         signal,
         entryFill
       );
+
+    if (
+      strategyProfile ===
+      'HIGH_ACCURACY'
+    ) {
+      const ha =
+        highAccuracyTargets({
+          side:
+            signal.side,
+          entry:
+            entryFill,
+          stop:
+            originalLevels.stop,
+          tp1R:
+            cfg.highAccuracyTp1R,
+          tp2R:
+            cfg.highAccuracyTp2R,
+          tp3R:
+            cfg.highAccuracyTp3R
+        });
+
+      if (!ha) {
+        return {
+          opened: false,
+          reason:
+            'HIGH ACCURACY: níveis inválidos'
+        };
+      }
+
+      originalLevels =
+        validateLevels(
+          {
+            ...signal,
+            stop:
+              ha.stop,
+            tp1:
+              ha.tp1,
+            tp2:
+              ha.tp2,
+            tp3:
+              ha.tp3
+          },
+          entryFill
+        );
+    }
 
     const netPlan =
       prepareNetRRPlan({
@@ -2345,7 +2567,8 @@ export function maybeOpenPaperPosition(signal) {
           signal.side,
         entryFill,
         levels:
-          originalLevels
+          originalLevels,
+        strategyProfile
       });
 
     if (!netPlan.ok) {
@@ -2376,7 +2599,13 @@ export function maybeOpenPaperPosition(signal) {
       effectiveRiskStatus();
 
     const effectiveRiskPct =
-      riskStatus.riskPct;
+      strategyProfile ===
+        'HIGH_ACCURACY'
+        ? Math.min(
+            riskStatus.riskPct,
+            cfg.highAccuracyRiskPct
+          )
+        : riskStatus.riskPct;
 
     const riskBudget =
       Math.max(
@@ -2394,7 +2623,8 @@ export function maybeOpenPaperPosition(signal) {
           signal.side,
         entryFill,
         ...levels,
-        qty: 1
+        qty: 1,
+        strategyProfile
       });
 
     const netRiskPerUnit =
@@ -2489,6 +2719,32 @@ export function maybeOpenPaperPosition(signal) {
         Number(signal.ai?.confidence || 0),
       tradeStyle:
         signal.tradeStyle || 'SCALP_5M',
+      strategyProfile,
+      highAccuracyQualified:
+        Boolean(
+          strategy.assessment?.eligible
+        ),
+      highAccuracySetup:
+        strategy.assessment?.setup || null,
+      highAccuracyQualification:
+        strategy.assessment?.eligible
+          ? 'ELITE'
+          : (
+            strategy.assessment?.reasons?.join(' · ') ||
+            null
+          ),
+      tp1ClosePct:
+        strategyProfile === 'HIGH_ACCURACY'
+          ? cfg.highAccuracyTp1ClosePct
+          : 30,
+      tp2ClosePct:
+        strategyProfile === 'HIGH_ACCURACY'
+          ? cfg.highAccuracyTp2ClosePct
+          : 30,
+      runnerEnabled:
+        strategyProfile === 'HIGH_ACCURACY'
+          ? false
+          : cfg.trailingRunnerEnabled,
 
       smartStopMode:
         signal.stopMode || null,
@@ -2681,7 +2937,9 @@ export function maybeOpenPaperPosition(signal) {
         tp3:
           position.tp3,
         qty:
-          position.initialQty
+          position.initialQty,
+        strategyProfile:
+          position.strategyProfile
       });
 
     position.projectedStopNetUsdc =
@@ -2725,6 +2983,7 @@ export function maybeOpenPaperPosition(signal) {
         `<b>${signal.symbol} ${signal.side}</b>\n` +
         `⭐ Score ${position.score} · 🤖 IA ${Math.round(position.aiConfidence)}%\n` +
         `🧭 Entrada: ${position.setupEntryMode || 'PULLBACK'}\n` +
+        `🎯 Perfil: ${position.strategyProfile}${position.strategyProfile === 'HIGH_ACCURACY' ? ' · HIGH ACCURACY LAB' : ' · RUNNER'}\n` +
         `💰 Entrada simulada: ${round(entryFill)}\n` +
         `🛑 Stop: ${round(position.stopCurrent)}\n` +
         `${position.smartStopMode ? `🧠 Smart Stop: ${position.smartStopMode}` +
@@ -2735,9 +2994,10 @@ export function maybeOpenPaperPosition(signal) {
         `📦 Notional: ${notional.toFixed(2)} USDC · Margem: ${margin.toFixed(2)} USDC · ${cfg.leverage}x\n` +
         `🛑 Risco líquido projetado no STOP: -${position.projectedStopLossUsdc.toFixed(3)} USDC\n` +
         `🏆 Lucro líquido projetado TP ladder: +${position.projectedFullTpNetUsdc.toFixed(3)} USDC\n` +
-        `⚖️ R/R líquido projetado: ${Number(position.projectedNetRR).toFixed(2)} · mínimo ${cfg.minNetRR.toFixed(2)}\n` +
-        `${cfg.trailingRunnerEnabled ? `🪜 Stop Gain: TP1→BE líquido · TP2→TP1 · TP3→TP2 · depois runner sobe por degraus\n` : ''}` +
-        `${cfg.trailingRunnerEnabled ? `🏃 Saídas: 30% / 30% / ${cfg.tp3ClosePct.toFixed(0)}% · runner ${Math.max(0, 40 - cfg.tp3ClosePct).toFixed(0)}%\n` : ''}` +
+        `⚖️ R/R líquido projetado: ${Number(position.projectedNetRR).toFixed(2)} · mínimo ${position.strategyProfile === 'HIGH_ACCURACY' ? cfg.highAccuracyMinNetRR.toFixed(2) : cfg.minNetRR.toFixed(2)}\n` +
+        `${position.strategyProfile === 'HIGH_ACCURACY' ? `⚡ Saída HA: ${position.tp1ClosePct.toFixed(0)}% em ${cfg.highAccuracyTp1R.toFixed(2)}R · ${position.tp2ClosePct.toFixed(0)}% em ${cfg.highAccuracyTp2R.toFixed(2)}R · restante em ${cfg.highAccuracyTp3R.toFixed(2)}R · SEM runner\n` : ''}` +
+        `${position.strategyProfile !== 'HIGH_ACCURACY' && cfg.trailingRunnerEnabled ? `🪜 Stop Gain: TP1→BE líquido · TP2→TP1 · TP3→TP2 · depois runner sobe por degraus\n` : ''}` +
+        `${position.strategyProfile !== 'HIGH_ACCURACY' && cfg.trailingRunnerEnabled ? `🏃 Saídas: 30% / 30% / ${cfg.tp3ClosePct.toFixed(0)}% · runner ${Math.max(0, 40 - cfg.tp3ClosePct).toFixed(0)}%\n` : ''}` +
         `🌦 Regime: ${position.setupMarketRegime || 'UNKNOWN'} · trigger ${position.setupPullbackTriggerQuality || 0}/5\n` +
         `${position.confirmedEntryUsed ? `✅ Confirmed Entry: 2º candle 5m · ${position.confirmedEntryOriginRegime || 'TREND'}→${position.confirmedEntryConfirmationRegime || '—'} · chase ${position.confirmedEntryChaseAtr.toFixed(2)} ATR · vol ${position.confirmedEntryVolumeRatio.toFixed(2)}x\n` : ''}` +
         `🎚 Teto de risco da banca: ${riskBudget.toFixed(3)} USDC (${effectiveRiskPct.toFixed(2)}%)${riskStatus.throttled ? ' · THROTTLE QUALIDADE' : ''}\n` +
@@ -2903,6 +3163,7 @@ function positionCloseMessage(closed) {
     `${closed.setupOiContextRegime ? `🧭 Setup: ${closed.setupEntryMode || 'PULLBACK'} · ${closed.setupOiContextRegime} · pullback ${closed.setupPullbackConfirmed ? 'SIM' : 'NÃO'}\n` : ''}` +
     `${closed.setupMarketRegime ? `🌦 Regime: ${closed.setupMarketRegime} · trigger ${Number(closed.setupPullbackTriggerQuality || 0)}/5\n` : ''}` +
     `${closed.confirmedEntryUsed ? `✅ Confirmed Entry: SIM · chase ${Number(closed.confirmedEntryChaseAtr || 0).toFixed(2)} ATR · vol ${Number(closed.confirmedEntryVolumeRatio || 0).toFixed(2)}x\n` : ''}` +
+    `🎯 Perfil: ${closed.strategyProfile || 'RUNNER'}${closed.strategyProfile === 'HIGH_ACCURACY' ? ' · lucro curto / sem runner' : ''}\n` +
     `🏦 Banca: ${state.balance.toFixed(2)} USDC`
   );
 }
@@ -4221,7 +4482,12 @@ function updateOnePosition(position, snap) {
     hitLevel(position, high, low, position.tp1)
   ) {
     const qty =
-      position.initialQty * 0.30;
+      position.initialQty *
+      Number(
+        position.tp1ClosePct ||
+        30
+      ) /
+      100;
 
     const leg =
       closeQty(
@@ -4263,7 +4529,7 @@ function updateOnePosition(position, snap) {
         partialMessage(
           position,
           leg,
-          'TP1 (30%)'
+          `TP1 (${Number(position.tp1ClosePct || 30).toFixed(0)}%)`
         )
       );
     }
@@ -4282,7 +4548,12 @@ function updateOnePosition(position, snap) {
     hitLevel(position, high, low, position.tp2)
   ) {
     const qty =
-      position.initialQty * 0.30;
+      position.initialQty *
+      Number(
+        position.tp2ClosePct ||
+        30
+      ) /
+      100;
 
     const leg =
       closeQty(
@@ -4323,7 +4594,7 @@ function updateOnePosition(position, snap) {
         partialMessage(
           position,
           leg,
-          'TP2 (30%)'
+          `TP2 (${Number(position.tp2ClosePct || 30).toFixed(0)}%)`
         )
       );
     }
@@ -4343,7 +4614,8 @@ function updateOnePosition(position, snap) {
       paperConfig();
 
     if (
-      cfgNow.trailingRunnerEnabled
+      cfgNow.trailingRunnerEnabled &&
+      position.runnerEnabled !== false
     ) {
       const qty =
         position.initialQty *
@@ -5141,6 +5413,34 @@ export function paperPerformanceText() {
         .slice(0, 20)
     );
 
+  const highAccuracyMetrics =
+    tradeMetrics(
+      state.closedTrades
+        .filter(
+          t =>
+            String(
+              t?.strategyProfile ||
+              'RUNNER'
+            ).toUpperCase() ===
+            'HIGH_ACCURACY'
+        )
+        .slice(0, 40)
+    );
+
+  const runnerProfileMetrics =
+    tradeMetrics(
+      state.closedTrades
+        .filter(
+          t =>
+            String(
+              t?.strategyProfile ||
+              'RUNNER'
+            ).toUpperCase() !==
+            'HIGH_ACCURACY'
+        )
+        .slice(0, 40)
+    );
+
   const lines = [
     '🧠 <b>PERFORMANCE GUARD</b>',
     '',
@@ -5187,6 +5487,16 @@ export function paperPerformanceText() {
           `PF ${fmtPf(x.metrics.profitFactor)} · ${fmtSigned(x.metrics.pnl)} USDC · ` +
           `MFE +${x.metrics.avgMfe.toFixed(2)}R / MAE -${x.metrics.avgMae.toFixed(2)}R`
       ),
+    '',
+    '<b>Perfil de estratégia</b>',
+    `• HIGH ACCURACY: ${highAccuracyMetrics.total} · ` +
+      `${highAccuracyMetrics.wins}W/${highAccuracyMetrics.losses}L · ` +
+      `WR ${highAccuracyMetrics.winRate.toFixed(1)}% · PF ${fmtPf(highAccuracyMetrics.profitFactor)} · ` +
+      `${fmtSigned(highAccuracyMetrics.pnl)} USDC · MFE +${highAccuracyMetrics.avgMfe.toFixed(2)}R / MAE -${highAccuracyMetrics.avgMae.toFixed(2)}R`,
+    `• RUNNER: ${runnerProfileMetrics.total} · ` +
+      `${runnerProfileMetrics.wins}W/${runnerProfileMetrics.losses}L · ` +
+      `WR ${runnerProfileMetrics.winRate.toFixed(1)}% · PF ${fmtPf(runnerProfileMetrics.profitFactor)} · ` +
+      `${fmtSigned(runnerProfileMetrics.pnl)} USDC · MFE +${runnerProfileMetrics.avgMfe.toFixed(2)}R / MAE -${runnerProfileMetrics.avgMae.toFixed(2)}R`,
     '',
     '<b>Confirmação de entrada</b>',
     `• CONFIRMED PULLBACK 2x5m: ${confirmedEntryMetrics.total} · ` +
@@ -5282,7 +5592,7 @@ export function paperStatusText() {
       : null;
 
   return [
-    '⏳ <b>PAPER TRADING — V1.8.2 ADAPTIVE HOLD</b>',
+    '🎯 <b>PAPER TRADING — V1.9.0 HIGH ACCURACY LAB</b>',
     '',
     `Status: ${cfg.enabled ? '✅ ATIVO' : '⛔ DESATIVADO'} · ${state.paused ? '⏸ PAUSADO' : '▶️ RODANDO'}`,
     `💰 Banca inicial: ${state.startingBalance.toFixed(2)} USDC`,
@@ -5300,6 +5610,9 @@ export function paperStatusText() {
     `🧭 Setup Probation: ${cfg.setupProbationEnabled ? 'ATIVO' : 'INATIVO'} · recuperação PF ${cfg.setupRecoveryMinProfitFactor.toFixed(2)}+ / WR ${cfg.setupRecoveryMinWinRatePct.toFixed(0)}%+`,
     `🌦 Regime Filter: PULLBACK só TREND · 4H obrigatório · BREAKOUT priorizado EXPANSION`,
     `✅ Confirmed Entry: Pullback abre somente após o próximo 5m fechar além do candle gatilho`,
+    `🎯 Strategy Profile: ${cfg.strategyProfile} · High Accuracy ${cfg.highAccuracyEnabled ? 'ATIVO' : 'INATIVO'}`,
+    `⚡ HA Elite: PB ${cfg.highAccuracyPullbackMinScore}+ / IA ${cfg.highAccuracyPullbackMinAi}% · BO ${cfg.highAccuracyBreakoutMinScore}+ / IA ${cfg.highAccuracyBreakoutMinAi}%`,
+    `💧 HA risco: ${cfg.highAccuracyRiskPct.toFixed(2)}% · TPs ${cfg.highAccuracyTp1R.toFixed(2)}R/${cfg.highAccuracyTp2R.toFixed(2)}R/${cfg.highAccuracyTp3R.toFixed(2)}R · sem Runner`,
     `🎚 Score Tiers: ${cfg.scoreTierEnabled ? 'ATIVO' : 'INATIVO'} · 68–74 elite · 75–79 estrito · 80+ normal`,
     `📈 Performance Quality: ${cfg.performanceQualityEnabled ? 'ATIVO' : 'INATIVO'} · PF ${cfg.performanceQualityMinPf.toFixed(2)} / payoff ${cfg.performanceQualityMinPayoff.toFixed(2)}`,
     `🔒 Margem usada: ${used.toFixed(2)} USDC`,
@@ -5367,7 +5680,7 @@ export function paperPositionsText() {
 
     lines.push(
       `${p.side === 'LONG' ? '🟢' : '🔴'} <b>${p.symbol} ${p.side}</b> · ` +
-      `${p.runnerActive ? `🏃 RUNNER TP${p.runnerTrailStage || 3}` : `TP estágio ${p.stage}/3`}\n` +
+      `🎯 Perfil ${p.strategyProfile || 'RUNNER'} · ${p.runnerActive ? `🏃 RUNNER TP${p.runnerTrailStage || 3}` : `TP estágio ${p.stage}/3`}\n` +
       `🤖 IA ${Math.round(p.aiConfidence)}% · ⭐ ${p.score}\n` +
       `Entrada ${round(p.entryFill)} · Mark ${round(mark)}\n` +
       `Stop atual ${round(p.stopCurrent)}\n` +

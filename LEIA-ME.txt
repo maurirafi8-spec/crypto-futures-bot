@@ -1,41 +1,97 @@
-CRYPTO FUTURES SCANNER V1.8.2 — ADAPTIVE HOLD
+CRYPTO FUTURES SCANNER V1.9.0 — HIGH ACCURACY LAB
 
-ANTES
-2h abertas -> TIMEOUT -> fecha pela marca.
+REFERÊNCIA
+O histórico exportado do LLM Trading Bot mostrou, no bloco real Mistral:
+285 trades · 247W/38L · win rate 86,7% · PF ~4,06.
 
-AGORA
-2h = CHECKPOINT, não encerramento.
+IMPORTANTE
+O export NÃO revela lógica de entrada, LONG/SHORT, exchange ou IDs de execução.
+Esta versão NÃO clona o Mistral. Ela usa nossos próprios sinais e cria
+um perfil experimental para medir se seleção mais rígida + lucro curto funciona.
 
-Após TP1:
-- timeout por tempo desligado;
-- continua até STOP / STOP GAIN / Runner;
-- TP2, TP3 e Runner também não têm timeout absoluto.
+PAPER_STRATEGY_PROFILE
+AUTO (padrão)
+- setup elite -> HIGH_ACCURACY
+- demais setups válidos -> RUNNER
 
-Sem TP1:
-- não fecha automaticamente em 2h;
-- continua com STOP/TP + Adaptive Stale;
-- hard max de segurança padrão: 6h;
-- ao atingir 6h sem TP1: ADAPTIVE HOLD MAX 6h sem TP1.
+HIGH_ACCURACY
+- força o perfil HA
+- setup que não qualifica é bloqueado
 
-Para desligar até esse hard max:
-PAPER_ADAPTIVE_HOLD_HARD_MAX_HOURS=0
+RUNNER
+- somente estratégia clássica
 
-ENV recomendadas:
-PAPER_ADAPTIVE_HOLD_ENABLED=true
-PAPER_MAX_HOLD_HOURS=2
-PAPER_ADAPTIVE_HOLD_HARD_MAX_HOURS=6
-PAPER_ADAPTIVE_HOLD_NO_TIMEOUT_AFTER_TP1=true
-PAPER_ADAPTIVE_HOLD_NOTIFY_CHECKPOINT=true
+HIGH ACCURACY — PULLBACK
+score >= 84
+IA >= 78%
+volume >= 0,65x
+edge >= 8
+momentum 3/3
+OI confirmado
+BTC não contrário
+anti-chase OK
+4H alinhado
+Exhaustion Guard OK
+TREND
+trigger forte
+CONFIRMED ENTRY 2x5m obrigatório
 
-Adaptive Stale continua:
-- revisão 60m;
-- hard stale 90m para trade que nunca desenvolveu MFE suficiente.
+HIGH ACCURACY — BREAKOUT
+score >= 88
+IA >= 80%
+volume >= 1,10x
+edge >= 10
+momentum 3/3
+OI confirmado
+BTC não contrário
+anti-chase OK
+4H alinhado
+Exhaustion Guard OK
+EXPANSION
+Breakout Strong qualificado
 
-A seção /performance agora separa:
-- CONFIRMED PULLBACK 2x5m
-- BREAKOUT DIRETO
-- LEGADO/OUTROS
+RISCO
+RUNNER -> risco normal, atualmente 0,50%
+HIGH_ACCURACY -> teto 0,35%
 
-Mantido: Confirmed Entry, 4H, Exhaustion Guard, Market Regime, Setup/Side Probation, Smart Stop, Profit Protect, Stop Gain Runner, Adaptive Stale, Net R/R, risco PAPER 0.50%, AI Efficiency, universo líquido, Gemini Rescue e HOLD AI.
+SAÍDA HIGH_ACCURACY
+TP1 0,75R -> fecha 50%
+TP2 1,10R -> fecha 35%
+TP3 1,60R -> fecha 15% restante
+SEM Runner
+Profit Protect continua
+Net R/R mínimo próprio 0,70
+
+SAÍDA RUNNER
+Permanece 30% / 30% / TP3 parcial / Runner / Stop Gain.
+
+PERFORMANCE
+/performance compara:
+HIGH ACCURACY vs RUNNER
+com trades, W/L, WR, PF, PnL, MFE e MAE.
+
+ENVS RECOMENDADAS
+PAPER_STRATEGY_PROFILE=AUTO
+PAPER_HIGH_ACCURACY_ENABLED=true
+PAPER_HIGH_ACCURACY_RISK_PCT=0.35
+PAPER_HIGH_ACCURACY_PULLBACK_MIN_SCORE=84
+PAPER_HIGH_ACCURACY_PULLBACK_MIN_AI=78
+PAPER_HIGH_ACCURACY_BREAKOUT_MIN_SCORE=88
+PAPER_HIGH_ACCURACY_BREAKOUT_MIN_AI=80
+PAPER_HIGH_ACCURACY_PULLBACK_MIN_VOLUME=0.65
+PAPER_HIGH_ACCURACY_BREAKOUT_MIN_VOLUME=1.10
+PAPER_HIGH_ACCURACY_PULLBACK_MIN_EDGE=8
+PAPER_HIGH_ACCURACY_BREAKOUT_MIN_EDGE=10
+PAPER_HIGH_ACCURACY_TP1_R=0.75
+PAPER_HIGH_ACCURACY_TP2_R=1.10
+PAPER_HIGH_ACCURACY_TP3_R=1.60
+PAPER_HIGH_ACCURACY_TP1_CLOSE_PCT=50
+PAPER_HIGH_ACCURACY_TP2_CLOSE_PCT=35
+PAPER_HIGH_ACCURACY_MIN_NET_RR=0.70
+
+Mantido:
+Confirmed Entry, Market Regime, 4H, Exhaustion Guard, Adaptive Hold,
+Smart Stop, Performance Guard, Setup/Side Probation, AI Efficiency,
+Adaptive Stale, Net R/R, Runner clássico, universo líquido e Gemini Rescue.
 
 Paper trading é simulação e não garante resultado real.

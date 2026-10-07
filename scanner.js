@@ -4131,7 +4131,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.8.2: Confirmed Entry mantido + Adaptive Hold; 2h não encerra mais cegamente. ` +
+    `<i>V1.9.0: High Accuracy Lab sobre Confirmed Entry + Adaptive Hold; elite recebe perfil curto, demais Runner. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }
