@@ -458,7 +458,7 @@ const cfg = {
       1,
       Math.min(
         3,
-        Number(process.env.CONFIRMED_ENTRY_MAX_WAIT_BARS || 1)
+        Number(process.env.CONFIRMED_ENTRY_MAX_WAIT_BARS || 2)
       )
     ),
 
@@ -488,6 +488,28 @@ const cfg = {
 
   confirmedEntryNotifyInvalidated:
     String(process.env.CONFIRMED_ENTRY_NOTIFY_INVALIDATED || 'true')
+      .toLowerCase() !== 'false',
+
+  confirmedEntrySmartOiEnabled:
+    String(process.env.CONFIRMED_ENTRY_SMART_OI_ENABLED || 'true')
+      .toLowerCase() !== 'false',
+
+  confirmedEntryAllowSupportiveOi:
+    String(process.env.CONFIRMED_ENTRY_ALLOW_SUPPORTIVE_OI || 'true')
+      .toLowerCase() !== 'false',
+
+  confirmedEntryAllowNeutralOi:
+    String(process.env.CONFIRMED_ENTRY_ALLOW_NEUTRAL_OI || 'true')
+      .toLowerCase() !== 'false',
+
+  confirmedEntryNeutralOiMinVolumeRatio:
+    Math.max(
+      0.55,
+      Number(process.env.CONFIRMED_ENTRY_NEUTRAL_OI_MIN_VOLUME_RATIO || 0.70)
+    ),
+
+  confirmedEntryNeutralOiRequireMacd:
+    String(process.env.CONFIRMED_ENTRY_NEUTRAL_OI_REQUIRE_MACD || 'true')
       .toLowerCase() !== 'false'
 };
 
@@ -545,8 +567,8 @@ const aiWaitWatchlist = new Map();
 // ou expirar / cair em hard reject.
 const technicalWatchlist = new Map();
 
-// V1.8.1: IA aprova o primeiro trigger, mas o PAPER só entra
-// quando o PRÓXIMO candle 5m fechado confirma a continuidade.
+// V1.9.1: IA aprova o primeiro trigger, mas o PAPER só entra
+// após confirmação inteligente em até 2 candles 5m fechados.
 const confirmedEntryManager =
   new ConfirmedEntryManager({
     enabled:
@@ -567,7 +589,17 @@ const confirmedEntryManager =
     require4h: true,
     requireOi: true,
     requireBtc: true,
-    requireExhaustionOk: true
+    requireExhaustionOk: true,
+    smartOiEnabled:
+      cfg.confirmedEntrySmartOiEnabled,
+    allowSupportiveOi:
+      cfg.confirmedEntryAllowSupportiveOi,
+    allowNeutralOi:
+      cfg.confirmedEntryAllowNeutralOi,
+    neutralOiMinVolumeRatio:
+      cfg.confirmedEntryNeutralOiMinVolumeRatio,
+    neutralOiRequireMacd:
+      cfg.confirmedEntryNeutralOiRequireMacd
   });
 
 const universeManager =
@@ -4124,7 +4156,7 @@ async function doScan({
     const directSignals = [];
     const newlyArmedSignals = [];
 
-    // V1.9.0 HIGH ACCURACY LAB:
+    // V1.9.2 QUICK SCALP 10X:
     // Pullback aprovado pela IA NÃO abre imediatamente.
     // Primeiro passa pelo gate PAPER e vira ARMED; a entrada real só acontece
     // se o próximo candle 5m fechado confirmar o rompimento.
@@ -4332,13 +4364,13 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.9.0 HIGH ACCURACY LAB</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.9.2 QUICK SCALP 10X</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o próximo lote agora\n' +
       '/scheduler — ver rotação automática de 1 minuto\n' +
       '/status — ver configuração\n' +
       '/top — mostrar os melhores sinais atuais\n' +
-      '/armed — setups IA aprovados aguardando o 2º candle 5m\n' +
+      '/armed — Smart ARMED: pendentes + conversão + motivos de cancelamento\n' +
       '/ativos — alias de /armed (tracker legado desativado)\n' +
       '/resultados — últimos resultados acompanhados\n' +
       '/ia — últimas decisões do Analista IA\n' +
@@ -4373,7 +4405,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.9.0 HIGH ACCURACY LAB\n` +
+      `✅ Online — V1.9.2 QUICK SCALP 10X\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🛡 Modo: CONFIDENCE GUARD V1.5.9\n` +
       `🤖 APPROVE exige confidence válida; ausente/0% vira WAIT\n` +
@@ -4390,7 +4422,7 @@ async function handleMessage(msg) {
       `🪜 Stop Gain Runner: TP1→BE · TP2→TP1 · TP3→TP2 · TP4+ sobe por degraus\n` +
       `⏳ Adaptive Stale: revisão 60m · 2 checks · 2/3 deteriorações · hard 90m · timeout 2h\n` +
       `🧠 Performance Guard: lado/setup ruim pausa 90m · qualidade geral sobe score/IA\n` +
-      `🎯 V1.9.0: High Accuracy Lab · AUTO escolhe HA elite ou mantém Runner · A/B no /performance\n` +
+      `⚡ V1.9.2: Quick Scalp 10x · $20 margem · $200 notional · alvo +0,08% NET · Smart ARMED mantido\n` +
       `🟠 ARMED: ${confirmedEntryManager.size()} · IA não é chamada novamente enquanto aguarda confirmação\n` +
       `📊 Confirmação: próximo 5m deve fechar além do candle gatilho · vol >= ${cfg.confirmedEntryMinVolumeRatio.toFixed(2)}x · retomada x${cfg.confirmedEntryVolumeResumeMultiplier.toFixed(2)}\n` +
       `🧯 Exaustão: 4H alinhado · distância 1H controlada · sem sequência impulsiva extrema\n` +
@@ -4843,7 +4875,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.9.0-high-accuracy-lab',
+    version: '1.9.2-quick-scalp-10x',
     scanning,
     activeSignals: 0,
     legacyTrackerEnabled: false,
@@ -4900,7 +4932,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.9.0 HIGH ACCURACY LAB pronto ✅');
+console.log('Crypto Futures Scanner V1.9.2 QUICK SCALP 10X pronto ✅');
 
 // Em rolling deploy o processo antigo do Render pode permanecer vivo por
 // alguns segundos. Um pequeno atraso evita duas instâncias consumindo a

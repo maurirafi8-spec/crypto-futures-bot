@@ -20,6 +20,101 @@ function baseOf(symbol) {
     .replace(/PERP.*$/, '');
 }
 
+function oiClassForSide(side, oiContext = null) {
+  const dir = String(side || '').toUpperCase();
+  const regime = String(oiContext?.regime || 'NEUTRAL').toUpperCase();
+
+  if (oiContext?.confirmed === true) {
+    return {
+      level: 'FAVORABLE',
+      regime,
+      reason: 'OI confirmou a direção'
+    };
+  }
+
+  const neutral = new Set([
+    'NEUTRAL',
+    'OI_BUILDUP_NEUTRAL_PRICE',
+    'OI_UNWIND_NEUTRAL_PRICE'
+  ]);
+
+  if (neutral.has(regime)) {
+    return {
+      level: 'NEUTRAL',
+      regime,
+      reason: 'OI sem confirmação, mas também sem oposição direcional clara'
+    };
+  }
+
+  if (dir === 'LONG') {
+    if (regime === 'SHORT_COVERING') {
+      return {
+        level: 'SUPPORTIVE',
+        regime,
+        reason: 'short covering favorece a continuação LONG, embora sem novo OI comprador'
+      };
+    }
+
+    if (
+      regime === 'SHORT_BUILDUP' ||
+      regime === 'LONG_UNWIND'
+    ) {
+      return {
+        level: 'CONTRARY',
+        regime,
+        reason: `${regime} é contrário ao LONG`
+      };
+    }
+  }
+
+  if (dir === 'SHORT') {
+    if (regime === 'LONG_UNWIND') {
+      return {
+        level: 'SUPPORTIVE',
+        regime,
+        reason: 'long unwind favorece a continuação SHORT, embora sem novo OI vendedor'
+      };
+    }
+
+    if (
+      regime === 'LONG_BUILDUP' ||
+      regime === 'SHORT_COVERING'
+    ) {
+      return {
+        level: 'CONTRARY',
+        regime,
+        reason: `${regime} é contrário ao SHORT`
+      };
+    }
+  }
+
+  return {
+    level: 'NEUTRAL',
+    regime,
+    reason: 'OI sem leitura direcional conclusiva'
+  };
+}
+
+function cancellationBucket(code = 'OTHER') {
+  const key = String(code || 'OTHER').toUpperCase();
+  const labels = {
+    OI_CONTRARY: 'OI contrário',
+    NO_CONFIRMATION: 'sem confirmação em 2 candles',
+    EXHAUSTION: 'Trend Exhaustion',
+    REGIME: 'regime',
+    STRUCTURE_4H: '4H',
+    BTC: 'BTC',
+    ANTI_CHASE: 'anti-chase',
+    CHASE: 'chase',
+    EXCURSION: 'excursão contrária',
+    DIRECTION: 'direção virou',
+    EXPIRED: 'janela perdida',
+    LEVELS: 'níveis',
+    OTHER: 'outros'
+  };
+  return labels[key] || labels.OTHER;
+}
+
 function snapshotMatches(armed, snapshot) {
   const armedSymbol = String(armed?.signal?.symbol || '').toUpperCase();
   const armedData = String(armed?.signal?.dataSymbol || '').toUpperCase();
@@ -109,7 +204,7 @@ export class ConfirmedEntryManager {
   constructor({
     enabled = true,
     pullbackOnly = true,
-    maxWaitBars = 1,
+    maxWaitBars = 2,
     minVolumeRatio = 0.55,
     volumeResumeMultiplier = 1.05,
     maxChaseAtr = 0.90,
@@ -118,7 +213,12 @@ export class ConfirmedEntryManager {
     require4h = true,
     requireOi = true,
     requireBtc = true,
-    requireExhaustionOk = true
+    requireExhaustionOk = true,
+    smartOiEnabled = true,
+    allowSupportiveOi = true,
+    allowNeutralOi = true,
+    neutralOiMinVolumeRatio = 0.70,
+    neutralOiRequireMacd = true
   } = {}) {
     this.enabled = enabled;
     this.pullbackOnly = pullbackOnly;
@@ -132,8 +232,23 @@ export class ConfirmedEntryManager {
     this.requireOi = Boolean(requireOi);
     this.requireBtc = Boolean(requireBtc);
     this.requireExhaustionOk = Boolean(requireExhaustionOk);
+    this.smartOiEnabled = Boolean(smartOiEnabled);
+    this.allowSupportiveOi = Boolean(allowSupportiveOi);
+    this.allowNeutralOi = Boolean(allowNeutralOi);
+    this.neutralOiMinVolumeRatio = Math.max(
+      this.minVolumeRatio,
+      Number(neutralOiMinVolumeRatio || 0.70)
+    );
+    this.neutralOiRequireMacd = Boolean(neutralOiRequireMacd);
     this.armed = new Map();
     this.lastResolvedBar = new Map();
+    this.stats = {
+      armedCreated: 0,
+      confirmed: 0,
+      canceled: 0,
+      extended: 0,
+      cancelReasons: {}
+    };
   }
 
   shouldArm(signal) {
@@ -215,6 +330,38 @@ export class ConfirmedEntryManager {
   clear() {
     this.armed.clear();
     this.lastResolvedBar.clear();
+    this.stats = {
+      armedCreated: 0,
+      confirmed: 0,
+      canceled: 0,
+      extended: 0,
+      cancelReasons: {}
+    };
+  }
+
+  recordCancel(code = 'OTHER') {
+    const bucket = cancellationBucket(code);
+    this.stats.canceled += 1;
+    this.stats.cancelReasons[bucket] =
+      Number(this.stats.cancelReasons[bucket] || 0) + 1;
+  }
+
+  statsSnapshot() {
+    const created = Number(this.stats.armedCreated || 0);
+    const confirmed = Number(this.stats.confirmed || 0);
+    const canceled = Number(this.stats.canceled || 0);
+    const resolved = confirmed + canceled;
+
+    return {
+      ...this.stats,
+      created,
+      resolved,
+      conversionPct:
+        resolved > 0
+          ? confirmed / resolved * 100
+          : 0,
+      pending: this.armed.size
+    };
   }
 
   arm(signal) {
@@ -317,10 +464,14 @@ export class ConfirmedEntryManager {
         finiteNumber(signal?.ai?.confidence, 0),
       score:
         finiteNumber(signal?.score, 0),
+      barsObserved: 0,
+      lastWaitReason: null,
+      lastOiClass: null,
       status: 'ARMED'
     };
 
     this.armed.set(key, item);
+    this.stats.armedCreated += 1;
 
     return {
       armed: true,
@@ -341,21 +492,45 @@ export class ConfirmedEntryManager {
       `🌦 Regime ${s?.marketRegime?.regime || '—'} · trigger ${Number(s?.pullback?.triggerQuality || 0)}/5\n` +
       `🧱 Candle gatilho: ${side === 'LONG' ? 'romper/fechar acima de' : 'romper/fechar abaixo de'} ` +
       `${side === 'LONG' ? item.triggerHigh : item.triggerLow}\n` +
-      `⏳ Aguarda o próximo candle 5m FECHADO. Nenhuma nova chamada de IA será feita enquanto estiver ARMED.`
+      `⏳ Janela inteligente: até ${this.maxWaitBars} candles 5m FECHADOS para confirmar. ` +
+      `OI neutro/suporte não cancela sozinho; OI realmente contrário cancela. ` +
+      `Nenhuma nova chamada de IA enquanto estiver ARMED.`
     );
   }
 
   statusText() {
+    const stats = this.statsSnapshot();
+    const reasonEntries = Object.entries(
+      stats.cancelReasons || {}
+    ).sort((a, b) => b[1] - a[1]);
+
+    const statsLines = [
+      `📊 Desde o deploy: ${stats.created} ARMED · ${stats.confirmed} confirmados · ${stats.canceled} cancelados · ${stats.pending} aguardando`,
+      `🎯 Conversão resolvida ARMED→TRADE: ${stats.conversionPct.toFixed(1)}% · extensões para 2º candle: ${Number(stats.extended || 0)}`
+    ];
+
+    if (reasonEntries.length) {
+      statsLines.push(
+        `🧾 Cancelamentos: ` +
+        reasonEntries
+          .slice(0, 6)
+          .map(([name, count]) => `${name} ${count}`)
+          .join(' · ')
+      );
+    }
+
     if (!this.armed.size) {
       return (
-        '🟠 <b>CONFIRMED ENTRY — ARMED</b>\n' +
-        'Nenhum setup aguardando o segundo candle agora.'
+        '🟠 <b>CONFIRMED ENTRY — SMART ARMED</b>\n' +
+        `Nenhum setup aguardando confirmação agora.\n` +
+        statsLines.join('\n')
       );
     }
 
     const lines = [
-      `🟠 <b>CONFIRMED ENTRY — ARMED</b> · ${this.armed.size}`,
-      '<i>IA já aprovada. Agora só falta o próximo candle 5m confirmar o rompimento.</i>',
+      `🟠 <b>CONFIRMED ENTRY — SMART ARMED</b> · ${this.armed.size}`,
+      `<i>IA já aprovada. A janela agora aceita até ${this.maxWaitBars} candles 5m sem repetir IA.</i>`,
+      ...statsLines,
       ''
     ];
 
@@ -364,7 +539,10 @@ export class ConfirmedEntryManager {
       const side = String(s?.side || '').toUpperCase();
       lines.push(
         `• ${s.symbol} ${side} · score ${Math.round(item.score)} · IA ${Math.round(item.aiConfidence)}% · ` +
-        `${side === 'LONG' ? '>' : '<'} ${side === 'LONG' ? item.triggerHigh : item.triggerLow}`
+        `${side === 'LONG' ? '>' : '<'} ${side === 'LONG' ? item.triggerHigh : item.triggerLow} · ` +
+        `barra ${Math.min(this.maxWaitBars, Number(item.barsObserved || 0) + 1)}/${this.maxWaitBars}` +
+        `${item.lastOiClass ? ` · OI ${item.lastOiClass}` : ''}` +
+        `${item.lastWaitReason ? ` · ${item.lastWaitReason}` : ''}`
       );
     }
 
@@ -411,10 +589,11 @@ export class ConfirmedEntryManager {
           key,
           currentBarTime
         );
+        this.recordCancel('EXPIRED');
         invalidated.push({
           item,
           reason:
-            'o scanner perdeu a janela do próximo candle 5m; setup expirado'
+            `o scanner perdeu a janela de ${this.maxWaitBars} candles 5m; setup expirado`
         });
         continue;
       }
@@ -431,12 +610,13 @@ export class ConfirmedEntryManager {
         close > 0 ? close * 0.001 : 0
       );
 
-      const invalidate = reason => {
+      const invalidate = (reason, code = 'OTHER') => {
         this.armed.delete(key);
         this.lastResolvedBar.set(
           key,
           currentBarTime
         );
+        this.recordCancel(code);
         invalidated.push({
           item,
           snapshot: snap,
@@ -444,11 +624,42 @@ export class ConfirmedEntryManager {
         });
       };
 
+      const barNumber =
+        Math.max(
+          1,
+          Math.round(
+            (
+              currentBarTime -
+              item.triggerBarTime
+            ) /
+            M5_MS
+          )
+        );
+
+      item.barsObserved =
+        Math.max(
+          Number(item.barsObserved || 0),
+          barNumber
+        );
+
+      const lastAllowedBar =
+        currentBarTime >=
+        item.expiresAfterBarTime;
+
+      const softWait = reason => {
+        item.lastWaitReason = reason;
+        if (!item.extendedOnce) {
+          item.extendedOnce = true;
+          this.stats.extended += 1;
+        }
+        waiting.push(item);
+      };
+
       if (
         currentSide &&
         currentSide !== side
       ) {
-        invalidate(`direção técnica virou para ${currentSide}`);
+        invalidate(`direção técnica virou para ${currentSide}`, 'DIRECTION');
         continue;
       }
 
@@ -467,7 +678,7 @@ export class ConfirmedEntryManager {
           confirmationRegime
         )
       ) {
-        invalidate(`regime saiu de TREND/EXPANSION para ${snap?.marketRegime?.regime || 'UNKNOWN'}`);
+        invalidate(`regime saiu de TREND/EXPANSION para ${snap?.marketRegime?.regime || 'UNKNOWN'}`, 'REGIME');
         continue;
       }
 
@@ -475,7 +686,7 @@ export class ConfirmedEntryManager {
         this.require4h &&
         snap?.marketRegime?.aligned4h !== true
       ) {
-        invalidate('4H deixou de confirmar a direção');
+        invalidate('4H deixou de confirmar a direção', 'STRUCTURE_4H');
         continue;
       }
 
@@ -483,28 +694,81 @@ export class ConfirmedEntryManager {
         this.requireExhaustionOk &&
         snap?.trendExhaustion?.ok === false
       ) {
-        invalidate(`Trend Exhaustion Guard: ${snap?.trendExhaustion?.reason || 'tendência esticada'}`);
+        invalidate(`Trend Exhaustion Guard: ${snap?.trendExhaustion?.reason || 'tendência esticada'}`, 'EXHAUSTION');
+        continue;
+      }
+
+      const oiClass =
+        oiClassForSide(
+          side,
+          snap?.oiContext
+        );
+
+      item.lastOiClass =
+        oiClass.level;
+
+      if (
+        this.requireOi &&
+        !this.smartOiEnabled &&
+        snap?.oiContext?.confirmed === false
+      ) {
+        invalidate(
+          `OI contextual perdeu confirmação (${snap?.oiContext?.regime || 'neutro'})`,
+          'OI_CONTRARY'
+        );
         continue;
       }
 
       if (
         this.requireOi &&
-        snap?.oiContext?.confirmed === false
+        this.smartOiEnabled
       ) {
-        invalidate(`OI contextual perdeu confirmação (${snap?.oiContext?.regime || 'neutro'})`);
-        continue;
+        if (
+          oiClass.level ===
+          'CONTRARY'
+        ) {
+          invalidate(
+            `OI realmente contrário ao ${side}: ${oiClass.regime}`,
+            'OI_CONTRARY'
+          );
+          continue;
+        }
+
+        if (
+          oiClass.level ===
+            'SUPPORTIVE' &&
+          !this.allowSupportiveOi
+        ) {
+          invalidate(
+            `OI de suporte não permitido (${oiClass.regime})`,
+            'OI_CONTRARY'
+          );
+          continue;
+        }
+
+        if (
+          oiClass.level ===
+            'NEUTRAL' &&
+          !this.allowNeutralOi
+        ) {
+          invalidate(
+            `OI neutro não permitido (${oiClass.regime})`,
+            'OI_CONTRARY'
+          );
+          continue;
+        }
       }
 
       if (
         this.requireBtc &&
         snap?.btcRegime?.ok === false
       ) {
-        invalidate('regime BTC ficou contrário');
+        invalidate('regime BTC ficou contrário', 'BTC');
         continue;
       }
 
       if (snap?.antiChase?.ok === false) {
-        invalidate(`anti-chase bloqueou: ${snap?.antiChase?.reason || 'movimento esticado'}`);
+        invalidate(`anti-chase bloqueou: ${snap?.antiChase?.reason || 'movimento esticado'}`, 'ANTI_CHASE');
         continue;
       }
 
@@ -514,7 +778,7 @@ export class ConfirmedEntryManager {
           : 99;
 
       if (chaseAtr > this.maxChaseAtr) {
-        invalidate(`confirmação chegou esticada (${chaseAtr.toFixed(2)} ATR do trigger)`);
+        invalidate(`confirmação chegou esticada (${chaseAtr.toFixed(2)} ATR do trigger)`, 'CHASE');
         continue;
       }
 
@@ -527,7 +791,7 @@ export class ConfirmedEntryManager {
         oppositeExcursionAtr >
         this.maxOppositeExcursionAtr
       ) {
-        invalidate(`candle confirmou depois de excursionar ${oppositeExcursionAtr.toFixed(2)} ATR contra o setup`);
+        invalidate(`candle confirmou depois de excursionar ${oppositeExcursionAtr.toFixed(2)} ATR contra o setup`, 'EXCURSION');
         continue;
       }
 
@@ -555,28 +819,72 @@ export class ConfirmedEntryManager {
       const volumeFloorOk =
         volumeRatio >= this.minVolumeRatio;
 
-      if (!breakoutConfirmed) {
-        invalidate(
+      const macdAligned =
+        snap?.momentum?.macdOk === true ||
+        (
           side === 'LONG'
-            ? `próximo 5m fechou em ${close}, sem fechar acima da máxima gatilho ${item.triggerHigh}`
-            : `próximo 5m fechou em ${close}, sem fechar abaixo da mínima gatilho ${item.triggerLow}`
+            ? finiteNumber(snap?.t5?.macdHist, 0) > 0
+            : finiteNumber(snap?.t5?.macdHist, 0) < 0
         );
-        continue;
+
+      const neutralOiStrongEnough =
+        oiClass.level !== 'NEUTRAL' ||
+        (
+          volumeRatio >=
+            this.neutralOiMinVolumeRatio &&
+          (
+            !this.neutralOiRequireMacd ||
+            macdAligned
+          )
+        );
+
+      const confirmationFailures = [];
+
+      if (!breakoutConfirmed) {
+        confirmationFailures.push(
+          side === 'LONG'
+            ? `fechou ${close} sem superar ${item.triggerHigh}`
+            : `fechou ${close} sem perder ${item.triggerLow}`
+        );
       }
 
       if (!directionalClose) {
-        invalidate('rompimento sem fechamento direcional');
-        continue;
+        confirmationFailures.push(
+          'fechamento não direcional'
+        );
       }
 
       if (!volumeFloorOk) {
-        invalidate(`rompimento sem retomada mínima de volume (${volumeRatio.toFixed(2)}x abaixo de ${this.minVolumeRatio.toFixed(2)}x)`);
-        continue;
+        confirmationFailures.push(
+          `volume ${volumeRatio.toFixed(2)}x < ${this.minVolumeRatio.toFixed(2)}x`
+        );
       }
 
       if (!volumeVsPullbackOk) {
+        confirmationFailures.push(
+          `volume não retomou ${this.volumeResumeMultiplier.toFixed(2)}x sobre o pullback`
+        );
+      }
+
+      if (!neutralOiStrongEnough) {
+        confirmationFailures.push(
+          `OI ${oiClass.regime} exige volume >= ${this.neutralOiMinVolumeRatio.toFixed(2)}x` +
+          `${this.neutralOiRequireMacd ? ' + MACD alinhado' : ''}`
+        );
+      }
+
+      if (confirmationFailures.length) {
+        if (!lastAllowedBar) {
+          softWait(
+            `1º candle não confirmou: ${confirmationFailures.join(' · ')}; aguarda o 2º`
+          );
+          continue;
+        }
+
         invalidate(
-          `volume da confirmação não superou o pullback em ${this.volumeResumeMultiplier.toFixed(2)}x`
+          `janela de ${this.maxWaitBars} candles terminou sem confirmação: ` +
+          confirmationFailures.join(' · '),
+          'NO_CONFIRMATION'
         );
         continue;
       }
@@ -584,7 +892,7 @@ export class ConfirmedEntryManager {
       const levels = confirmationLevels(snap, item);
 
       if (!levels) {
-        invalidate('níveis de stop/TP ficaram incoerentes após a confirmação');
+        invalidate('níveis de stop/TP ficaram incoerentes após a confirmação', 'LEVELS');
         continue;
       }
 
@@ -627,6 +935,16 @@ export class ConfirmedEntryManager {
         },
         confirmedEntry: {
           armedAt: item.armedAt,
+          smartOiClass:
+            oiClass.level === 'NEUTRAL'
+              ? 'NEUTRAL_STRONG'
+              : oiClass.level,
+          smartOiRegime:
+            oiClass.regime,
+          smartOiAccepted:
+            oiClass.level !== 'CONTRARY',
+          confirmationBarNumber:
+            barNumber,
           triggerBarTime: item.triggerBarTime,
           confirmationBarTime: currentBarTime,
           triggerHigh: item.triggerHigh,
@@ -653,15 +971,17 @@ export class ConfirmedEntryManager {
         currentBarTime
       );
 
+      this.stats.confirmed += 1;
+
       confirmed.push({
         item,
         snapshot: snap,
         signal: confirmedSignal,
         message:
           `✅ <b>CONFIRMED ENTRY — ${confirmedSignal.symbol} ${side}</b>\n` +
-          `Segundo candle 5m confirmou o setup.\n` +
+          `Candle ${barNumber}/${this.maxWaitBars} confirmou o setup.\n` +
           `${side === 'LONG' ? 'Fechou acima da máxima gatilho' : 'Fechou abaixo da mínima gatilho'}: ${close}\n` +
-          `📊 Volume ${volumeRatio.toFixed(2)}x · chase ${chaseAtr.toFixed(2)} ATR\n` +
+          `📊 Volume ${volumeRatio.toFixed(2)}x · chase ${chaseAtr.toFixed(2)} ATR · OI ${oiClass.level} (${oiClass.regime})\n` +
           `🤖 IA reaproveitada: ${Math.round(item.aiConfidence)}% · sem nova chamada.`
       });
     }

@@ -1,97 +1,48 @@
-CRYPTO FUTURES SCANNER V1.9.0 — HIGH ACCURACY LAB
+CRYPTO FUTURES SCANNER V1.9.2 — QUICK SCALP 10X
 
-REFERÊNCIA
-O histórico exportado do LLM Trading Bot mostrou, no bloco real Mistral:
-285 trades · 247W/38L · win rate 86,7% · PF ~4,06.
+SETUP PADRÃO
+Margem fixa: 20 USDC
+Alavancagem: 10x
+Notional: 200 USDC
+
+ALVO
++0,08% LÍQUIDO do notional.
+Em 200 USDC = +0,16 USDC líquido.
+Sobre a margem de 20 USDC = +0,80% líquido.
 
 IMPORTANTE
-O export NÃO revela lógica de entrada, LONG/SHORT, exchange ou IDs de execução.
-Esta versão NÃO clona o Mistral. Ela usa nossos próprios sinais e cria
-um perfil experimental para medir se seleção mais rígida + lucro curto funciona.
+Não usamos simplesmente +0,08% de movimento do preço.
+Com fee padrão de 0,045% por execução e slippage de 5 bps,
++0,08% de movimento pode continuar negativo após custos.
+O bot calcula o preço de saída necessário para sobrar +0,08% NET.
 
-PAPER_STRATEGY_PROFILE
-AUTO (padrão)
-- setup elite -> HIGH_ACCURACY
-- demais setups válidos -> RUNNER
+STOP DE SEGURANÇA
+-0,35% líquido do notional.
+Em 200 USDC = -0,70 USDC.
+Sobre a margem = -3,50%.
 
-HIGH_ACCURACY
-- força o perfil HA
-- setup que não qualifica é bloqueado
+TIME EXIT
+30 minutos. Se o scalp não resolver até lá, encerra pela marca.
 
-RUNNER
-- somente estratégia clássica
+SINAL
+Mantidos:
+Smart ARMED de até 2 candles
+OI contextual inteligente
+Confirmed Entry
+Trend Exhaustion Guard
+Market Regime
+4H
+BTC Filter
+Anti-chase
+High Accuracy Lab
+Performance Guard
 
-HIGH ACCURACY — PULLBACK
-score >= 84
-IA >= 78%
-volume >= 0,65x
-edge >= 8
-momentum 3/3
-OI confirmado
-BTC não contrário
-anti-chase OK
-4H alinhado
-Exhaustion Guard OK
-TREND
-trigger forte
-CONFIRMED ENTRY 2x5m obrigatório
+ENVS
+PAPER_QUICK_SCALP_ENABLED=true
+PAPER_QUICK_SCALP_MARGIN_USDC=20
+PAPER_QUICK_SCALP_LEVERAGE=10
+PAPER_QUICK_SCALP_TARGET_NET_PCT=0.08
+PAPER_QUICK_SCALP_STOP_NET_PCT=0.35
+PAPER_QUICK_SCALP_MAX_MINUTES=30
 
-HIGH ACCURACY — BREAKOUT
-score >= 88
-IA >= 80%
-volume >= 1,10x
-edge >= 10
-momentum 3/3
-OI confirmado
-BTC não contrário
-anti-chase OK
-4H alinhado
-Exhaustion Guard OK
-EXPANSION
-Breakout Strong qualificado
-
-RISCO
-RUNNER -> risco normal, atualmente 0,50%
-HIGH_ACCURACY -> teto 0,35%
-
-SAÍDA HIGH_ACCURACY
-TP1 0,75R -> fecha 50%
-TP2 1,10R -> fecha 35%
-TP3 1,60R -> fecha 15% restante
-SEM Runner
-Profit Protect continua
-Net R/R mínimo próprio 0,70
-
-SAÍDA RUNNER
-Permanece 30% / 30% / TP3 parcial / Runner / Stop Gain.
-
-PERFORMANCE
-/performance compara:
-HIGH ACCURACY vs RUNNER
-com trades, W/L, WR, PF, PnL, MFE e MAE.
-
-ENVS RECOMENDADAS
-PAPER_STRATEGY_PROFILE=AUTO
-PAPER_HIGH_ACCURACY_ENABLED=true
-PAPER_HIGH_ACCURACY_RISK_PCT=0.35
-PAPER_HIGH_ACCURACY_PULLBACK_MIN_SCORE=84
-PAPER_HIGH_ACCURACY_PULLBACK_MIN_AI=78
-PAPER_HIGH_ACCURACY_BREAKOUT_MIN_SCORE=88
-PAPER_HIGH_ACCURACY_BREAKOUT_MIN_AI=80
-PAPER_HIGH_ACCURACY_PULLBACK_MIN_VOLUME=0.65
-PAPER_HIGH_ACCURACY_BREAKOUT_MIN_VOLUME=1.10
-PAPER_HIGH_ACCURACY_PULLBACK_MIN_EDGE=8
-PAPER_HIGH_ACCURACY_BREAKOUT_MIN_EDGE=10
-PAPER_HIGH_ACCURACY_TP1_R=0.75
-PAPER_HIGH_ACCURACY_TP2_R=1.10
-PAPER_HIGH_ACCURACY_TP3_R=1.60
-PAPER_HIGH_ACCURACY_TP1_CLOSE_PCT=50
-PAPER_HIGH_ACCURACY_TP2_CLOSE_PCT=35
-PAPER_HIGH_ACCURACY_MIN_NET_RR=0.70
-
-Mantido:
-Confirmed Entry, Market Regime, 4H, Exhaustion Guard, Adaptive Hold,
-Smart Stop, Performance Guard, Setup/Side Probation, AI Efficiency,
-Adaptive Stale, Net R/R, Runner clássico, universo líquido e Gemini Rescue.
-
-Paper trading é simulação e não garante resultado real.
+PAPER continua sendo simulação. Teste antes de conta real.

@@ -4,6 +4,9 @@ import {
   strategyProfileDecision,
   highAccuracyTargets
 } from './high-accuracy.js';
+import {
+  quickScalpLevels
+} from './quick-scalp.js';
 
 function boolEnv(name, fallback = false) {
   const raw = process.env[name];
@@ -46,6 +49,28 @@ export function paperConfig() {
     leverage:
       intEnv('PAPER_LEVERAGE', 2, 1, 50),
 
+    // V1.9.2 QUICK SCALP 10X
+    quickScalpEnabled:
+      String(process.env.PAPER_QUICK_SCALP_ENABLED || 'true')
+        .toLowerCase() !== 'false',
+
+    quickScalpMarginUsdc:
+      numEnv('PAPER_QUICK_SCALP_MARGIN_USDC', 20, 1, 100000),
+
+    quickScalpLeverage:
+      intEnv('PAPER_QUICK_SCALP_LEVERAGE', 10, 1, 50),
+
+    // 0.08% LÍQUIDO do notional, depois de fee + slippage.
+    quickScalpTargetNetPct:
+      numEnv('PAPER_QUICK_SCALP_TARGET_NET_PCT', 0.08, 0.01, 5),
+
+    // Fail-safe líquido para não deixar um scalp virar swing.
+    quickScalpStopNetPct:
+      numEnv('PAPER_QUICK_SCALP_STOP_NET_PCT', 0.35, 0.05, 10),
+
+    quickScalpMaxMinutes:
+      numEnv('PAPER_QUICK_SCALP_MAX_MINUTES', 30, 5, 240),
+
     maxMarginPct:
       numEnv('PAPER_MAX_MARGIN_PCT', 15, 1, 100),
 
@@ -77,7 +102,7 @@ export function paperConfig() {
     breakoutMinScore:
       numEnv('PAPER_BREAKOUT_MIN_SCORE', 82, 0, 100),
 
-    // V1.9.0 HIGH ACCURACY LAB
+    // V1.9.1 SMART ARMED CONFIRM
     strategyProfile:
       String(process.env.PAPER_STRATEGY_PROFILE || 'AUTO')
         .toUpperCase(),
@@ -1305,20 +1330,44 @@ function lossBrakeStatus() {
 }
 
 
+function signalSmartOiAccepted(
+  signal
+) {
+  return Boolean(
+    signal?.confirmedEntry?.smartOiAccepted
+  );
+}
+
 function signalMomentumCount(
   signal
 ) {
-  return Number(
-    signal?.momentum?.confirmationCount ||
-    0
-  );
+  const base =
+    Number(
+      signal?.momentum?.confirmationCount ||
+      0
+    );
+
+  // Depois de um Confirmed Entry real, preço + volume + MACD podem
+  // substituir a ausência de OI crescente. Não altera o scanner/IA inicial.
+  if (
+    signalSmartOiAccepted(signal) &&
+    signal?.confirmedEntry
+  ) {
+    return Math.max(
+      base,
+      3
+    );
+  }
+
+  return base;
 }
 
 function signalOiConfirmed(
   signal
 ) {
   return Boolean(
-    signal?.oiContext?.confirmed
+    signal?.oiContext?.confirmed ||
+    signalSmartOiAccepted(signal)
   );
 }
 
@@ -2645,24 +2694,45 @@ export function maybeOpenPaperPosition(signal) {
       riskBudget /
       netRiskPerUnit;
 
-    const maxMargin =
-      state.balance *
-      cfg.maxMarginPct / 100;
+    const executionLeverage =
+      cfg.quickScalpEnabled
+        ? cfg.quickScalpLeverage
+        : cfg.leverage;
 
-    const maxNotional =
-      Math.min(
-        maxMargin * cfg.leverage,
-        availableBalance() * cfg.leverage
-      );
+    let notional;
+    let margin;
 
-    const riskNotional =
-      qtyByRisk * entryFill;
+    if (cfg.quickScalpEnabled) {
+      margin =
+        cfg.quickScalpMarginUsdc;
 
-    const notional =
-      Math.min(
-        riskNotional,
-        maxNotional
-      );
+      notional =
+        margin *
+        executionLeverage;
+    } else {
+      const maxMargin =
+        state.balance *
+        cfg.maxMarginPct / 100;
+
+      const maxNotional =
+        Math.min(
+          maxMargin * executionLeverage,
+          availableBalance() * executionLeverage
+        );
+
+      const riskNotional =
+        qtyByRisk * entryFill;
+
+      notional =
+        Math.min(
+          riskNotional,
+          maxNotional
+        );
+
+      margin =
+        notional /
+        executionLeverage;
+    }
 
     if (
       !Number.isFinite(notional) ||
@@ -2678,9 +2748,6 @@ export function maybeOpenPaperPosition(signal) {
 
     const qty =
       notional / entryFill;
-
-    const margin =
-      notional / cfg.leverage;
 
     const entryFee =
       notional * cfg.feeRate;
@@ -2873,9 +2940,19 @@ export function maybeOpenPaperPosition(signal) {
       initialMargin:
         margin,
       leverage:
-        cfg.leverage,
+        executionLeverage,
       riskBudget,
       entryFee,
+      quickScalpEnabled:
+        cfg.quickScalpEnabled,
+      quickScalpMarginUsdc:
+        cfg.quickScalpEnabled ? margin : null,
+      quickScalpTargetNetPct:
+        cfg.quickScalpEnabled ? cfg.quickScalpTargetNetPct : null,
+      quickScalpStopNetPct:
+        cfg.quickScalpEnabled ? cfg.quickScalpStopNetPct : null,
+      quickScalpMaxMinutes:
+        cfg.quickScalpEnabled ? cfg.quickScalpMaxMinutes : null,
 
       // V1.6.5: economia projetada do trade já com custos.
       targetScale:
@@ -2960,6 +3037,52 @@ export function maybeOpenPaperPosition(signal) {
     position.tp1NetProtectable =
       actualEconomics.tp1Protectable;
 
+    if (
+      cfg.quickScalpEnabled
+    ) {
+      const quick =
+        quickScalpLevels({
+          side: position.side,
+          entryFill: position.entryFill,
+          qty: position.initialQty,
+          entryFee: position.entryFee,
+          initialNotional: position.initialNotional,
+          initialMargin: position.initialMargin,
+          targetNetPct: cfg.quickScalpTargetNetPct,
+          stopNetPct: cfg.quickScalpStopNetPct,
+          feeRate: cfg.feeRate,
+          slippageBps: cfg.slippageBps
+        });
+
+      if (!quick) {
+        state.balance += position.entryFee;
+        state.totalFees -= position.entryFee;
+
+        return {
+          opened: false,
+          reason: 'QUICK SCALP: níveis líquidos inválidos'
+        };
+      }
+
+      position.quickScalpTargetReference =
+        quick.targetReference;
+
+      position.quickScalpStopReference =
+        quick.stopReference;
+
+      position.quickScalpTargetNetUsdc =
+        quick.targetNetUsdc;
+
+      position.quickScalpStopNetUsdc =
+        quick.stopNetUsdc;
+
+      position.quickScalpTargetRoiMarginPct =
+        quick.targetRoiMarginPct;
+
+      position.quickScalpStopRoiMarginPct =
+        quick.stopRoiMarginPct;
+    }
+
     state.openPositions.push(position);
     state.seenSignalKeys.push(key);
 
@@ -2991,7 +3114,9 @@ export function maybeOpenPaperPosition(signal) {
           `${Number.isFinite(position.smartStopPct) ? ` · ${position.smartStopPct.toFixed(2)}%` : ''}\n` : ''}` +
         `🎯 TP1 ${round(position.tp1)} · TP2 ${round(position.tp2)} · TP3 ${round(position.tp3)}\n` +
         `${position.targetsAutoAdjusted ? `🧮 TPs autoajustados: x${position.targetScale.toFixed(2)} para respeitar R/R líquido\n` : ''}` +
-        `📦 Notional: ${notional.toFixed(2)} USDC · Margem: ${margin.toFixed(2)} USDC · ${cfg.leverage}x\n` +
+        `📦 Notional: ${notional.toFixed(2)} USDC · Margem: ${margin.toFixed(2)} USDC · ${executionLeverage}x\n` +
+        `${cfg.quickScalpEnabled ? `⚡ QUICK SCALP: +${cfg.quickScalpTargetNetPct.toFixed(2)}% NET do notional = +${position.quickScalpTargetNetUsdc.toFixed(2)} USDC · alvo ${round(position.quickScalpTargetReference)}\n` : ''}` +
+        `${cfg.quickScalpEnabled ? `🛑 Quick stop: -${cfg.quickScalpStopNetPct.toFixed(2)}% NET = ${position.quickScalpStopNetUsdc.toFixed(2)} USDC · stop ${round(position.quickScalpStopReference)} · máx ${cfg.quickScalpMaxMinutes.toFixed(0)}m\n` : ''}` +
         `🛑 Risco líquido projetado no STOP: -${position.projectedStopLossUsdc.toFixed(3)} USDC\n` +
         `🏆 Lucro líquido projetado TP ladder: +${position.projectedFullTpNetUsdc.toFixed(3)} USDC\n` +
         `⚖️ R/R líquido projetado: ${Number(position.projectedNetRR).toFixed(2)} · mínimo ${position.strategyProfile === 'HIGH_ACCURACY' ? cfg.highAccuracyMinNetRR.toFixed(2) : cfg.minNetRR.toFixed(2)}\n` +
@@ -4015,6 +4140,36 @@ function adaptiveHoldCheckpointMessage(
   );
 }
 
+
+function quickScalpTargetTouched(position, high, low) {
+  const x = Number(position.quickScalpTargetReference);
+  if (!Number.isFinite(x) || x <= 0) return false;
+  return position.side === 'LONG' ? high >= x : low <= x;
+}
+
+function quickScalpStopTouched(position, high, low) {
+  const x = Number(position.quickScalpStopReference);
+  if (!Number.isFinite(x) || x <= 0) return false;
+  return position.side === 'LONG' ? low <= x : high >= x;
+}
+
+function quickScalpTargetFirst(position, fastTf) {
+  const target = Number(position.quickScalpTargetReference);
+  const stop = Number(position.quickScalpStopReference);
+  const close = Number(fastTf?.close ?? fastTf?.price);
+
+  if (
+    !Number.isFinite(target) ||
+    !Number.isFinite(stop) ||
+    !Number.isFinite(close)
+  ) return false;
+
+  const mid = (target + stop) / 2;
+  return position.side === 'LONG'
+    ? close >= mid
+    : close <= mid;
+}
+
 function updateOnePosition(position, snap) {
   const cfg = paperConfig();
   const events = [];
@@ -4175,6 +4330,108 @@ function updateOnePosition(position, snap) {
           Number(position.maxAdversePrice || position.entryFill),
           high
         );
+    }
+  }
+
+  // V1.9.2 QUICK SCALP 10X:
+  // fecha 100% ao tocar o preço que entrega +0.08% LÍQUIDO,
+  // já descontando fee + slippage.
+  if (position.quickScalpEnabled) {
+    const targetHit =
+      quickScalpTargetTouched(
+        position,
+        high,
+        low
+      );
+
+    const quickStopHit =
+      quickScalpStopTouched(
+        position,
+        high,
+        low
+      );
+
+    if (targetHit && quickStopHit) {
+      const targetFirst =
+        quickScalpTargetFirst(
+          position,
+          fastTf
+        );
+
+      const result =
+        closeRemainingAt(
+          position,
+          targetFirst
+            ? position.quickScalpTargetReference
+            : position.quickScalpStopReference,
+          targetFirst
+            ? `QUICK SCALP TP +${Number(position.quickScalpTargetNetPct || 0).toFixed(2)}% NET`
+            : `QUICK SCALP STOP -${Number(position.quickScalpStopNetPct || 0).toFixed(2)}% NET`
+        );
+
+      events.push(
+        positionCloseMessage(result.closed)
+      );
+
+      return events;
+    }
+
+    if (targetHit) {
+      const result =
+        closeRemainingAt(
+          position,
+          position.quickScalpTargetReference,
+          `QUICK SCALP TP +${Number(position.quickScalpTargetNetPct || 0).toFixed(2)}% NET`
+        );
+
+      events.push(
+        positionCloseMessage(result.closed)
+      );
+
+      return events;
+    }
+
+    if (quickStopHit) {
+      const result =
+        closeRemainingAt(
+          position,
+          position.quickScalpStopReference,
+          `QUICK SCALP STOP -${Number(position.quickScalpStopNetPct || 0).toFixed(2)}% NET`
+        );
+
+      events.push(
+        positionCloseMessage(result.closed)
+      );
+
+      return events;
+    }
+
+    const ageMin =
+      (
+        Date.now() -
+        position.openedAt
+      ) /
+      60000;
+
+    if (
+      ageMin >=
+      Number(
+        position.quickScalpMaxMinutes ||
+        cfg.quickScalpMaxMinutes
+      )
+    ) {
+      const result =
+        closeRemainingAt(
+          position,
+          mark,
+          `QUICK SCALP TIME EXIT ${Math.round(position.quickScalpMaxMinutes || cfg.quickScalpMaxMinutes)}m`
+        );
+
+      events.push(
+        positionCloseMessage(result.closed)
+      );
+
+      return events;
     }
   }
 
@@ -5592,7 +5849,7 @@ export function paperStatusText() {
       : null;
 
   return [
-    '🎯 <b>PAPER TRADING — V1.9.0 HIGH ACCURACY LAB</b>',
+    '⚡ <b>PAPER TRADING — V1.9.2 QUICK SCALP 10X</b>',
     '',
     `Status: ${cfg.enabled ? '✅ ATIVO' : '⛔ DESATIVADO'} · ${state.paused ? '⏸ PAUSADO' : '▶️ RODANDO'}`,
     `💰 Banca inicial: ${state.startingBalance.toFixed(2)} USDC`,
@@ -5618,7 +5875,9 @@ export function paperStatusText() {
     `🔒 Margem usada: ${used.toFixed(2)} USDC`,
     `💳 Disponível: ${available.toFixed(2)} USDC`,
     `⚖️ Risco por trade: ${currentRisk.riskPct.toFixed(2)}%${currentRisk.throttled ? ` · THROTTLE (config ${cfg.riskPct.toFixed(2)}%)` : ''}`,
-    `⚙️ Alavancagem simulada: ${cfg.leverage}x`,
+    `⚙️ Alavancagem base: ${cfg.leverage}x`,
+    `⚡ Quick Scalp: ${cfg.quickScalpEnabled ? 'ATIVO' : 'INATIVO'} · ${cfg.quickScalpMarginUsdc.toFixed(2)} USDC x ${cfg.quickScalpLeverage} = ${(cfg.quickScalpMarginUsdc * cfg.quickScalpLeverage).toFixed(2)} USDC`,
+    `🎯 Alvo Quick: +${cfg.quickScalpTargetNetPct.toFixed(2)}% NET · stop -${cfg.quickScalpStopNetPct.toFixed(2)}% NET · time exit ${cfg.quickScalpMaxMinutes.toFixed(0)}m`,
     `⚡ Scalp: ${cfg.scalpMode ? 'ATIVO' : 'INATIVO'} · stale adaptativo ${cfg.scalpStaleMin}/${cfg.scalpStaleMaxMin} min`,
     `⏳ Adaptive Hold: ${cfg.adaptiveHoldEnabled ? 'ATIVO' : 'INATIVO'} · checkpoint ${cfg.maxHoldHours.toFixed(1)}h · após TP1 sem timeout · sem TP1 máx ${cfg.adaptiveHoldHardMaxHours > 0 ? `${cfg.adaptiveHoldHardMaxHours.toFixed(1)}h` : 'OFF'}`,
     `⏳ Stale: ${cfg.scalpStaleConsecutiveChecks} checks · ${cfg.scalpStaleDeteriorationCount}/3 deteriorações · MFE ${cfg.scalpStaleMinProgressR.toFixed(2)}R/${cfg.scalpStaleHardProgressR.toFixed(2)}R`,
@@ -5683,7 +5942,8 @@ export function paperPositionsText() {
       `🎯 Perfil ${p.strategyProfile || 'RUNNER'} · ${p.runnerActive ? `🏃 RUNNER TP${p.runnerTrailStage || 3}` : `TP estágio ${p.stage}/3`}\n` +
       `🤖 IA ${Math.round(p.aiConfidence)}% · ⭐ ${p.score}\n` +
       `Entrada ${round(p.entryFill)} · Mark ${round(mark)}\n` +
-      `Stop atual ${round(p.stopCurrent)}\n` +
+      `${p.quickScalpEnabled ? `⚡ Quick alvo ${round(p.quickScalpTargetReference)} · +${Number(p.quickScalpTargetNetUsdc || 0).toFixed(2)} USDC NET\n` : ''}` +
+      `${p.quickScalpEnabled ? `🛑 Quick stop ${round(p.quickScalpStopReference)} · ${Number(p.quickScalpStopNetUsdc || 0).toFixed(2)} USDC NET\n` : `Stop atual ${round(p.stopCurrent)}\n`}` +
       `TP1 ${round(p.tp1)} · TP2 ${round(p.tp2)} · TP3 ${round(p.tp3)}\n` +
       `${p.runnerActive ? `➡️ Próximo TP${(p.runnerTrailStage || 3) + 1}: ${round(p.runnerNextTrigger)}\n` : ''}` +
       `${p.stage === 0 ? `⏳ Stale checks ${Number(p.staleBadChecks || 0)}/${cfg.scalpStaleConsecutiveChecks} · MFE +${Number(p.mfeR || 0).toFixed(2)}R · estrutura ${p.staleLastStructureAligned === false ? 'NÃO ALINHADA' : 'OK'}\n` : ''}` +
