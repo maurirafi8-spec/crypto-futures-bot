@@ -7,6 +7,9 @@ import {
 import {
   quickScalpLevels
 } from './quick-scalp.js';
+import {
+  eliteQuickScalpAssessment
+} from './elite-quick-scalp.js';
 
 function boolEnv(name, fallback = false) {
   const raw = process.env[name];
@@ -49,10 +52,20 @@ export function paperConfig() {
     leverage:
       intEnv('PAPER_LEVERAGE', 2, 1, 50),
 
-    // V1.9.2 QUICK SCALP 10X
+    // V1.9.3 ELITE QUICK SCALP
     quickScalpEnabled:
       String(process.env.PAPER_QUICK_SCALP_ENABLED || 'true')
         .toLowerCase() !== 'false',
+
+    // Se true, só abre PAPER quando o setup passa no filtro ELITE QUICK.
+    quickScalpEliteOnly:
+      String(process.env.PAPER_QUICK_SCALP_ELITE_ONLY || 'true')
+        .toLowerCase() !== 'false',
+
+    // Default false: evita misturar Runner comum com o teste do Quick Elite.
+    quickScalpFallbackRunner:
+      String(process.env.PAPER_QUICK_SCALP_FALLBACK_RUNNER || 'false')
+        .toLowerCase() === 'true',
 
     quickScalpMarginUsdc:
       numEnv('PAPER_QUICK_SCALP_MARGIN_USDC', 20, 1, 100000),
@@ -60,16 +73,47 @@ export function paperConfig() {
     quickScalpLeverage:
       intEnv('PAPER_QUICK_SCALP_LEVERAGE', 10, 1, 50),
 
-    // 0.08% LÍQUIDO do notional, depois de fee + slippage.
+    // Alvo LÍQUIDO sobre o notional, já considerando fee + slippage.
+    // 0.20% de $200 = +$0.40 líquido.
     quickScalpTargetNetPct:
-      numEnv('PAPER_QUICK_SCALP_TARGET_NET_PCT', 0.08, 0.01, 5),
+      numEnv('PAPER_QUICK_SCALP_TARGET_NET_PCT', 0.20, 0.01, 5),
 
-    // Fail-safe líquido para não deixar um scalp virar swing.
+    // 0.35% de $200 = -$0.70 líquido.
     quickScalpStopNetPct:
       numEnv('PAPER_QUICK_SCALP_STOP_NET_PCT', 0.35, 0.05, 10),
 
     quickScalpMaxMinutes:
-      numEnv('PAPER_QUICK_SCALP_MAX_MINUTES', 30, 5, 240),
+      numEnv('PAPER_QUICK_SCALP_MAX_MINUTES', 20, 5, 240),
+
+    // Apenas 1 scalp 10x por vez por padrão.
+    quickScalpMaxOpen:
+      intEnv('PAPER_QUICK_SCALP_MAX_OPEN', 1, 1, 10),
+
+    // PULLBACK ELITE QUICK
+    quickPullbackMinScore:
+      numEnv('PAPER_QUICK_PULLBACK_MIN_SCORE', 88, 68, 100),
+
+    quickPullbackMinAi:
+      numEnv('PAPER_QUICK_PULLBACK_MIN_AI', 82, 0, 100),
+
+    quickPullbackMaxChaseAtr:
+      numEnv('PAPER_QUICK_PULLBACK_MAX_CHASE_ATR', 0.55, 0.1, 2),
+
+    quickPullbackMinConfirmVolume:
+      numEnv('PAPER_QUICK_PULLBACK_MIN_CONFIRM_VOLUME', 0.80, 0.2, 5),
+
+    // BREAKOUT ELITE QUICK
+    quickBreakoutMinScore:
+      numEnv('PAPER_QUICK_BREAKOUT_MIN_SCORE', 90, 68, 100),
+
+    quickBreakoutMinAi:
+      numEnv('PAPER_QUICK_BREAKOUT_MIN_AI', 80, 0, 100),
+
+    quickBreakoutMinVolume:
+      numEnv('PAPER_QUICK_BREAKOUT_MIN_VOLUME', 1.25, 0.2, 5),
+
+    quickBreakoutMinEdge:
+      numEnv('PAPER_QUICK_BREAKOUT_MIN_EDGE', 10, 0, 50),
 
     maxMarginPct:
       numEnv('PAPER_MAX_MARGIN_PCT', 15, 1, 100),
@@ -2503,6 +2547,32 @@ export function paperNetRRPreview(signal) {
   };
 }
 
+
+function eliteQuickOptions(
+  cfg,
+  strategyProfile
+) {
+  return {
+    strategyProfile,
+    pullbackMinScore:
+      cfg.quickPullbackMinScore,
+    pullbackMinAi:
+      cfg.quickPullbackMinAi,
+    pullbackMaxChaseAtr:
+      cfg.quickPullbackMaxChaseAtr,
+    pullbackMinConfirmVolume:
+      cfg.quickPullbackMinConfirmVolume,
+    breakoutMinScore:
+      cfg.quickBreakoutMinScore,
+    breakoutMinAi:
+      cfg.quickBreakoutMinAi,
+    breakoutMinVolume:
+      cfg.quickBreakoutMinVolume,
+    breakoutMinEdge:
+      cfg.quickBreakoutMinEdge
+  };
+}
+
 export function maybeOpenPaperPosition(signal) {
   ensureDay();
 
@@ -2537,6 +2607,55 @@ export function maybeOpenPaperPosition(signal) {
 
   const strategyProfile =
     strategy.profile;
+
+  const quickAssessment =
+    eliteQuickScalpAssessment(
+      signal,
+      eliteQuickOptions(
+        cfg,
+        strategyProfile
+      )
+    );
+
+  const useQuickScalp =
+    cfg.quickScalpEnabled &&
+    quickAssessment.eligible;
+
+  if (
+    cfg.quickScalpEnabled &&
+    cfg.quickScalpEliteOnly &&
+    !useQuickScalp &&
+    !cfg.quickScalpFallbackRunner
+  ) {
+    return {
+      opened: false,
+      reason:
+        'ELITE QUICK bloqueado: ' +
+        (
+          quickAssessment.reasons?.join(' · ') ||
+          'setup não qualificado'
+        )
+    };
+  }
+
+  if (useQuickScalp) {
+    const openQuick =
+      state.openPositions.filter(
+        p =>
+          p.quickScalpEnabled === true
+      ).length;
+
+    if (
+      openQuick >=
+      cfg.quickScalpMaxOpen
+    ) {
+      return {
+        opened: false,
+        reason:
+          `ELITE QUICK: limite ${cfg.quickScalpMaxOpen} posição(ões) 10x simultânea(s)`
+      };
+    }
+  }
 
   const rawEntry =
     Number(signal.entry);
@@ -2695,14 +2814,14 @@ export function maybeOpenPaperPosition(signal) {
       netRiskPerUnit;
 
     const executionLeverage =
-      cfg.quickScalpEnabled
+      useQuickScalp
         ? cfg.quickScalpLeverage
         : cfg.leverage;
 
     let notional;
     let margin;
 
-    if (cfg.quickScalpEnabled) {
+    if (useQuickScalp) {
       margin =
         cfg.quickScalpMarginUsdc;
 
@@ -2944,15 +3063,44 @@ export function maybeOpenPaperPosition(signal) {
       riskBudget,
       entryFee,
       quickScalpEnabled:
-        cfg.quickScalpEnabled,
+        useQuickScalp,
+      quickScalpMode:
+        useQuickScalp
+          ? 'ELITE_QUICK_V1_9_3'
+          : null,
+      quickScalpEliteQualified:
+        Boolean(
+          quickAssessment.eligible
+        ),
+      quickScalpEliteSetup:
+        quickAssessment.setup || null,
+      quickScalpEliteOi:
+        quickAssessment.oiRegime || null,
+      quickScalpEliteChaseAtr:
+        Number(
+          quickAssessment.chaseAtr || 0
+        ),
+      quickScalpEliteVolume:
+        Number(
+          quickAssessment.setup === 'PULLBACK'
+            ? quickAssessment.confirmedVolume || 0
+            : quickAssessment.volume5 || 0
+        ),
+      quickScalpEliteReason:
+        quickAssessment.eligible
+          ? 'ELITE'
+          : (
+            quickAssessment.reasons?.join(' · ') ||
+            null
+          ),
       quickScalpMarginUsdc:
-        cfg.quickScalpEnabled ? margin : null,
+        useQuickScalp ? margin : null,
       quickScalpTargetNetPct:
-        cfg.quickScalpEnabled ? cfg.quickScalpTargetNetPct : null,
+        useQuickScalp ? cfg.quickScalpTargetNetPct : null,
       quickScalpStopNetPct:
-        cfg.quickScalpEnabled ? cfg.quickScalpStopNetPct : null,
+        useQuickScalp ? cfg.quickScalpStopNetPct : null,
       quickScalpMaxMinutes:
-        cfg.quickScalpEnabled ? cfg.quickScalpMaxMinutes : null,
+        useQuickScalp ? cfg.quickScalpMaxMinutes : null,
 
       // V1.6.5: economia projetada do trade já com custos.
       targetScale:
@@ -3038,7 +3186,7 @@ export function maybeOpenPaperPosition(signal) {
       actualEconomics.tp1Protectable;
 
     if (
-      cfg.quickScalpEnabled
+      useQuickScalp
     ) {
       const quick =
         quickScalpLevels({
@@ -3106,23 +3254,25 @@ export function maybeOpenPaperPosition(signal) {
         `<b>${signal.symbol} ${signal.side}</b>\n` +
         `⭐ Score ${position.score} · 🤖 IA ${Math.round(position.aiConfidence)}%\n` +
         `🧭 Entrada: ${position.setupEntryMode || 'PULLBACK'}\n` +
-        `🎯 Perfil: ${position.strategyProfile}${position.strategyProfile === 'HIGH_ACCURACY' ? ' · HIGH ACCURACY LAB' : ' · RUNNER'}\n` +
+        `🎯 Perfil: ${position.quickScalpEnabled ? 'ELITE QUICK SCALP' : position.strategyProfile}${!position.quickScalpEnabled && position.strategyProfile === 'HIGH_ACCURACY' ? ' · HIGH ACCURACY LAB' : !position.quickScalpEnabled ? ' · RUNNER' : ''}\n` +
         `💰 Entrada simulada: ${round(entryFill)}\n` +
-        `🛑 Stop: ${round(position.stopCurrent)}\n` +
-        `${position.smartStopMode ? `🧠 Smart Stop: ${position.smartStopMode}` +
+        `${!position.quickScalpEnabled ? `🛑 Stop: ${round(position.stopCurrent)}\n` : ''}` +
+        `${!position.quickScalpEnabled && position.smartStopMode ? `🧠 Smart Stop: ${position.smartStopMode}` +
           `${Number.isFinite(position.smartStopAtrMultiple) ? ` · ${position.smartStopAtrMultiple.toFixed(2)} ATR` : ''}` +
           `${Number.isFinite(position.smartStopPct) ? ` · ${position.smartStopPct.toFixed(2)}%` : ''}\n` : ''}` +
-        `🎯 TP1 ${round(position.tp1)} · TP2 ${round(position.tp2)} · TP3 ${round(position.tp3)}\n` +
-        `${position.targetsAutoAdjusted ? `🧮 TPs autoajustados: x${position.targetScale.toFixed(2)} para respeitar R/R líquido\n` : ''}` +
+        `${!position.quickScalpEnabled ? `🎯 TP1 ${round(position.tp1)} · TP2 ${round(position.tp2)} · TP3 ${round(position.tp3)}\n` : ''}` +
+        `${!position.quickScalpEnabled && position.targetsAutoAdjusted ? `🧮 TPs autoajustados: x${position.targetScale.toFixed(2)} para respeitar R/R líquido\n` : ''}` +
         `📦 Notional: ${notional.toFixed(2)} USDC · Margem: ${margin.toFixed(2)} USDC · ${executionLeverage}x\n` +
-        `${cfg.quickScalpEnabled ? `⚡ QUICK SCALP: +${cfg.quickScalpTargetNetPct.toFixed(2)}% NET do notional = +${position.quickScalpTargetNetUsdc.toFixed(2)} USDC · alvo ${round(position.quickScalpTargetReference)}\n` : ''}` +
-        `${cfg.quickScalpEnabled ? `🛑 Quick stop: -${cfg.quickScalpStopNetPct.toFixed(2)}% NET = ${position.quickScalpStopNetUsdc.toFixed(2)} USDC · stop ${round(position.quickScalpStopReference)} · máx ${cfg.quickScalpMaxMinutes.toFixed(0)}m\n` : ''}` +
-        `🛑 Risco líquido projetado no STOP: -${position.projectedStopLossUsdc.toFixed(3)} USDC\n` +
-        `🏆 Lucro líquido projetado TP ladder: +${position.projectedFullTpNetUsdc.toFixed(3)} USDC\n` +
-        `⚖️ R/R líquido projetado: ${Number(position.projectedNetRR).toFixed(2)} · mínimo ${position.strategyProfile === 'HIGH_ACCURACY' ? cfg.highAccuracyMinNetRR.toFixed(2) : cfg.minNetRR.toFixed(2)}\n` +
-        `${position.strategyProfile === 'HIGH_ACCURACY' ? `⚡ Saída HA: ${position.tp1ClosePct.toFixed(0)}% em ${cfg.highAccuracyTp1R.toFixed(2)}R · ${position.tp2ClosePct.toFixed(0)}% em ${cfg.highAccuracyTp2R.toFixed(2)}R · restante em ${cfg.highAccuracyTp3R.toFixed(2)}R · SEM runner\n` : ''}` +
-        `${position.strategyProfile !== 'HIGH_ACCURACY' && cfg.trailingRunnerEnabled ? `🪜 Stop Gain: TP1→BE líquido · TP2→TP1 · TP3→TP2 · depois runner sobe por degraus\n` : ''}` +
-        `${position.strategyProfile !== 'HIGH_ACCURACY' && cfg.trailingRunnerEnabled ? `🏃 Saídas: 30% / 30% / ${cfg.tp3ClosePct.toFixed(0)}% · runner ${Math.max(0, 40 - cfg.tp3ClosePct).toFixed(0)}%\n` : ''}` +
+        `${position.quickScalpEnabled ? `⚡ QUICK ELITE: alvo +${cfg.quickScalpTargetNetPct.toFixed(2)}% NET = +${position.quickScalpTargetNetUsdc.toFixed(2)} USDC · preço ${round(position.quickScalpTargetReference)}\n` : ''}` +
+        `${position.quickScalpEnabled ? `🛑 Quick stop: -${cfg.quickScalpStopNetPct.toFixed(2)}% NET = ${position.quickScalpStopNetUsdc.toFixed(2)} USDC · preço ${round(position.quickScalpStopReference)} · máx ${cfg.quickScalpMaxMinutes.toFixed(0)}m\n` : ''}` +
+        `${position.quickScalpEnabled ? `🧪 Elite: ${position.quickScalpEliteSetup} · OI ${position.quickScalpEliteOi || '—'} · vol ${Number(position.quickScalpEliteVolume || 0).toFixed(2)}x${position.confirmedEntryUsed ? ` · chase ${Number(position.quickScalpEliteChaseAtr || 0).toFixed(2)} ATR` : ''}\n` : ''}` +
+        `${position.quickScalpEnabled ? `⚖️ Quick payoff NET: +${position.quickScalpTargetNetUsdc.toFixed(2)} / ${position.quickScalpStopNetUsdc.toFixed(2)} USDC · break-even teórico ${(Math.abs(position.quickScalpStopNetUsdc) / (Math.abs(position.quickScalpStopNetUsdc) + position.quickScalpTargetNetUsdc) * 100).toFixed(1)}%\n` : ''}` +
+        `${!position.quickScalpEnabled ? `🛑 Risco líquido projetado no STOP: -${position.projectedStopLossUsdc.toFixed(3)} USDC\n` : ''}` +
+        `${!position.quickScalpEnabled ? `🏆 Lucro líquido projetado TP ladder: +${position.projectedFullTpNetUsdc.toFixed(3)} USDC\n` : ''}` +
+        `${!position.quickScalpEnabled ? `⚖️ R/R líquido projetado: ${Number(position.projectedNetRR).toFixed(2)} · mínimo ${position.strategyProfile === 'HIGH_ACCURACY' ? cfg.highAccuracyMinNetRR.toFixed(2) : cfg.minNetRR.toFixed(2)}\n` : ''}` +
+        `${!position.quickScalpEnabled && position.strategyProfile === 'HIGH_ACCURACY' ? `⚡ Saída HA: ${position.tp1ClosePct.toFixed(0)}% em ${cfg.highAccuracyTp1R.toFixed(2)}R · ${position.tp2ClosePct.toFixed(0)}% em ${cfg.highAccuracyTp2R.toFixed(2)}R · restante em ${cfg.highAccuracyTp3R.toFixed(2)}R · SEM runner\n` : ''}` +
+        `${!position.quickScalpEnabled && position.strategyProfile !== 'HIGH_ACCURACY' && cfg.trailingRunnerEnabled ? `🪜 Stop Gain: TP1→BE líquido · TP2→TP1 · TP3→TP2 · depois runner sobe por degraus\n` : ''}` +
+        `${!position.quickScalpEnabled && position.strategyProfile !== 'HIGH_ACCURACY' && cfg.trailingRunnerEnabled ? `🏃 Saídas: 30% / 30% / ${cfg.tp3ClosePct.toFixed(0)}% · runner ${Math.max(0, 40 - cfg.tp3ClosePct).toFixed(0)}%\n` : ''}` +
         `🌦 Regime: ${position.setupMarketRegime || 'UNKNOWN'} · trigger ${position.setupPullbackTriggerQuality || 0}/5\n` +
         `${position.confirmedEntryUsed ? `✅ Confirmed Entry: 2º candle 5m · ${position.confirmedEntryOriginRegime || 'TREND'}→${position.confirmedEntryConfirmationRegime || '—'} · chase ${position.confirmedEntryChaseAtr.toFixed(2)} ATR · vol ${position.confirmedEntryVolumeRatio.toFixed(2)}x\n` : ''}` +
         `🎚 Teto de risco da banca: ${riskBudget.toFixed(3)} USDC (${effectiveRiskPct.toFixed(2)}%)${riskStatus.throttled ? ' · THROTTLE QUALIDADE' : ''}\n` +
@@ -3288,7 +3438,8 @@ function positionCloseMessage(closed) {
     `${closed.setupOiContextRegime ? `🧭 Setup: ${closed.setupEntryMode || 'PULLBACK'} · ${closed.setupOiContextRegime} · pullback ${closed.setupPullbackConfirmed ? 'SIM' : 'NÃO'}\n` : ''}` +
     `${closed.setupMarketRegime ? `🌦 Regime: ${closed.setupMarketRegime} · trigger ${Number(closed.setupPullbackTriggerQuality || 0)}/5\n` : ''}` +
     `${closed.confirmedEntryUsed ? `✅ Confirmed Entry: SIM · chase ${Number(closed.confirmedEntryChaseAtr || 0).toFixed(2)} ATR · vol ${Number(closed.confirmedEntryVolumeRatio || 0).toFixed(2)}x\n` : ''}` +
-    `🎯 Perfil: ${closed.strategyProfile || 'RUNNER'}${closed.strategyProfile === 'HIGH_ACCURACY' ? ' · lucro curto / sem runner' : ''}\n` +
+    `🎯 Perfil: ${closed.quickScalpEnabled ? 'ELITE QUICK SCALP' : (closed.strategyProfile || 'RUNNER')}${!closed.quickScalpEnabled && closed.strategyProfile === 'HIGH_ACCURACY' ? ' · lucro curto / sem runner' : ''}\n` +
+    `${closed.quickScalpEnabled ? `⚡ Quick NET: alvo +${Number(closed.quickScalpTargetNetPct || 0).toFixed(2)}% · stop -${Number(closed.quickScalpStopNetPct || 0).toFixed(2)}% · ${Number(closed.quickScalpMaxMinutes || 0).toFixed(0)}m\n` : ''}` +
     `🏦 Banca: ${state.balance.toFixed(2)} USDC`
   );
 }
@@ -4333,8 +4484,8 @@ function updateOnePosition(position, snap) {
     }
   }
 
-  // V1.9.2 QUICK SCALP 10X:
-  // fecha 100% ao tocar o preço que entrega +0.08% LÍQUIDO,
+  // V1.9.3 ELITE QUICK SCALP:
+  // fecha 100% ao tocar o preço que entrega o alvo LÍQUIDO configurado,
   // já descontando fee + slippage.
   if (position.quickScalpEnabled) {
     const targetHit =
@@ -5670,6 +5821,40 @@ export function paperPerformanceText() {
         .slice(0, 20)
     );
 
+  const eliteQuickMetrics =
+    tradeMetrics(
+      state.closedTrades
+        .filter(
+          t =>
+            t?.quickScalpEnabled === true &&
+            t?.quickScalpMode ===
+              'ELITE_QUICK_V1_9_3'
+        )
+        .slice(0, 40)
+    );
+
+  const oldQuickMetrics =
+    tradeMetrics(
+      state.closedTrades
+        .filter(
+          t =>
+            t?.quickScalpEnabled === true &&
+            t?.quickScalpMode !==
+              'ELITE_QUICK_V1_9_3'
+        )
+        .slice(0, 40)
+    );
+
+  const nonQuickMetrics =
+    tradeMetrics(
+      state.closedTrades
+        .filter(
+          t =>
+            t?.quickScalpEnabled !== true
+        )
+        .slice(0, 40)
+    );
+
   const highAccuracyMetrics =
     tradeMetrics(
       state.closedTrades
@@ -5744,6 +5929,19 @@ export function paperPerformanceText() {
           `PF ${fmtPf(x.metrics.profitFactor)} · ${fmtSigned(x.metrics.pnl)} USDC · ` +
           `MFE +${x.metrics.avgMfe.toFixed(2)}R / MAE -${x.metrics.avgMae.toFixed(2)}R`
       ),
+    '',
+    '<b>Execução Quick</b>',
+    `• ELITE QUICK V1.9.3: ${eliteQuickMetrics.total} · ` +
+      `${eliteQuickMetrics.wins}W/${eliteQuickMetrics.losses}L · ` +
+      `WR ${eliteQuickMetrics.winRate.toFixed(1)}% · PF ${fmtPf(eliteQuickMetrics.profitFactor)} · ` +
+      `${fmtSigned(eliteQuickMetrics.pnl)} USDC · MFE +${eliteQuickMetrics.avgMfe.toFixed(2)}R / MAE -${eliteQuickMetrics.avgMae.toFixed(2)}R`,
+    `• QUICK ANTIGO: ${oldQuickMetrics.total} · ` +
+      `${oldQuickMetrics.wins}W/${oldQuickMetrics.losses}L · ` +
+      `WR ${oldQuickMetrics.winRate.toFixed(1)}% · PF ${fmtPf(oldQuickMetrics.profitFactor)} · ` +
+      `${fmtSigned(oldQuickMetrics.pnl)} USDC`,
+    `• NÃO QUICK: ${nonQuickMetrics.total} · ` +
+      `${nonQuickMetrics.wins}W/${nonQuickMetrics.losses}L · ` +
+      `PF ${fmtPf(nonQuickMetrics.profitFactor)} · ${fmtSigned(nonQuickMetrics.pnl)} USDC`,
     '',
     '<b>Perfil de estratégia</b>',
     `• HIGH ACCURACY: ${highAccuracyMetrics.total} · ` +
@@ -5849,7 +6047,7 @@ export function paperStatusText() {
       : null;
 
   return [
-    '⚡ <b>PAPER TRADING — V1.9.2 QUICK SCALP 10X</b>',
+    '🎯 <b>PAPER TRADING — V1.9.3 ELITE QUICK SCALP</b>',
     '',
     `Status: ${cfg.enabled ? '✅ ATIVO' : '⛔ DESATIVADO'} · ${state.paused ? '⏸ PAUSADO' : '▶️ RODANDO'}`,
     `💰 Banca inicial: ${state.startingBalance.toFixed(2)} USDC`,
@@ -5876,8 +6074,11 @@ export function paperStatusText() {
     `💳 Disponível: ${available.toFixed(2)} USDC`,
     `⚖️ Risco por trade: ${currentRisk.riskPct.toFixed(2)}%${currentRisk.throttled ? ` · THROTTLE (config ${cfg.riskPct.toFixed(2)}%)` : ''}`,
     `⚙️ Alavancagem base: ${cfg.leverage}x`,
-    `⚡ Quick Scalp: ${cfg.quickScalpEnabled ? 'ATIVO' : 'INATIVO'} · ${cfg.quickScalpMarginUsdc.toFixed(2)} USDC x ${cfg.quickScalpLeverage} = ${(cfg.quickScalpMarginUsdc * cfg.quickScalpLeverage).toFixed(2)} USDC`,
-    `🎯 Alvo Quick: +${cfg.quickScalpTargetNetPct.toFixed(2)}% NET · stop -${cfg.quickScalpStopNetPct.toFixed(2)}% NET · time exit ${cfg.quickScalpMaxMinutes.toFixed(0)}m`,
+    `⚡ Elite Quick: ${cfg.quickScalpEnabled ? 'ATIVO' : 'INATIVO'} · elite-only ${cfg.quickScalpEliteOnly ? 'SIM' : 'NÃO'} · fallback Runner ${cfg.quickScalpFallbackRunner ? 'SIM' : 'NÃO'}`,
+    `💵 Execução Elite: ${cfg.quickScalpMarginUsdc.toFixed(2)} USDC x ${cfg.quickScalpLeverage} = ${(cfg.quickScalpMarginUsdc * cfg.quickScalpLeverage).toFixed(2)} USDC · máx ${cfg.quickScalpMaxOpen} posição`,
+    `🎯 Quick NET: +${cfg.quickScalpTargetNetPct.toFixed(2)}% (+${(cfg.quickScalpMarginUsdc * cfg.quickScalpLeverage * cfg.quickScalpTargetNetPct / 100).toFixed(2)} USDC) · stop -${cfg.quickScalpStopNetPct.toFixed(2)}% (-${(cfg.quickScalpMarginUsdc * cfg.quickScalpLeverage * cfg.quickScalpStopNetPct / 100).toFixed(2)} USDC) · ${cfg.quickScalpMaxMinutes.toFixed(0)}m`,
+    `↩️ Quick PB: score ${cfg.quickPullbackMinScore}+ · IA ${cfg.quickPullbackMinAi}%+ · chase ≤${cfg.quickPullbackMaxChaseAtr.toFixed(2)} ATR · OI FAVORABLE`,
+    `🚀 Quick BO: score ${cfg.quickBreakoutMinScore}+ · IA ${cfg.quickBreakoutMinAi}%+ · vol ${cfg.quickBreakoutMinVolume.toFixed(2)}x+ · EXPANSION · OI FAVORABLE`,
     `⚡ Scalp: ${cfg.scalpMode ? 'ATIVO' : 'INATIVO'} · stale adaptativo ${cfg.scalpStaleMin}/${cfg.scalpStaleMaxMin} min`,
     `⏳ Adaptive Hold: ${cfg.adaptiveHoldEnabled ? 'ATIVO' : 'INATIVO'} · checkpoint ${cfg.maxHoldHours.toFixed(1)}h · após TP1 sem timeout · sem TP1 máx ${cfg.adaptiveHoldHardMaxHours > 0 ? `${cfg.adaptiveHoldHardMaxHours.toFixed(1)}h` : 'OFF'}`,
     `⏳ Stale: ${cfg.scalpStaleConsecutiveChecks} checks · ${cfg.scalpStaleDeteriorationCount}/3 deteriorações · MFE ${cfg.scalpStaleMinProgressR.toFixed(2)}R/${cfg.scalpStaleHardProgressR.toFixed(2)}R`,
@@ -5944,8 +6145,8 @@ export function paperPositionsText() {
       `Entrada ${round(p.entryFill)} · Mark ${round(mark)}\n` +
       `${p.quickScalpEnabled ? `⚡ Quick alvo ${round(p.quickScalpTargetReference)} · +${Number(p.quickScalpTargetNetUsdc || 0).toFixed(2)} USDC NET\n` : ''}` +
       `${p.quickScalpEnabled ? `🛑 Quick stop ${round(p.quickScalpStopReference)} · ${Number(p.quickScalpStopNetUsdc || 0).toFixed(2)} USDC NET\n` : `Stop atual ${round(p.stopCurrent)}\n`}` +
-      `TP1 ${round(p.tp1)} · TP2 ${round(p.tp2)} · TP3 ${round(p.tp3)}\n` +
-      `${p.runnerActive ? `➡️ Próximo TP${(p.runnerTrailStage || 3) + 1}: ${round(p.runnerNextTrigger)}\n` : ''}` +
+      `${!p.quickScalpEnabled ? `TP1 ${round(p.tp1)} · TP2 ${round(p.tp2)} · TP3 ${round(p.tp3)}\n` : ''}` +
+      `${!p.quickScalpEnabled && p.runnerActive ? `➡️ Próximo TP${(p.runnerTrailStage || 3) + 1}: ${round(p.runnerNextTrigger)}\n` : ''}` +
       `${p.stage === 0 ? `⏳ Stale checks ${Number(p.staleBadChecks || 0)}/${cfg.scalpStaleConsecutiveChecks} · MFE +${Number(p.mfeR || 0).toFixed(2)}R · estrutura ${p.staleLastStructureAligned === false ? 'NÃO ALINHADA' : 'OK'}\n` : ''}` +
       `${p.adaptiveHoldCheckpointNotified ? `⏳ Adaptive Hold: checkpoint cumprido · ${p.stage >= 1 ? 'SEM TIMEOUT após TP1' : `aguarda STOP/TP · segurança ${cfg.adaptiveHoldHardMaxHours > 0 ? `${cfg.adaptiveHoldHardMaxHours.toFixed(1)}h` : 'OFF'}`}\n` : ''}` +
       `⚖️ R/R líquido projetado ${Number(p.projectedNetRR || 0).toFixed(2)} · ` +
@@ -5978,7 +6179,7 @@ export function paperTradesText(limit = 10) {
 
     lines.push(
       `${icon} <b>${t.symbol} ${t.side}</b> — ${t.outcome}\n` +
-      `🤖 IA ${Math.round(t.aiConfidence || 0)}% · ⭐ ${t.score || 0}\n` +
+      `🤖 IA ${Math.round(t.aiConfidence || 0)}% · ⭐ ${t.score || 0}${t.quickScalpEnabled ? ' · ⚡ ELITE QUICK' : ''}\n` +
       `PnL ${t.netPnl >= 0 ? '+' : ''}${Number(t.netPnl || 0).toFixed(2)} USDC · ` +
       `ROM ${Number(t.returnOnMarginPct || 0) >= 0 ? '+' : ''}${Number(t.returnOnMarginPct || 0).toFixed(2)}%\n` +
       `📈 MFE +${Number(t.mfeR || 0).toFixed(2)}R · 📉 MAE -${Number(t.maeR || 0).toFixed(2)}R\n` +

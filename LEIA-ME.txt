@@ -1,48 +1,117 @@
-CRYPTO FUTURES SCANNER V1.9.2 — QUICK SCALP 10X
+CRYPTO FUTURES SCANNER V1.9.3 — ELITE QUICK SCALP
 
-SETUP PADRÃO
-Margem fixa: 20 USDC
+MOTIVO DA MUDANÇA
+Os primeiros Quick Scalps da V1.9.2 foram:
+DOT LONG: -0,70 USDC
+APT LONG: -0,70 USDC
+
+Os dois tiveram MFE +0,00R. Isso mostrou dois problemas:
+1) o Quick estava sendo aplicado também em setup RUNNER;
+2) +0,08% NET contra -0,35% NET exigia acerto alto demais.
+
+V1.9.3 CORRIGE ISSO.
+
+EXECUÇÃO ELITE QUICK
+Margem: 20 USDC
 Alavancagem: 10x
 Notional: 200 USDC
+Máximo simultâneo: 1 Quick por padrão
 
-ALVO
-+0,08% LÍQUIDO do notional.
-Em 200 USDC = +0,16 USDC líquido.
-Sobre a margem de 20 USDC = +0,80% líquido.
+ALVO / STOP
+Alvo: +0,20% NET do notional = +0,40 USDC
+Stop: -0,35% NET do notional = -0,70 USDC
+Time Exit: 20 minutos
 
-IMPORTANTE
-Não usamos simplesmente +0,08% de movimento do preço.
-Com fee padrão de 0,045% por execução e slippage de 5 bps,
-+0,08% de movimento pode continuar negativo após custos.
-O bot calcula o preço de saída necessário para sobrar +0,08% NET.
+Payoff líquido = 0,40 / 0,70 = 0,57
+Break-even teórico ≈ 63,6% de acerto.
 
-STOP DE SEGURANÇA
--0,35% líquido do notional.
-Em 200 USDC = -0,70 USDC.
-Sobre a margem = -3,50%.
+Fee + slippage continuam incluídos no cálculo do preço de saída.
+O bot NÃO usa simplesmente +0,20% no preço: ele calcula o preço necessário
+para sobrar +0,40 USDC líquido depois dos custos simulados.
 
-TIME EXIT
-30 minutos. Se o scalp não resolver até lá, encerra pela marca.
+FILTRO PULLBACK ELITE QUICK
+- perfil HIGH_ACCURACY
+- Confirmed Entry obrigatório
+- score >= 88
+- IA >= 82%
+- chase <= 0,55 ATR
+- volume da confirmação >= 0,80x
+- OI FAVORABLE obrigatório
+- momentum 3/3
+- origem TREND
+- confirmação TREND ou EXPANSION
+- 4H alinhado
+- Trend Exhaustion OK
+- Anti-chase OK
+- BTC não fortemente contrário
 
-SINAL
-Mantidos:
-Smart ARMED de até 2 candles
+FILTRO BREAKOUT ELITE QUICK
+- BREAKOUT_STRONG
+- score >= 90
+- IA >= 80%
+- volume 5m >= 1,25x
+- edge >= 10
+- OI FAVORABLE obrigatório
+- momentum 3/3
+- regime EXPANSION obrigatório
+- 4H alinhado
+- Trend Exhaustion OK
+- Anti-chase OK
+- BTC não fortemente contrário
+
+COMPORTAMENTO PADRÃO
+PAPER_QUICK_SCALP_ELITE_ONLY=true
+PAPER_QUICK_SCALP_FALLBACK_RUNNER=false
+
+Isso significa:
+- passou ELITE QUICK -> abre $20 x10;
+- não passou -> NÃO abre PAPER;
+- evita misturar Runner comum com o teste do novo scalp.
+
+Para voltar a permitir Runner quando o Quick não qualificar:
+PAPER_QUICK_SCALP_FALLBACK_RUNNER=true
+
+RISCO
+O stop padrão de -0,70 USDC representa ~1,4% de uma banca de 50 USDC.
+Por isso o default permite apenas 1 Quick 10x simultâneo.
+
+ENVS PRINCIPAIS
+PAPER_QUICK_SCALP_ENABLED=true
+PAPER_QUICK_SCALP_ELITE_ONLY=true
+PAPER_QUICK_SCALP_FALLBACK_RUNNER=false
+PAPER_QUICK_SCALP_MARGIN_USDC=20
+PAPER_QUICK_SCALP_LEVERAGE=10
+PAPER_QUICK_SCALP_TARGET_NET_PCT=0.20
+PAPER_QUICK_SCALP_STOP_NET_PCT=0.35
+PAPER_QUICK_SCALP_MAX_MINUTES=20
+PAPER_QUICK_SCALP_MAX_OPEN=1
+
+PAPER_QUICK_PULLBACK_MIN_SCORE=88
+PAPER_QUICK_PULLBACK_MIN_AI=82
+PAPER_QUICK_PULLBACK_MAX_CHASE_ATR=0.55
+PAPER_QUICK_PULLBACK_MIN_CONFIRM_VOLUME=0.80
+
+PAPER_QUICK_BREAKOUT_MIN_SCORE=90
+PAPER_QUICK_BREAKOUT_MIN_AI=80
+PAPER_QUICK_BREAKOUT_MIN_VOLUME=1.25
+PAPER_QUICK_BREAKOUT_MIN_EDGE=10
+
+MANTIDO
+Smart ARMED 2 candles
 OI contextual inteligente
 Confirmed Entry
 Trend Exhaustion Guard
-Market Regime
 4H
 BTC Filter
 Anti-chase
-High Accuracy Lab
+High Accuracy
 Performance Guard
+MFE/MAE
+Paper fees/slippage
 
-ENVS
-PAPER_QUICK_SCALP_ENABLED=true
-PAPER_QUICK_SCALP_MARGIN_USDC=20
-PAPER_QUICK_SCALP_LEVERAGE=10
-PAPER_QUICK_SCALP_TARGET_NET_PCT=0.08
-PAPER_QUICK_SCALP_STOP_NET_PCT=0.35
-PAPER_QUICK_SCALP_MAX_MINUTES=30
+/performance agora separa:
+ELITE QUICK V1.9.3
+QUICK ANTIGO
+NÃO QUICK
 
-PAPER continua sendo simulação. Teste antes de conta real.
+Paper trading continua sendo simulação. Teste antes de qualquer conta real.
