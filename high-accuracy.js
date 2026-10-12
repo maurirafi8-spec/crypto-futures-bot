@@ -23,6 +23,7 @@ export function highAccuracyAssessment(
     breakoutMinVolume = 1.10,
     pullbackMinEdge = 8,
     breakoutMinEdge = 10,
+    minMomentumConfirmations = 2,
     requireConfirmedPullback = true,
     breakoutExpansionOnly = true
   } = {}
@@ -83,7 +84,11 @@ export function highAccuracyAssessment(
     reasons.push(`volume ${volume.toFixed(2)}x < ${minVolume.toFixed(2)}x`);
   }
   if (edge < minEdge) reasons.push(`edge ${edge} < ${minEdge}`);
-  if (momentumCount < 3) reasons.push(`momentum ${momentumCount}/3`);
+  if (momentumCount < minMomentumConfirmations) {
+    reasons.push(
+      `momentum ${momentumCount}/3 < ${minMomentumConfirmations}/3`
+    );
+  }
   if (!oiOk) reasons.push(`OI ${signal?.oiContext?.regime || 'não confirmado'}`);
   if (!btcOk) reasons.push('BTC contrário');
   if (!antiChaseOk) reasons.push('anti-chase bloqueado');
@@ -117,6 +122,7 @@ export function highAccuracyAssessment(
     oiOk, btcOk, antiChaseOk, exhaustionOk, aligned4h,
     confirmedPullback, regime,
     minScore, minAi, minVolume, minEdge,
+    minMomentumConfirmations,
     reasons
   };
 }

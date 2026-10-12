@@ -52,7 +52,7 @@ export function paperConfig() {
     leverage:
       intEnv('PAPER_LEVERAGE', 2, 1, 50),
 
-    // V1.9.4 PAPER DECISION FEEDBACK
+    // V1.9.5 MOMENTUM 2/3
     quickScalpEnabled:
       String(process.env.PAPER_QUICK_SCALP_ENABLED || 'true')
         .toLowerCase() !== 'false',
@@ -106,6 +106,11 @@ export function paperConfig() {
 
     quickPullbackMinConfirmVolume:
       numEnv('PAPER_QUICK_PULLBACK_MIN_CONFIRM_VOLUME', 0.80, 0.2, 5),
+
+    // V1.9.5: 2 de 3 confirmações de momentum já bastam.
+    // Ex.: Volume + OI, Volume + MACD, ou OI + MACD.
+    quickMinMomentumConfirmations:
+      intEnv('PAPER_QUICK_MIN_MOMENTUM_CONFIRMATIONS', 2, 1, 3),
 
     // BREAKOUT ELITE QUICK
     quickBreakoutMinScore:
@@ -186,6 +191,11 @@ export function paperConfig() {
 
     highAccuracyBreakoutMinEdge:
       numEnv('PAPER_HIGH_ACCURACY_BREAKOUT_MIN_EDGE', 10, 0, 50),
+
+    // Mantém o perfil HIGH_ACCURACY alinhado ao scanner/Quick:
+    // 2 de 3 confirmações já qualificam momentum.
+    highAccuracyMinMomentumConfirmations:
+      intEnv('PAPER_HIGH_ACCURACY_MIN_MOMENTUM_CONFIRMATIONS', 2, 1, 3),
 
     highAccuracyTp1R:
       numEnv('PAPER_HIGH_ACCURACY_TP1_R', 0.75, 0.2, 3),
@@ -496,6 +506,8 @@ function highAccuracyOptions(
     breakoutMinVolume: cfg.highAccuracyBreakoutMinVolume,
     pullbackMinEdge: cfg.highAccuracyPullbackMinEdge,
     breakoutMinEdge: cfg.highAccuracyBreakoutMinEdge,
+    minMomentumConfirmations:
+      cfg.highAccuracyMinMomentumConfirmations,
     requireConfirmedPullback: true,
     breakoutExpansionOnly: true
   };
@@ -2567,6 +2579,8 @@ function eliteQuickOptions(
       cfg.quickPullbackMaxChaseAtr,
     pullbackMinConfirmVolume:
       cfg.quickPullbackMinConfirmVolume,
+    minMomentumConfirmations:
+      cfg.quickMinMomentumConfirmations,
     breakoutMinScore:
       cfg.quickBreakoutMinScore,
     breakoutMinAi:
@@ -4489,7 +4503,7 @@ function updateOnePosition(position, snap) {
     }
   }
 
-  // V1.9.4 PAPER DECISION FEEDBACK:
+  // V1.9.5 MOMENTUM 2/3:
   // fecha 100% ao tocar o preço que entrega o alvo LÍQUIDO configurado,
   // já descontando fee + slippage.
   if (position.quickScalpEnabled) {
@@ -6052,7 +6066,7 @@ export function paperStatusText() {
       : null;
 
   return [
-    '🎯 <b>PAPER TRADING — V1.9.4 PAPER DECISION FEEDBACK</b>',
+    '🚦 <b>PAPER TRADING — V1.9.5 MOMENTUM 2/3</b>',
     '',
     `Status: ${cfg.enabled ? '✅ ATIVO' : '⛔ DESATIVADO'} · ${state.paused ? '⏸ PAUSADO' : '▶️ RODANDO'}`,
     `💰 Banca inicial: ${state.startingBalance.toFixed(2)} USDC`,
@@ -6083,6 +6097,7 @@ export function paperStatusText() {
     `🔔 Feedback PAPER bloqueado: ${cfg.notifyBlockedSignals ? 'ATIVO' : 'INATIVO'}`,
     `💵 Execução Elite: ${cfg.quickScalpMarginUsdc.toFixed(2)} USDC x ${cfg.quickScalpLeverage} = ${(cfg.quickScalpMarginUsdc * cfg.quickScalpLeverage).toFixed(2)} USDC · máx ${cfg.quickScalpMaxOpen} posição`,
     `🎯 Quick NET: +${cfg.quickScalpTargetNetPct.toFixed(2)}% (+${(cfg.quickScalpMarginUsdc * cfg.quickScalpLeverage * cfg.quickScalpTargetNetPct / 100).toFixed(2)} USDC) · stop -${cfg.quickScalpStopNetPct.toFixed(2)}% (-${(cfg.quickScalpMarginUsdc * cfg.quickScalpLeverage * cfg.quickScalpStopNetPct / 100).toFixed(2)} USDC) · ${cfg.quickScalpMaxMinutes.toFixed(0)}m`,
+    `🚦 Momentum Quick/HA: mínimo ${cfg.quickMinMomentumConfirmations}/3 confirmações`,
     `↩️ Quick PB: score ${cfg.quickPullbackMinScore}+ · IA ${cfg.quickPullbackMinAi}%+ · chase ≤${cfg.quickPullbackMaxChaseAtr.toFixed(2)} ATR · OI FAVORABLE`,
     `🚀 Quick BO: score ${cfg.quickBreakoutMinScore}+ · IA ${cfg.quickBreakoutMinAi}%+ · vol ${cfg.quickBreakoutMinVolume.toFixed(2)}x+ · EXPANSION · OI FAVORABLE`,
     `⚡ Scalp: ${cfg.scalpMode ? 'ATIVO' : 'INATIVO'} · stale adaptativo ${cfg.scalpStaleMin}/${cfg.scalpStaleMaxMin} min`,

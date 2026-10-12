@@ -102,8 +102,10 @@ export function paperBlockFeedback(
           `Volume ${volume.toFixed(2)}x/${cfg.quickBreakoutMinVolume.toFixed(2)}x`),
         check(edge >= cfg.quickBreakoutMinEdge,
           `Edge ${edge}/${cfg.quickBreakoutMinEdge}`),
-        check(momentum >= 3,
-          `Momentum ${momentum}/3`),
+        check(
+          momentum >= cfg.quickMinMomentumConfirmations,
+          `Momentum ${momentum}/3 · mínimo ${cfg.quickMinMomentumConfirmations}/3`
+        ),
         check(oi.ok,
           `OI ${esc(oi.regime)} · ${esc(oi.label)}`),
         check(regime === 'EXPANSION',
@@ -148,8 +150,10 @@ export function paperBlockFeedback(
           `Chase ${chase.toFixed(2)} ATR/≤${cfg.quickPullbackMaxChaseAtr.toFixed(2)}`),
         check(confirmVol >= cfg.quickPullbackMinConfirmVolume,
           `Volume confirmação ${confirmVol.toFixed(2)}x/${cfg.quickPullbackMinConfirmVolume.toFixed(2)}x`),
-        check(momentum >= 3,
-          `Momentum ${momentum}/3`),
+        check(
+          momentum >= cfg.quickMinMomentumConfirmations,
+          `Momentum ${momentum}/3 · mínimo ${cfg.quickMinMomentumConfirmations}/3`
+        ),
         check(oi.ok,
           `OI ${esc(oi.regime)} · ${esc(oi.label)}`),
         check(originRegime === 'TREND',

@@ -1,52 +1,72 @@
-CRYPTO FUTURES SCANNER V1.9.4 — PAPER DECISION FEEDBACK
+CRYPTO FUTURES SCANNER V1.9.5 — MOMENTUM 2/3
 
 MUDANÇA PRINCIPAL
-Agora todo sinal liberado pela IA que NÃO virar operação PAPER pode gerar uma
-mensagem clara no Telegram explicando exatamente o bloqueio.
+Momentum 2 de 3 agora já é suficiente para:
+- perfil HIGH_ACCURACY
+- ELITE QUICK SCALP
 
-Exemplo para um BREAKOUT_STRONG em TREND:
+As três confirmações continuam sendo:
+1. Volume
+2. OI
+3. MACD
 
-🚫 PAPER NÃO ABERTO — APTUSDT LONG
-Motivo principal: ELITE QUICK bloqueado: Breakout Quick exige EXPANSION; atual TREND
+Exemplos aceitos:
+Volume + OI = 2/3 -> OK
+Volume + MACD = 2/3 -> OK
+OI + MACD = 2/3 -> OK
+3/3 -> OK
+1/3 -> BLOQUEADO
 
-Checklist ELITE QUICK
-✅ Score 90/90
-✅ IA 85%/80%
-✅ Volume 2.65x/1.25x
-✅ Edge 93/10
-✅ Momentum 3/3
-✅ OI LONG_BUILDUP · FAVORABLE
-❌ Regime TREND · exige EXPANSION
-✅ 4H alinhado
-✅ Trend Exhaustion OK
-✅ Anti-chase OK
-✅ BTC não contrário
+POR QUE FOI NECESSÁRIO
+O FILUSDT LONG chegou com:
+- PULLBACK Confirmed Entry
+- Score 94
+- IA 85%
+- Chase 0,52 ATR
+- Volume 4,08x
+- OI LONG_BUILDUP FAVORABLE
+- TREND -> EXPANSION
+- 4H alinhado
+- Momentum 2/3
 
-ONDE O FEEDBACK APARECE
-1) BREAKOUT direto aprovado pela IA, mas PAPER bloqueado.
-2) PULLBACK aprovado pela IA, mas trava PAPER impede até o ARMED.
-3) Confirmed Entry confirma, mas a trava final PAPER impede a abertura.
+Antes, o HIGH_ACCURACY exigia 3/3.
+Isso fazia o perfil cair para RUNNER e o ELITE QUICK gerava dois bloqueios:
+- momentum 2/3
+- Pullback Quick exige perfil HIGH_ACCURACY
 
-ORDEM NO BREAKOUT DIRETO
-Primeiro aparece o sinal técnico normal.
-Logo depois aparece PAPER NÃO ABERTO com o motivo e checklist.
+Na V1.9.5 os dois filtros usam mínimo 2/3, então esse tipo de setup pode qualificar.
 
-CONFIG
-PAPER_NOTIFY_BLOCKED_SIGNALS=true
+IMPORTANTE
+Não removemos os outros filtros.
+Continuam obrigatórios no Pullback Elite Quick:
+- HIGH_ACCURACY
+- Confirmed Entry
+- Score >= 88
+- IA >= 82%
+- Chase <= 0,55 ATR
+- Volume confirmação >= 0,80x
+- OI FAVORABLE
+- Origem TREND
+- Confirmação TREND/EXPANSION
+- 4H alinhado
+- Trend Exhaustion OK
+- Anti-chase OK
+- BTC não contrário
 
-Default: true. Se não existir no Render, já fica ATIVO.
-Use false somente se quiser silenciar essas explicações.
-
-ELITE QUICK V1.9.3 FOI PRESERVADO
+EXECUÇÃO QUICK
 Margem: 20 USDC
 Alavancagem: 10x
 Notional: 200 USDC
 Alvo: +0,20% NET = +0,40 USDC
 Stop: -0,35% NET = -0,70 USDC
-Time exit: 20 min
-Máx Quick simultâneo: 1
-Elite-only: true
-Fallback Runner: false
+Time Exit: 20 min
+Máximo: 1 Quick simultâneo
 
-Filtros Elite continuam iguais. Esta versão NÃO afrouxa a entrada; apenas mostra
-por que um sinal não foi executado no PAPER.
+NOVAS ENVS
+PAPER_QUICK_MIN_MOMENTUM_CONFIRMATIONS=2
+PAPER_HIGH_ACCURACY_MIN_MOMENTUM_CONFIRMATIONS=2
+
+Não é obrigatório criar essas ENVs no Render.
+O default do código já é 2.
+
+Paper trading continua sendo simulação.

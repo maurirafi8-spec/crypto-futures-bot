@@ -4168,7 +4168,7 @@ async function doScan({
     const directPaperBlocks =
       new Map();
 
-    // V1.9.4 PAPER DECISION FEEDBACK:
+    // V1.9.5 MOMENTUM 2/3:
     // Pullback aprovado pela IA NÃO abre imediatamente.
     // Primeiro passa pelo gate PAPER e vira ARMED; a entrada real só acontece
     // se o próximo candle 5m fechado confirmar o rompimento.
@@ -4416,7 +4416,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.9.4 PAPER DECISION FEEDBACK</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.9.5 MOMENTUM 2/3</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o próximo lote agora\n' +
       '/scheduler — ver rotação automática de 1 minuto\n' +
@@ -4457,7 +4457,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.9.4 PAPER DECISION FEEDBACK\n` +
+      `✅ Online — V1.9.5 MOMENTUM 2/3\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🛡 Modo: CONFIDENCE GUARD V1.5.9\n` +
       `🤖 APPROVE exige confidence válida; ausente/0% vira WAIT\n` +
@@ -4927,7 +4927,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.9.4-paper-decision-feedback',
+    version: '1.9.5-momentum-2of3',
     scanning,
     activeSignals: 0,
     legacyTrackerEnabled: false,
@@ -4984,7 +4984,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.9.4 PAPER DECISION FEEDBACK pronto ✅');
+console.log('Crypto Futures Scanner V1.9.5 MOMENTUM 2/3 pronto ✅');
 
 // Em rolling deploy o processo antigo do Render pode permanecer vivo por
 // alguns segundos. Um pequeno atraso evita duas instâncias consumindo a

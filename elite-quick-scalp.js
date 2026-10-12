@@ -61,6 +61,7 @@ export function eliteQuickScalpAssessment(
     pullbackMinAi = 82,
     pullbackMaxChaseAtr = 0.55,
     pullbackMinConfirmVolume = 0.80,
+    minMomentumConfirmations = 2,
     breakoutMinScore = 90,
     breakoutMinAi = 80,
     breakoutMinVolume = 1.25,
@@ -163,8 +164,10 @@ export function eliteQuickScalpAssessment(
     reasons.push('BTC contrário');
   }
 
-  if (momentumCount < 3) {
-    reasons.push(`momentum ${momentumCount}/3`);
+  if (momentumCount < minMomentumConfirmations) {
+    reasons.push(
+      `momentum ${momentumCount}/3 < ${minMomentumConfirmations}/3`
+    );
   }
 
   if (!oi.ok) {
@@ -259,6 +262,7 @@ export function eliteQuickScalpAssessment(
     confirmedVolume,
     edge,
     momentumCount,
+    minMomentumConfirmations,
     chaseAtr,
     oiLevel: oi.label,
     oiRegime: oi.regime,
