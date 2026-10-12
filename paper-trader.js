@@ -52,7 +52,7 @@ export function paperConfig() {
     leverage:
       intEnv('PAPER_LEVERAGE', 2, 1, 50),
 
-    // V1.9.3 ELITE QUICK SCALP
+    // V1.9.4 PAPER DECISION FEEDBACK
     quickScalpEnabled:
       String(process.env.PAPER_QUICK_SCALP_ENABLED || 'true')
         .toLowerCase() !== 'false',
@@ -60,6 +60,11 @@ export function paperConfig() {
     // Se true, só abre PAPER quando o setup passa no filtro ELITE QUICK.
     quickScalpEliteOnly:
       String(process.env.PAPER_QUICK_SCALP_ELITE_ONLY || 'true')
+        .toLowerCase() !== 'false',
+
+    // Notifica no Telegram por que um sinal aprovado não virou PAPER.
+    notifyBlockedSignals:
+      String(process.env.PAPER_NOTIFY_BLOCKED_SIGNALS || 'true')
         .toLowerCase() !== 'false',
 
     // Default false: evita misturar Runner comum com o teste do Quick Elite.
@@ -4484,7 +4489,7 @@ function updateOnePosition(position, snap) {
     }
   }
 
-  // V1.9.3 ELITE QUICK SCALP:
+  // V1.9.4 PAPER DECISION FEEDBACK:
   // fecha 100% ao tocar o preço que entrega o alvo LÍQUIDO configurado,
   // já descontando fee + slippage.
   if (position.quickScalpEnabled) {
@@ -6047,7 +6052,7 @@ export function paperStatusText() {
       : null;
 
   return [
-    '🎯 <b>PAPER TRADING — V1.9.3 ELITE QUICK SCALP</b>',
+    '🎯 <b>PAPER TRADING — V1.9.4 PAPER DECISION FEEDBACK</b>',
     '',
     `Status: ${cfg.enabled ? '✅ ATIVO' : '⛔ DESATIVADO'} · ${state.paused ? '⏸ PAUSADO' : '▶️ RODANDO'}`,
     `💰 Banca inicial: ${state.startingBalance.toFixed(2)} USDC`,
@@ -6075,6 +6080,7 @@ export function paperStatusText() {
     `⚖️ Risco por trade: ${currentRisk.riskPct.toFixed(2)}%${currentRisk.throttled ? ` · THROTTLE (config ${cfg.riskPct.toFixed(2)}%)` : ''}`,
     `⚙️ Alavancagem base: ${cfg.leverage}x`,
     `⚡ Elite Quick: ${cfg.quickScalpEnabled ? 'ATIVO' : 'INATIVO'} · elite-only ${cfg.quickScalpEliteOnly ? 'SIM' : 'NÃO'} · fallback Runner ${cfg.quickScalpFallbackRunner ? 'SIM' : 'NÃO'}`,
+    `🔔 Feedback PAPER bloqueado: ${cfg.notifyBlockedSignals ? 'ATIVO' : 'INATIVO'}`,
     `💵 Execução Elite: ${cfg.quickScalpMarginUsdc.toFixed(2)} USDC x ${cfg.quickScalpLeverage} = ${(cfg.quickScalpMarginUsdc * cfg.quickScalpLeverage).toFixed(2)} USDC · máx ${cfg.quickScalpMaxOpen} posição`,
     `🎯 Quick NET: +${cfg.quickScalpTargetNetPct.toFixed(2)}% (+${(cfg.quickScalpMarginUsdc * cfg.quickScalpLeverage * cfg.quickScalpTargetNetPct / 100).toFixed(2)} USDC) · stop -${cfg.quickScalpStopNetPct.toFixed(2)}% (-${(cfg.quickScalpMarginUsdc * cfg.quickScalpLeverage * cfg.quickScalpStopNetPct / 100).toFixed(2)} USDC) · ${cfg.quickScalpMaxMinutes.toFixed(0)}m`,
     `↩️ Quick PB: score ${cfg.quickPullbackMinScore}+ · IA ${cfg.quickPullbackMinAi}%+ · chase ≤${cfg.quickPullbackMaxChaseAtr.toFixed(2)} ATR · OI FAVORABLE`,

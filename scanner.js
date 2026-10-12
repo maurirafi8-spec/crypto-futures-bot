@@ -4131,7 +4131,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.9.3: Elite Quick Scalp · $20 x10 · alvo +0,20% NET · stop -0,35% NET · entrada somente ELITE. ` +
+    `<i>V1.9.4: Paper Decision Feedback + Elite Quick Scalp · $20 x10 · alvo +0,20% NET · stop -0,35% NET · entrada somente ELITE. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }
