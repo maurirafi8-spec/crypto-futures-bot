@@ -4168,7 +4168,7 @@ async function doScan({
     const directPaperBlocks =
       new Map();
 
-    // V1.9.5 MOMENTUM 2/3:
+    // V1.9.7 QUICK SEM PRÉ-CHECK DIÁRIO:
     // Pullback aprovado pela IA NÃO abre imediatamente.
     // Primeiro passa pelo gate PAPER e vira ARMED; a entrada real só acontece
     // se o próximo candle 5m fechado confirmar o rompimento.
@@ -4416,7 +4416,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.9.5 MOMENTUM 2/3</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.9.7 QUICK SEM PRÉ-CHECK DIÁRIO</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o próximo lote agora\n' +
       '/scheduler — ver rotação automática de 1 minuto\n' +
@@ -4457,7 +4457,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.9.5 MOMENTUM 2/3\n` +
+      `✅ Online — V1.9.7 QUICK SEM PRÉ-CHECK DIÁRIO\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🛡 Modo: CONFIDENCE GUARD V1.5.9\n` +
       `🤖 APPROVE exige confidence válida; ausente/0% vira WAIT\n` +
@@ -4474,7 +4474,7 @@ async function handleMessage(msg) {
       `🪜 Stop Gain Runner: TP1→BE · TP2→TP1 · TP3→TP2 · TP4+ sobe por degraus\n` +
       `⏳ Adaptive Stale: revisão 60m · 2 checks · 2/3 deteriorações · hard 90m · timeout 2h\n` +
       `🧠 Performance Guard: lado/setup ruim pausa 90m · qualidade geral sobe score/IA\n` +
-      `🔔 V1.9.4: Paper Decision Feedback · sinal aprovado mostra por que PAPER abriu ou foi bloqueado · Elite Quick preservado\n` +
+      `🎯 V1.9.6: Quick Entry Quality · Pullback trigger 4/5+ · Breakout anti-exhaustion · Quick Economics Guard próprio\n` +
       `🟠 ARMED: ${confirmedEntryManager.size()} · IA não é chamada novamente enquanto aguarda confirmação\n` +
       `📊 Confirmação: próximo 5m deve fechar além do candle gatilho · vol >= ${cfg.confirmedEntryMinVolumeRatio.toFixed(2)}x · retomada x${cfg.confirmedEntryVolumeResumeMultiplier.toFixed(2)}\n` +
       `🧯 Exaustão: 4H alinhado · distância 1H controlada · sem sequência impulsiva extrema\n` +
@@ -4927,7 +4927,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.9.5-momentum-2of3',
+    version: '1.9.7-no-quick-daily-precheck',
     scanning,
     activeSignals: 0,
     legacyTrackerEnabled: false,
@@ -4984,7 +4984,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.9.5 MOMENTUM 2/3 pronto ✅');
+console.log('Crypto Futures Scanner V1.9.7 QUICK SEM PRÉ-CHECK DIÁRIO pronto ✅');
 
 // Em rolling deploy o processo antigo do Render pode permanecer vivo por
 // alguns segundos. Um pequeno atraso evita duas instâncias consumindo a

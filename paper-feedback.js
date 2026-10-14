@@ -81,6 +81,15 @@ export function paperBlockFeedback(
     signal?.btcRegime?.ok !== false &&
     signal?.btcRegime?.strongOpposite !== true;
   const oi = oiFavorable(signal);
+  const triggerQuality = n(signal?.pullback?.triggerQuality);
+  const breakoutBodyAtr = n(
+    signal?.breakout?.bodyAtr,
+    n(signal?.antiChase?.bodyAtr)
+  );
+  const breakoutDistanceAtr = n(
+    signal?.antiChase?.distanceAtr,
+    n(signal?.pullback?.distanceAtr, 99)
+  );
 
   const lines = [
     `🚫 <b>PAPER NÃO ABERTO — ${symbol} ${esc(side)}</b>`,
@@ -110,6 +119,14 @@ export function paperBlockFeedback(
           `OI ${esc(oi.regime)} · ${esc(oi.label)}`),
         check(regime === 'EXPANSION',
           `Regime ${esc(regime)} · exige EXPANSION`),
+        check(
+          breakoutBodyAtr <= cfg.quickBreakoutMaxBodyAtr,
+          `Corpo ${breakoutBodyAtr.toFixed(2)} ATR/≤${cfg.quickBreakoutMaxBodyAtr.toFixed(2)}`
+        ),
+        check(
+          breakoutDistanceAtr <= cfg.quickBreakoutMaxDistanceAtr,
+          `Distância EMA20 ${breakoutDistanceAtr.toFixed(2)} ATR/≤${cfg.quickBreakoutMaxDistanceAtr.toFixed(2)}`
+        ),
         check(aligned4h,
           '4H alinhado'),
         check(exhaustionOk,
@@ -150,6 +167,10 @@ export function paperBlockFeedback(
           `Chase ${chase.toFixed(2)} ATR/≤${cfg.quickPullbackMaxChaseAtr.toFixed(2)}`),
         check(confirmVol >= cfg.quickPullbackMinConfirmVolume,
           `Volume confirmação ${confirmVol.toFixed(2)}x/${cfg.quickPullbackMinConfirmVolume.toFixed(2)}x`),
+        check(
+          triggerQuality >= cfg.quickPullbackMinTriggerQuality,
+          `Trigger execução ${triggerQuality}/5 · mínimo ${cfg.quickPullbackMinTriggerQuality}/5`
+        ),
         check(
           momentum >= cfg.quickMinMomentumConfirmations,
           `Momentum ${momentum}/3 · mínimo ${cfg.quickMinMomentumConfirmations}/3`

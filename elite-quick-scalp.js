@@ -61,11 +61,14 @@ export function eliteQuickScalpAssessment(
     pullbackMinAi = 82,
     pullbackMaxChaseAtr = 0.55,
     pullbackMinConfirmVolume = 0.80,
+    pullbackMinTriggerQuality = 4,
     minMomentumConfirmations = 2,
     breakoutMinScore = 90,
     breakoutMinAi = 80,
     breakoutMinVolume = 1.25,
-    breakoutMinEdge = 10
+    breakoutMinEdge = 10,
+    breakoutMaxBodyAtr = 1.20,
+    breakoutMaxDistanceAtr = 1.35
   } = {}
 ) {
   if (!signal) {
@@ -120,6 +123,21 @@ export function eliteQuickScalpAssessment(
 
   const chaseAtr =
     num(signal?.confirmedEntry?.chaseAtr, 99);
+
+  const triggerQuality =
+    num(signal?.pullback?.triggerQuality, 0);
+
+  const breakoutBodyAtr =
+    num(
+      signal?.breakout?.bodyAtr,
+      num(signal?.antiChase?.bodyAtr, 0)
+    );
+
+  const breakoutDistanceAtr =
+    num(
+      signal?.antiChase?.distanceAtr,
+      num(signal?.pullback?.distanceAtr, 99)
+    );
 
   const oi =
     oiFavorableForSide(signal);
@@ -203,6 +221,12 @@ export function eliteQuickScalpAssessment(
       );
     }
 
+    if (triggerQuality < pullbackMinTriggerQuality) {
+      reasons.push(
+        `trigger na execução ${triggerQuality}/5 < ${pullbackMinTriggerQuality}/5`
+      );
+    }
+
     if (originRegime !== 'TREND') {
       reasons.push(
         `origem ${originRegime || 'UNKNOWN'}; Pullback Quick exige TREND`
@@ -242,6 +266,18 @@ export function eliteQuickScalpAssessment(
       );
     }
 
+    if (breakoutBodyAtr > breakoutMaxBodyAtr) {
+      reasons.push(
+        `corpo breakout ${breakoutBodyAtr.toFixed(2)} ATR > ${breakoutMaxBodyAtr.toFixed(2)} ATR`
+      );
+    }
+
+    if (breakoutDistanceAtr > breakoutMaxDistanceAtr) {
+      reasons.push(
+        `distância EMA20 ${breakoutDistanceAtr.toFixed(2)} ATR > ${breakoutMaxDistanceAtr.toFixed(2)} ATR`
+      );
+    }
+
     if (signal?.breakout?.qualified === false) {
       reasons.push('Breakout Strong não qualificado');
     }
@@ -264,6 +300,12 @@ export function eliteQuickScalpAssessment(
     momentumCount,
     minMomentumConfirmations,
     chaseAtr,
+    triggerQuality,
+    pullbackMinTriggerQuality,
+    breakoutBodyAtr,
+    breakoutDistanceAtr,
+    breakoutMaxBodyAtr,
+    breakoutMaxDistanceAtr,
     oiLevel: oi.label,
     oiRegime: oi.regime,
     aligned4h,

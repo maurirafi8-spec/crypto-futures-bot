@@ -1,72 +1,131 @@
-CRYPTO FUTURES SCANNER V1.9.5 — MOMENTUM 2/3
+CRYPTO FUTURES SCANNER V1.9.7 — QUICK SEM PRÉ-CHECK DIÁRIO
 
-MUDANÇA PRINCIPAL
-Momentum 2 de 3 agora já é suficiente para:
-- perfil HIGH_ACCURACY
-- ELITE QUICK SCALP
+MUDANÇA
+Removido o pré-check que bloqueava uma nova entrada ELITE QUICK apenas porque,
+se ela tomasse STOP, o PnL projetado do dia ultrapassaria o limite diário.
 
-As três confirmações continuam sendo:
-1. Volume
-2. OI
-3. MACD
+ANTES
+Novo Quick candidato
+→ calcula pior caso do STOP
+→ se o STOP potencial ultrapassasse a perda diária
+→ não abria a posição
 
-Exemplos aceitos:
-Volume + OI = 2/3 -> OK
-Volume + MACD = 2/3 -> OK
-OI + MACD = 2/3 -> OK
-3/3 -> OK
-1/3 -> BLOQUEADO
-
-POR QUE FOI NECESSÁRIO
-O FILUSDT LONG chegou com:
-- PULLBACK Confirmed Entry
-- Score 94
-- IA 85%
-- Chase 0,52 ATR
-- Volume 4,08x
-- OI LONG_BUILDUP FAVORABLE
-- TREND -> EXPANSION
-- 4H alinhado
-- Momentum 2/3
-
-Antes, o HIGH_ACCURACY exigia 3/3.
-Isso fazia o perfil cair para RUNNER e o ELITE QUICK gerava dois bloqueios:
-- momentum 2/3
-- Pullback Quick exige perfil HIGH_ACCURACY
-
-Na V1.9.5 os dois filtros usam mínimo 2/3, então esse tipo de setup pode qualificar.
+AGORA
+Novo Quick candidato
+→ NÃO usa esse bloqueio projetado
+→ se passar os filtros normais do ELITE QUICK, pode abrir
 
 IMPORTANTE
-Não removemos os outros filtros.
-Continuam obrigatórios no Pullback Elite Quick:
+Esta versão remove SOMENTE o pré-check projetado do Quick.
+As demais regras e filtros da V1.9.6 continuam iguais.
+
+CRYPTO FUTURES SCANNER V1.9.6 — QUICK ENTRY QUALITY
+
+OBJETIVO
+Melhorar o ponto EXATO da entrada do Elite Quick sem afrouxar score, IA, OI,
+4H, Trend Exhaustion ou Smart ARMED.
+
+MUDANÇAS PRINCIPAIS
+
+1. PULLBACK QUICK
+Agora exige trigger >= 4/5 NO MOMENTO DA EXECUÇÃO.
+Isso bloquearia o INJ observado com trigger 3/5.
+
+Mantido:
 - HIGH_ACCURACY
 - Confirmed Entry
-- Score >= 88
+- score >= 88
 - IA >= 82%
-- Chase <= 0,55 ATR
-- Volume confirmação >= 0,80x
+- chase <= 0,55 ATR
+- volume confirmação >= 0,80x
+- momentum >= 2/3
 - OI FAVORABLE
-- Origem TREND
-- Confirmação TREND/EXPANSION
+- origem TREND
+- confirmação TREND/EXPANSION
 - 4H alinhado
 - Trend Exhaustion OK
 - Anti-chase OK
 - BTC não contrário
 
-EXECUÇÃO QUICK
-Margem: 20 USDC
-Alavancagem: 10x
-Notional: 200 USDC
-Alvo: +0,20% NET = +0,40 USDC
-Stop: -0,35% NET = -0,70 USDC
-Time Exit: 20 min
-Máximo: 1 Quick simultâneo
+2. BREAKOUT QUICK — ANTI-EXHAUSTION
+Além de EXPANSION, agora exige:
+- corpo do breakout <= 1,20 ATR
+- distância da EMA20 <= 1,35 ATR
 
-NOVAS ENVS
+Isso bloquearia o LDO observado:
+- corpo 1,38 ATR
+- distância ~1,41 ATR
+
+Um setup como o XRP observado:
+- corpo 0,99 ATR
+- distância ~1,32 ATR
+continua elegível, desde que passe os demais filtros.
+
+3. QUICK ECONOMICS GUARD PRÓPRIO
+O Elite Quick fecha 100% pelo alvo/stop próprios.
+Por isso NÃO usa mais o Net R/R Guard do ladder TP1/TP2/TP3.
+
+Default:
+- alvo +0,20% NET = +0,40 USDC em $200
+- stop -0,35% NET = -0,70 USDC
+- payoff = 0,57
+- break-even = 63,64%
+
+Guard próprio:
+- reward/risk >= 0,50
+- break-even <= 70%
+
+Isso evita o bloqueio indevido do XRP por "NET R/R 0.60 < 0.70"
+quando o ladder antigo nem seria usado pelo Quick.
+
+4. RISCO REAL
+Com banca de ~50 USDC:
+- stop Quick = 0,70 USDC
+- risco real ≈ 1,4% da banca
+
+A mensagem antiga de "teto 0,35%" era do modelo HA/Runner e era enganosa
+para o tamanho fixo $20 x10. Agora o Telegram mostra o risco real do Quick.
+
+Máximo continua:
+- 1 Quick 10x simultâneo
+
+Também foi adicionado pré-check do limite diário:
+se o STOP potencial do novo Quick faria o dia ultrapassar o limite diário,
+a nova entrada é bloqueada antes de abrir.
+
+5. PNL DIÁRIO
+A taxa de entrada agora entra imediatamente no PnL líquido diário.
+Isso corrige casos em que:
+trade fechado = -0,70
+/paper Hoje = -0,61
+
+6. TELEGRAM
+Momentum agora aparece:
+3/3 · mín 2/3
+em vez de:
+3/2
+
+O rodapé foi atualizado para V1.9.6.
+
+ENVS NOVAS / PRINCIPAIS
+
+PAPER_QUICK_PULLBACK_MIN_TRIGGER_QUALITY=4
+PAPER_QUICK_BREAKOUT_MAX_BODY_ATR=1.20
+PAPER_QUICK_BREAKOUT_MAX_DISTANCE_ATR=1.35
+PAPER_QUICK_MIN_REWARD_RISK=0.50
+PAPER_QUICK_MAX_BREAK_EVEN_PCT=70
+
+As anteriores continuam:
+PAPER_QUICK_SCALP_ENABLED=true
+PAPER_QUICK_SCALP_ELITE_ONLY=true
+PAPER_QUICK_SCALP_FALLBACK_RUNNER=false
+PAPER_QUICK_SCALP_MARGIN_USDC=20
+PAPER_QUICK_SCALP_LEVERAGE=10
+PAPER_QUICK_SCALP_TARGET_NET_PCT=0.20
+PAPER_QUICK_SCALP_STOP_NET_PCT=0.35
+PAPER_QUICK_SCALP_MAX_MINUTES=20
+PAPER_QUICK_SCALP_MAX_OPEN=1
 PAPER_QUICK_MIN_MOMENTUM_CONFIRMATIONS=2
 PAPER_HIGH_ACCURACY_MIN_MOMENTUM_CONFIRMATIONS=2
-
-Não é obrigatório criar essas ENVs no Render.
-O default do código já é 2.
 
 Paper trading continua sendo simulação.

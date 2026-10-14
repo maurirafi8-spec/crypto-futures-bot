@@ -146,3 +146,75 @@ export function quickScalpLevels({
     stopRoiMarginPct: stopNetUsdc / margin * 100
   };
 }
+
+
+export function quickScalpEconomicsGuard({
+  initialNotional,
+  targetNetPct = 0.20,
+  stopNetPct = 0.35,
+  minRewardRisk = 0.50,
+  maxBreakEvenPct = 70
+} = {}) {
+  const notional = n(initialNotional, NaN);
+  const targetPct = Math.max(0, n(targetNetPct, NaN));
+  const stopPct = Math.max(0, n(stopNetPct, NaN));
+  const minRR = Math.max(0, n(minRewardRisk, 0));
+  const maxBE = Math.max(0, n(maxBreakEvenPct, 100));
+
+  if (
+    !Number.isFinite(notional) ||
+    !Number.isFinite(targetPct) ||
+    !Number.isFinite(stopPct) ||
+    notional <= 0 ||
+    targetPct <= 0 ||
+    stopPct <= 0
+  ) {
+    return {
+      ok: false,
+      reason: 'parâmetros Quick inválidos'
+    };
+  }
+
+  const targetNetUsdc =
+    notional * targetPct / 100;
+
+  const stopNetUsdc =
+    notional * stopPct / 100;
+
+  const rewardRisk =
+    targetNetUsdc /
+    stopNetUsdc;
+
+  const breakEvenPct =
+    stopNetUsdc /
+    (stopNetUsdc + targetNetUsdc) *
+    100;
+
+  const reasons = [];
+
+  if (rewardRisk < minRR) {
+    reasons.push(
+      `payoff ${rewardRisk.toFixed(2)} < ${minRR.toFixed(2)}`
+    );
+  }
+
+  if (breakEvenPct > maxBE) {
+    reasons.push(
+      `break-even ${breakEvenPct.toFixed(1)}% > ${maxBE.toFixed(1)}%`
+    );
+  }
+
+  return {
+    ok: reasons.length === 0,
+    reason:
+      reasons.length
+        ? reasons.join(' · ')
+        : 'economia Quick aprovada',
+    targetNetUsdc,
+    stopNetUsdc,
+    rewardRisk,
+    breakEvenPct,
+    minRewardRisk: minRR,
+    maxBreakEvenPct: maxBE
+  };
+}

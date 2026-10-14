@@ -4094,7 +4094,7 @@ export function signalText(s) {
     `${s.pullback ? `↩️ Pullback: ${s.pullback.confirmed ? 'CONFIRMADO' : 'AGUARDANDO'} · trigger ${s.pullback.triggerQuality ?? 0}/5 · EMA distância ${fmt(s.pullback.distanceAtr, 2)}/${fmt(s.pullback.maxDistanceAtr, 2)} ATR · ${s.pullback.reason}\n` : ''}` +
     `${s.breakout?.qualified ? `🚀 Breakout forte: CONFIRMADO · corpo ${fmt(s.breakout.bodyAtr, 2)} ATR\n` : ''}` +
     `${s.oiContext ? `📈 OI contextual: ${s.oiContext.regime} · OI ${s.oiContext.oiPct >= 0 ? '+' : ''}${fmt(s.oiContext.oiPct, 2)}% · preço30m ${s.oiContext.pricePct >= 0 ? '+' : ''}${fmt(s.oiContext.pricePct, 2)}%\n` : ''}` +
-    `${s.momentum ? `🚦 Momentum: ${s.momentum.confirmationCount}/${s.momentum.minConfirmations} · Vol ${s.momentum.volumeOk ? 'OK' : 'NÃO'} · OI ${s.momentum.oiOk ? 'OK' : 'NÃO'} · MACD ${s.momentum.macdOk ? 'OK' : 'NÃO'}\n` : ''}` +
+    `${s.momentum ? `🚦 Momentum: ${s.momentum.confirmationCount}/3 · mín ${s.momentum.minConfirmations}/3 · Vol ${s.momentum.volumeOk ? 'OK' : 'NÃO'} · OI ${s.momentum.oiOk ? 'OK' : 'NÃO'} · MACD ${s.momentum.macdOk ? 'OK' : 'NÃO'}\n` : ''}` +
     `${s.antiChase ? `🛑 Anti-chase: ${s.antiChase.ok ? 'OK' : 'BLOQUEIO'} · ${s.antiChase.reason}\n` : ''}` +
     `${s.btcRegime ? `₿ Regime BTC 1H+4H: ${s.btcRegime.regime}${s.btcRegime.exceptional ? ' · EXCEÇÃO FORTE' : ''}\n` : ''}` +
     (s.ai
@@ -4131,7 +4131,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.9.4: Paper Decision Feedback + Elite Quick Scalp · $20 x10 · alvo +0,20% NET · stop -0,35% NET · entrada somente ELITE. ` +
+    `<i>V1.9.6: Quick Entry Quality · trigger 4/5 no Pullback · anti-exhaustion no Breakout · Economics Guard próprio do Quick. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }
