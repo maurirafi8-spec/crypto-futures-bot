@@ -1,0 +1,62 @@
+V1.10.0 GOOGLE SYNC — CONFIGURAÇÃO
+
+O bot agora pode mandar automaticamente para sua conta Google:
+
+GOOGLE SHEETS
+- trades abertos/fechados
+- PnL, taxas, score, IA, setup, regime, OI, MFE/MAE
+- Dashboard de banca, win rate, PF e Quick trades
+- Events: ARMED, cancelamentos e PAPER bloqueado
+
+GOOGLE DRIVE
+- paper-state-latest.json
+- backup histórico após cada trade fechado
+
+PASSO 1 — Apps Script
+1. Abra https://script.google.com/
+2. Novo projeto.
+3. Abra o arquivo google-apps-script.gs deste ZIP.
+4. Copie todo o código para o Apps Script e salve.
+5. Rode a função setupCryptoBot.
+6. Autorize Google Sheets e Drive.
+7. No log da execução copie:
+   SHEET_URL
+   DRIVE_FOLDER_URL
+   SYNC_TOKEN
+
+NÃO envie o SYNC_TOKEN em chat, Telegram ou GitHub.
+
+PASSO 2 — Publicar
+Deploy > New deployment > Web app
+Execute as: Me
+Who has access: Anyone
+Deploy.
+
+Copie a URL final que termina em /exec.
+
+PASSO 3 — Render Environment
+GOOGLE_SYNC_ENABLED=true
+GOOGLE_SYNC_WEBHOOK_URL=<URL /exec>
+GOOGLE_SYNC_TOKEN=<token gerado>
+GOOGLE_SYNC_TIMEOUT_MS=8000
+
+Save / Deploy.
+
+PASSO 4 — Telegram
+/google
+/googletest
+
+Se /googletest responder OK, abra a planilha e veja a aba Events.
+
+IMPORTANTE
+A sincronização é auxiliar. Se o Google estiver indisponível,
+o scanner e o PAPER continuam funcionando.
+
+GEMINI
+O bot já usa GEMINI_API_KEY como fallback/rescue se configurado.
+Não coloque login/senha da conta Google no bot.
+
+GOOGLE CLOUD
+Não migrei o processo do Render nesta versão.
+Como o scanner trabalha em loop contínuo, vamos escolher a hospedagem
+Google separadamente para não trocar algo estável por uma arquitetura pior.

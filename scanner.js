@@ -4131,7 +4131,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.9.6: Quick Entry Quality · trigger 4/5 no Pullback · anti-exhaustion no Breakout · Economics Guard próprio do Quick. ` +
+    `<i>V1.10.0: Google Sync · histórico no Sheets + backup no Drive · Quick Entry Quality preservado. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

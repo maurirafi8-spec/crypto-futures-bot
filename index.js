@@ -68,6 +68,12 @@ import {
 import {
   paperBlockFeedback
 } from './paper-feedback.js';
+import {
+  googleSyncConfig,
+  googleSyncEvent,
+  googleSyncStatusText,
+  googleSyncStats
+} from './google-sync.js';
 
 const cfg = {
   token: process.env.BOT_TOKEN,
@@ -3718,6 +3724,15 @@ async function processConfirmedEntrySnapshots(
       `[confirmed-entry] ${item.item.signal.symbol} ${item.item.signal.side}: CANCELADO — ${item.reason}`
     );
 
+    void googleSyncEvent(
+      'ARMED_CANCELLED',
+      {
+        signal: item.item.signal,
+        reason: item.reason,
+        phase: 'CONFIRMED_ENTRY'
+      }
+    );
+
     if (
       cfg.confirmedEntryNotifyInvalidated
     ) {
@@ -3732,6 +3747,15 @@ async function processConfirmedEntrySnapshots(
   for (const item of cycle.confirmed) {
     const signal =
       item.signal;
+
+    void googleSyncEvent(
+      'CONFIRMED_ENTRY',
+      {
+        signal,
+        message: item.message,
+        phase: 'CONFIRMED_ENTRY'
+      }
+    );
 
     const paperOpen =
       maybeOpenPaperPosition(
@@ -3765,6 +3789,15 @@ async function processConfirmedEntrySnapshots(
       console.log(
         `[confirmed-entry] ${signal.symbol}: confirmou 2º candle, ` +
         `mas PAPER bloqueou — ${paperOpen.reason}`
+      );
+
+      void googleSyncEvent(
+        'PAPER_BLOCKED',
+        {
+          signal,
+          reason: paperOpen.reason,
+          phase: 'CONFIRMED_ENTRY'
+        }
       );
 
       if (
@@ -4168,7 +4201,7 @@ async function doScan({
     const directPaperBlocks =
       new Map();
 
-    // V1.9.7 QUICK SEM PRÉ-CHECK DIÁRIO:
+    // V1.10.0 GOOGLE SYNC:
     // Pullback aprovado pela IA NÃO abre imediatamente.
     // Primeiro passa pelo gate PAPER e vira ARMED; a entrada real só acontece
     // se o próximo candle 5m fechado confirmar o rompimento.
@@ -4186,6 +4219,15 @@ async function doScan({
         if (!paperGate.ok) {
           console.log(
             `[confirmed-entry] ${signal.symbol}: não armou — ${paperGate.reason}`
+          );
+
+          void googleSyncEvent(
+            'PAPER_BLOCKED',
+            {
+              signal,
+              reason: paperGate.reason,
+              phase: 'PRE_ARM'
+            }
           );
 
           if (
@@ -4218,6 +4260,15 @@ async function doScan({
             console.log(
               `[confirmed-entry] ARMED ${signal.symbol} ${signal.side} · ` +
               `triggerBar ${signal.t5?.openTime || 0} · IA já aprovada`
+            );
+
+            void googleSyncEvent(
+              'ARMED_CREATED',
+              {
+                signal,
+                message: armed.message,
+                phase: 'PRE_ARM'
+              }
             );
 
             await notify(
@@ -4253,6 +4304,15 @@ async function doScan({
       } else {
         console.log(
           `[paper] ${signal.symbol}: ${paperOpen.reason}`
+        );
+
+        void googleSyncEvent(
+          'PAPER_BLOCKED',
+          {
+            signal,
+            reason: paperOpen.reason,
+            phase: 'DIRECT'
+          }
         );
 
         directPaperBlocks.set(
@@ -4416,7 +4476,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.9.7 QUICK SEM PRÉ-CHECK DIÁRIO</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.10.0 GOOGLE SYNC</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o próximo lote agora\n' +
       '/scheduler — ver rotação automática de 1 minuto\n' +
@@ -4441,6 +4501,8 @@ async function handleMessage(msg) {
       '/paperpos — posições paper abertas\n' +
       '/papertrades — últimos trades paper\n' +
       '/performance — estatísticas + guards LONG/SHORT/setup\n' +
+      '/google — status Google Sheets/Drive\n' +
+      '/googletest — testar sincronização Google\n' +
       '/paperpause — pausar novas entradas paper\n' +
       '/paperresume — reativar paper trading\n' +
       '/paperreset CONFIRM — zerar histórico/banca virtual\n' +
@@ -4457,7 +4519,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.9.7 QUICK SEM PRÉ-CHECK DIÁRIO\n` +
+      `✅ Online — V1.10.0 GOOGLE SYNC\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🛡 Modo: CONFIDENCE GUARD V1.5.9\n` +
       `🤖 APPROVE exige confidence válida; ausente/0% vira WAIT\n` +
@@ -4599,6 +4661,30 @@ async function handleMessage(msg) {
         `♻️ Paper trading resetado.\nBanca virtual: ${paperConfig().startingBalance.toFixed(2)} USDC`
       );
     }
+  } else if (text.startsWith('/googletest')) {
+    const result =
+      await googleSyncEvent(
+        'TEST',
+        {
+          message: 'Teste manual solicitado pelo Telegram',
+          phase: 'MANUAL_TEST',
+          paper: paperStateInfo()
+        }
+      );
+
+    await sendMessage(
+      cfg.token,
+      activeChatId,
+      result.ok
+        ? '✅ Google Sync respondeu OK. Confira Events/Dashboard no Google Sheets.'
+        : `❌ Google Sync não confirmou: ${result.reason || result.error || 'erro desconhecido'}`
+    );
+  } else if (text.startsWith('/google')) {
+    await sendMessage(
+      cfg.token,
+      activeChatId,
+      googleSyncStatusText()
+    );
   } else if (text.startsWith('/paperpause')) {
     paperPause();
 
@@ -4927,7 +5013,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.9.7-no-quick-daily-precheck',
+    version: '1.10.0-google-sync',
     scanning,
     activeSignals: 0,
     legacyTrackerEnabled: false,
@@ -4969,6 +5055,11 @@ http.createServer((req, res) => {
     hyperliquidExecutions: hyperExecutionHistory.length,
     hyperliquidMainnetUnlocked: false,
     paperTrading: paperStateInfo(),
+    googleSync: {
+      enabled: googleSyncConfig().enabled,
+      configured: googleSyncConfig().configured,
+      stats: googleSyncStats()
+    },
     holdAI: {
       enabled: true,
       defaultAssets: defaultHoldBases(),
@@ -4984,7 +5075,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.9.7 QUICK SEM PRÉ-CHECK DIÁRIO pronto ✅');
+console.log('Crypto Futures Scanner V1.10.0 GOOGLE SYNC pronto ✅');
 
 // Em rolling deploy o processo antigo do Render pode permanecer vivo por
 // alguns segundos. Um pequeno atraso evita duas instâncias consumindo a

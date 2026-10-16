@@ -1,3 +1,18 @@
+CRYPTO FUTURES SCANNER V1.10.0 — GOOGLE SYNC
+
+Novos arquivos:
+- google-sync.js
+- google-apps-script.gs
+- GOOGLE-SETUP.txt
+
+Novos comandos Telegram:
+- /google
+- /googletest
+
+Google Sheets registra trades e eventos.
+Google Drive guarda backup do paper-state.
+A estratégia da V1.9.7 foi preservada.
+
 CRYPTO FUTURES SCANNER V1.9.7 — QUICK SEM PRÉ-CHECK DIÁRIO
 
 MUDANÇA

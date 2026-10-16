@@ -11,6 +11,9 @@ import {
 import {
   eliteQuickScalpAssessment
 } from './elite-quick-scalp.js';
+import {
+  googleSyncEvent
+} from './google-sync.js';
 
 function boolEnv(name, fallback = false) {
   const raw = process.env[name];
@@ -53,7 +56,7 @@ export function paperConfig() {
     leverage:
       intEnv('PAPER_LEVERAGE', 2, 1, 50),
 
-    // V1.9.7 QUICK SEM PRÉ-CHECK DIÁRIO
+    // V1.10.0 GOOGLE SYNC
     quickScalpEnabled:
       String(process.env.PAPER_QUICK_SCALP_ENABLED || 'true')
         .toLowerCase() !== 'false',
@@ -2582,6 +2585,31 @@ export function paperNetRRPreview(signal) {
 }
 
 
+
+function googlePaperSnapshot() {
+  return {
+    at: Date.now(),
+    startingBalance: Number(state.startingBalance || 0),
+    balance: Number(state.balance || 0),
+    equity: Number(currentEquity() || 0),
+    unrealized: Number(currentUnrealized() || 0),
+    totalGrossPnl: Number(state.totalGrossPnl || 0),
+    totalNetPnl: Number(state.totalNetPnl || 0),
+    totalFees: Number(state.totalFees || 0),
+    maxDrawdownPct: Number(state.maxDrawdownPct || 0),
+    day: { ...(state.day || {}) },
+    openPositions: state.openPositions.map(p => ({ ...p })),
+    closedTrades: state.closedTrades.slice(0, 300).map(t => ({ ...t }))
+  };
+}
+
+function googleSyncPaperEvent(event, payload = {}) {
+  void googleSyncEvent(event, {
+    ...payload,
+    snapshot: googlePaperSnapshot()
+  });
+}
+
 function eliteQuickOptions(
   cfg,
   strategyProfile
@@ -3360,6 +3388,11 @@ export function maybeOpenPaperPosition(signal) {
     updateDrawdown();
     saveState();
 
+    googleSyncPaperEvent(
+      'PAPER_TRADE_OPENED',
+      { trade: { ...position } }
+    );
+
     return {
       opened: true,
       position,
@@ -3530,6 +3563,11 @@ function finalizePosition(position, outcome, exitMark) {
 
   updateDrawdown();
   saveState();
+
+  googleSyncPaperEvent(
+    'PAPER_TRADE_CLOSED',
+    { trade: { ...closed } }
+  );
 
   return closed;
 }
@@ -4600,7 +4638,7 @@ function updateOnePosition(position, snap) {
     }
   }
 
-  // V1.9.7 QUICK SEM PRÉ-CHECK DIÁRIO:
+  // V1.10.0 GOOGLE SYNC:
   // fecha 100% ao tocar o preço que entrega o alvo LÍQUIDO configurado,
   // já descontando fee + slippage.
   if (position.quickScalpEnabled) {
@@ -6163,7 +6201,7 @@ export function paperStatusText() {
       : null;
 
   return [
-    '🎯 <b>PAPER TRADING — V1.9.7 QUICK SEM PRÉ-CHECK DIÁRIO</b>',
+    '☁️ <b>PAPER TRADING — V1.10.0 GOOGLE SYNC</b>',
     '',
     `Status: ${cfg.enabled ? '✅ ATIVO' : '⛔ DESATIVADO'} · ${state.paused ? '⏸ PAUSADO' : '▶️ RODANDO'}`,
     `💰 Banca inicial: ${state.startingBalance.toFixed(2)} USDC`,
@@ -6314,18 +6352,21 @@ export function paperTradesText(limit = 10) {
 export function paperPause() {
   state.paused = true;
   saveState();
+  googleSyncPaperEvent('PAPER_PAUSED');
   return state.paused;
 }
 
 export function paperResume() {
   state.paused = false;
   saveState();
+  googleSyncPaperEvent('PAPER_RESUMED');
   return state.paused;
 }
 
 export function paperReset() {
   state = freshState();
   saveState();
+  googleSyncPaperEvent('PAPER_RESET');
   return state;
 }
 
