@@ -56,7 +56,7 @@ export function paperConfig() {
     leverage:
       intEnv('PAPER_LEVERAGE', 2, 1, 50),
 
-    // V1.10.0 GOOGLE SYNC
+    // V1.10.1 GOOGLE SYNC VERIFIED
     quickScalpEnabled:
       String(process.env.PAPER_QUICK_SCALP_ENABLED || 'true')
         .toLowerCase() !== 'false',
@@ -4638,7 +4638,7 @@ function updateOnePosition(position, snap) {
     }
   }
 
-  // V1.10.0 GOOGLE SYNC:
+  // V1.10.1 GOOGLE SYNC VERIFIED:
   // fecha 100% ao tocar o preço que entrega o alvo LÍQUIDO configurado,
   // já descontando fee + slippage.
   if (position.quickScalpEnabled) {
@@ -6201,7 +6201,7 @@ export function paperStatusText() {
       : null;
 
   return [
-    '☁️ <b>PAPER TRADING — V1.10.0 GOOGLE SYNC</b>',
+    '☁️ <b>PAPER TRADING — V1.10.1 GOOGLE SYNC VERIFIED</b>',
     '',
     `Status: ${cfg.enabled ? '✅ ATIVO' : '⛔ DESATIVADO'} · ${state.paused ? '⏸ PAUSADO' : '▶️ RODANDO'}`,
     `💰 Banca inicial: ${state.startingBalance.toFixed(2)} USDC`,

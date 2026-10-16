@@ -4131,7 +4131,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.10.0: Google Sync · histórico no Sheets + backup no Drive · Quick Entry Quality preservado. ` +
+    `<i>V1.10.1: Google Sync · histórico no Sheets + backup no Drive · Quick Entry Quality preservado. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }
