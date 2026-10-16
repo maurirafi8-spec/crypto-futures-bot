@@ -1,3 +1,16 @@
+CRYPTO FUTURES SCANNER V1.10.2 — GOOGLE FULL VERIFY
+
+CORREÇÃO PRINCIPAL
+O antigo /googletest provava apenas que a aba Events recebeu a mensagem.
+
+Agora ele só considera o teste completo quando:
+- Events foi gravado;
+- Dashboard foi atualizado;
+- paper-state-latest.json foi criado/atualizado no Drive.
+
+Também foi restaurada a atualização automática do Dashboard para os snapshots
+e o backup histórico após PAPER_TRADE_CLOSED.
+
 CRYPTO FUTURES SCANNER V1.10.0 — GOOGLE SYNC
 
 Novos arquivos:

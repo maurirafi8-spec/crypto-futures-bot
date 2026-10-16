@@ -1,4 +1,4 @@
-const BOT_VERSION = '1.10.1-google-sync-verified';
+const BOT_VERSION = '1.10.2-google-full-verify';
 
 function boolEnv(name, fallback = false) {
   const raw = process.env[name];
@@ -157,7 +157,7 @@ export function googleSyncStatusText() {
   const cfg = googleSyncConfig();
 
   return [
-    '☁️ <b>GOOGLE SYNC — V1.10.1</b>',
+    '☁️ <b>GOOGLE SYNC — V1.10.2 FULL VERIFY</b>',
     '',
     `Status: ${!cfg.enabled ? '⛔ DESATIVADO' : cfg.configured ? '✅ CONFIGURADO' : '🟡 AGUARDANDO CONFIGURAÇÃO'}`,
     `📊 Sheets + Drive: ${cfg.configured ? 'PRONTO' : 'webhook/token pendentes'}`,

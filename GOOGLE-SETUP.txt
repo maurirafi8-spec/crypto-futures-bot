@@ -1,29 +1,36 @@
-V1.10.1 GOOGLE SYNC VERIFIED
+V1.10.2 GOOGLE FULL VERIFY
 
-POR QUE ESTA VERSÃO EXISTE
-A V1.10.0 aceitava qualquer resposta {"ok":true} do Web App como sucesso.
-Assim um deployment antigo podia responder OK sem escrever na planilha.
+O /googletest agora testa TUDO:
+1. grava uma linha na aba Events;
+2. atualiza o Dashboard;
+3. cria/atualiza paper-state-latest.json na pasta Backups.
 
-AGORA
-O bot só considera sincronização bem-sucedida se o Apps Script responder:
-{"ok":true,"written":true,...}
+IMPORTANTE:
+Depois de trocar o código do Apps Script, não basta salvar.
+É obrigatório atualizar a implantação Web App:
 
-PASSOS
-1. No Apps Script, substitua TODO o código pelo conteúdo de google-apps-script.gs.
-2. Execute configurarArquivosExistentes.
-3. Não compartilhe o SYNC_TOKEN.
-4. Execute testeDiretoNaPlanilha e confirme uma nova linha na aba Events.
-5. Vá em Implantar > Gerenciar implantações.
-6. Clique no lápis da implantação Web App.
-7. Em Versão, escolha NOVA VERSÃO.
-8. Implantar.
-9. Copie a URL /exec mostrada nessa implantação.
-10. No navegador, a URL deve mostrar version 1.10.1-google-sync-verified
-    e configured:true.
-11. No Render, use essa mesma URL em GOOGLE_SYNC_WEBHOOK_URL.
-12. Faça deploy/restart do bot V1.10.1.
-13. No Telegram:
-    /google
-    /googletest
+Implantar
+> Gerenciar implantações
+> lápis
+> Versão: NOVA VERSÃO
+> Implantar
 
-O /googletest só dirá sucesso quando written=true vier do Google.
+Depois faça deploy/restart da V1.10.2 no Render.
+
+TESTE:
+Telegram:
+/googletest
+
+Resposta correta:
+
+GOOGLE SYNC COMPLETO OK
+Events: linha X gravada
+Dashboard: atualizado
+Drive: paper-state-latest.json gravado
+
+Também existe no Apps Script:
+testeCompletoLocal
+
+Essa função testa Sheets + Dashboard + Drive sem depender do Render.
+
+O SYNC_TOKEN continua o mesmo e não deve ser compartilhado.
