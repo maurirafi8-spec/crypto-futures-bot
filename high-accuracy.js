@@ -12,20 +12,88 @@ function upper(value) {
   return String(value || '').toUpperCase();
 }
 
+function oiPolicyForSide(
+  signal,
+  strongContraryPct = 0.20
+) {
+  const side = upper(signal?.side);
+  const confirmedClass =
+    upper(signal?.confirmedEntry?.smartOiClass);
+  const regime =
+    upper(
+      signal?.confirmedEntry?.smartOiRegime ||
+      signal?.oiContext?.regime ||
+      'NEUTRAL'
+    );
+  const oiPct = Math.abs(num(signal?.oiContext?.oiPct));
+
+  if (confirmedClass) {
+    if (confirmedClass === 'STRONG_CONTRARY') {
+      return { level: 'STRONG_CONTRARY', regime, oiPct, accepted: false };
+    }
+
+    if (confirmedClass === 'MILD_CONTRARY') {
+      return { level: 'MILD_CONTRARY', regime, oiPct, accepted: true };
+    }
+
+    return { level: confirmedClass, regime, oiPct, accepted: true };
+  }
+
+  if (signal?.oiContext?.confirmed === true) {
+    return { level: 'FAVORABLE', regime, oiPct, accepted: true };
+  }
+
+  const neutral = new Set([
+    'NEUTRAL',
+    'OI_BUILDUP_NEUTRAL_PRICE',
+    'OI_UNWIND_NEUTRAL_PRICE'
+  ]);
+
+  if (neutral.has(regime)) {
+    return { level: 'NEUTRAL', regime, oiPct, accepted: true };
+  }
+
+  if (
+    (side === 'LONG' && regime === 'SHORT_COVERING') ||
+    (side === 'SHORT' && regime === 'LONG_UNWIND')
+  ) {
+    return { level: 'SUPPORTIVE', regime, oiPct, accepted: true };
+  }
+
+  const contrary =
+    (side === 'LONG' && ['SHORT_BUILDUP', 'LONG_UNWIND'].includes(regime)) ||
+    (side === 'SHORT' && ['LONG_BUILDUP', 'SHORT_COVERING'].includes(regime));
+
+  if (contrary) {
+    const strong = oiPct >= strongContraryPct;
+    return {
+      level: strong ? 'STRONG_CONTRARY' : 'MILD_CONTRARY',
+      regime,
+      oiPct,
+      accepted: !strong
+    };
+  }
+
+  return { level: 'NEUTRAL', regime, oiPct, accepted: true };
+}
+
 export function highAccuracyAssessment(
   signal,
   {
-    pullbackMinScore = 84,
+    pullbackMinScore = 82,
     pullbackMinAi = 78,
     breakoutMinScore = 88,
-    breakoutMinAi = 80,
-    pullbackMinVolume = 0.65,
-    breakoutMinVolume = 1.10,
+    breakoutMinAi = 78,
+    pullbackMinVolume = 1.00,
+    breakoutMinVolume = 1.00,
     pullbackMinEdge = 8,
     breakoutMinEdge = 10,
     minMomentumConfirmations = 2,
     requireConfirmedPullback = true,
-    breakoutExpansionOnly = true
+    breakoutExpansionOnly = true,
+    unaligned4hScorePenalty = 4,
+    mildOiScorePenalty = 4,
+    strongOiContraryPct = 0.20
   } = {}
 ) {
   if (!signal) {
@@ -46,7 +114,7 @@ export function highAccuracyAssessment(
     };
   }
 
-  const score = num(signal.score);
+  const rawScore = num(signal.score);
   const ai = num(signal?.ai?.confidence);
   const volume = Math.max(
     num(signal?.t5?.volumeRatio),
@@ -54,7 +122,6 @@ export function highAccuracyAssessment(
   );
   const edge = num(signal.directionEdge);
   const momentumCount = num(signal?.momentum?.confirmationCount);
-  const oiOk = bool(signal?.oiContext?.confirmed);
   const btcOk =
     signal?.btcRegime?.ok !== false &&
     !bool(signal?.btcRegime?.strongOpposite);
@@ -71,6 +138,18 @@ export function highAccuracyAssessment(
     bool(signal?.pullback?.confirmed)
   );
 
+  const oiPolicy =
+    oiPolicyForSide(signal, strongOiContraryPct);
+
+  const scorePenalty4h =
+    aligned4h ? 0 : Math.max(0, num(unaligned4hScorePenalty));
+  const scorePenaltyOi =
+    oiPolicy.level === 'MILD_CONTRARY'
+      ? Math.max(0, num(mildOiScorePenalty))
+      : 0;
+  const effectiveScore =
+    Math.max(0, rawScore - scorePenalty4h - scorePenaltyOi);
+
   const minScore = isBreakout ? breakoutMinScore : pullbackMinScore;
   const minAi = isBreakout ? breakoutMinAi : pullbackMinAi;
   const minVolume = isBreakout ? breakoutMinVolume : pullbackMinVolume;
@@ -78,7 +157,15 @@ export function highAccuracyAssessment(
 
   const reasons = [];
 
-  if (score < minScore) reasons.push(`score ${score} < ${minScore}`);
+  if (effectiveScore < minScore) {
+    const weights = [];
+    if (scorePenalty4h > 0) weights.push(`4H -${scorePenalty4h}`);
+    if (scorePenaltyOi > 0) weights.push(`OI leve -${scorePenaltyOi}`);
+    reasons.push(
+      `score efetivo ${effectiveScore} < ${minScore}` +
+      `${weights.length ? ` (${rawScore} bruto; ${weights.join(', ')})` : ''}`
+    );
+  }
   if (ai < minAi) reasons.push(`IA ${ai}% < ${minAi}%`);
   if (volume < minVolume) {
     reasons.push(`volume ${volume.toFixed(2)}x < ${minVolume.toFixed(2)}x`);
@@ -89,13 +176,16 @@ export function highAccuracyAssessment(
       `momentum ${momentumCount}/3 < ${minMomentumConfirmations}/3`
     );
   }
-  if (!oiOk) reasons.push(`OI ${signal?.oiContext?.regime || 'não confirmado'}`);
+  if (oiPolicy.level === 'STRONG_CONTRARY') {
+    reasons.push(
+      `OI fortemente contrário (${oiPolicy.regime}; ${oiPolicy.oiPct.toFixed(2)}%)`
+    );
+  }
   if (!btcOk) reasons.push('BTC contrário');
   if (!antiChaseOk) reasons.push('anti-chase bloqueado');
   if (!exhaustionOk) {
     reasons.push(`exaustão: ${signal?.trendExhaustion?.reason || 'bloqueado'}`);
   }
-  if (!aligned4h) reasons.push('4H não alinhado');
 
   if (isPullback) {
     if (regime !== 'TREND') {
@@ -103,7 +193,7 @@ export function highAccuracyAssessment(
     }
     if (!strongTrigger) reasons.push('trigger forte não confirmado');
     if (requireConfirmedPullback && !confirmedPullback) {
-      reasons.push('Pullback HA exige CONFIRMED ENTRY 2x5m');
+      reasons.push('Pullback HA exige CONFIRMED ENTRY 1x5m');
     }
   }
 
@@ -118,10 +208,30 @@ export function highAccuracyAssessment(
 
   return {
     eligible: reasons.length === 0,
-    setup, side, score, ai, volume, edge, momentumCount,
-    oiOk, btcOk, antiChaseOk, exhaustionOk, aligned4h,
-    confirmedPullback, regime,
-    minScore, minAi, minVolume, minEdge,
+    setup,
+    side,
+    score: rawScore,
+    rawScore,
+    effectiveScore,
+    scorePenalty4h,
+    scorePenaltyOi,
+    ai,
+    volume,
+    edge,
+    momentumCount,
+    oiOk: oiPolicy.accepted,
+    oiLevel: oiPolicy.level,
+    oiRegime: oiPolicy.regime,
+    btcOk,
+    antiChaseOk,
+    exhaustionOk,
+    aligned4h,
+    confirmedPullback,
+    regime,
+    minScore,
+    minAi,
+    minVolume,
+    minEdge,
     minMomentumConfirmations,
     reasons
   };

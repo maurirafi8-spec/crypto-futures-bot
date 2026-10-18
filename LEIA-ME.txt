@@ -1,15 +1,17 @@
-CRYPTO FUTURES SCANNER V1.10.2 — GOOGLE FULL VERIFY
+CRYPTO FUTURES SCANNER V1.11.1 — FAST ENTRY
 
-CORREÇÃO PRINCIPAL
-O antigo /googletest provava apenas que a aba Events recebeu a mensagem.
+ATUALIZAÇÃO PRINCIPAL
+- Pullback: score 82+, IA 78%+, trigger 4/5+, confirmação em 1 candle M5 e volume 1,00x.
+- Breakout Strong: score 88+, IA 78%+, volume 1,00x e entrada direta.
+- 4H contrário deixou de ser bloqueio duro e passa a reduzir 4 pontos do score.
+- OI neutro/suporte é aceito; OI levemente contrário reduz 4 pontos; OI fortemente contrário continua bloqueando.
+- Google Sync, Dashboard, Backups e proteções de PAPER permanecem ativos.
 
-Agora ele só considera o teste completo quando:
-- Events foi gravado;
-- Dashboard foi atualizado;
-- paper-state-latest.json foi criado/atualizado no Drive.
+Veja LEIA-ME-ACTIVE.txt para todos os detalhes e ENVs opcionais.
 
-Também foi restaurada a atualização automática do Dashboard para os snapshots
-e o backup histórico após PAPER_TRADE_CLOSED.
+============================================================
+HISTÓRICO / DOCUMENTAÇÃO ANTERIOR
+============================================================
 
 CRYPTO FUTURES SCANNER V1.10.0 — GOOGLE SYNC
 

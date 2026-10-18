@@ -24,34 +24,51 @@ function oiFavorable(signal) {
   const regime = upper(
     signal?.confirmedEntry?.smartOiRegime ||
     signal?.oiContext?.regime ||
-    'UNKNOWN'
+    'NEUTRAL'
   );
+  const oiAbs = Math.abs(n(signal?.oiContext?.oiPct));
 
   if (smart) {
     return {
-      ok: smart === 'FAVORABLE',
+      ok: smart !== 'STRONG_CONTRARY',
       label: smart,
       regime
     };
   }
 
   if (signal?.oiContext?.confirmed === true) {
+    return { ok: true, label: 'FAVORABLE', regime };
+  }
+
+  if ([
+    'NEUTRAL',
+    'OI_BUILDUP_NEUTRAL_PRICE',
+    'OI_UNWIND_NEUTRAL_PRICE'
+  ].includes(regime)) {
+    return { ok: true, label: 'NEUTRAL', regime };
+  }
+
+  if (
+    (side === 'LONG' && regime === 'SHORT_COVERING') ||
+    (side === 'SHORT' && regime === 'LONG_UNWIND')
+  ) {
+    return { ok: true, label: 'SUPPORTIVE', regime };
+  }
+
+  const contrary =
+    (side === 'LONG' && ['SHORT_BUILDUP', 'LONG_UNWIND'].includes(regime)) ||
+    (side === 'SHORT' && ['LONG_BUILDUP', 'SHORT_COVERING'].includes(regime));
+
+  if (contrary) {
+    const strong = oiAbs >= 0.20;
     return {
-      ok: true,
-      label: 'FAVORABLE',
+      ok: !strong,
+      label: strong ? 'STRONG_CONTRARY' : 'MILD_CONTRARY',
       regime
     };
   }
 
-  const directional =
-    (side === 'LONG' && regime === 'LONG_BUILDUP') ||
-    (side === 'SHORT' && regime === 'SHORT_BUILDUP');
-
-  return {
-    ok: directional,
-    label: directional ? 'FAVORABLE' : 'NOT_FAVORABLE',
-    regime
-  };
+  return { ok: true, label: 'NEUTRAL', regime };
 }
 
 export function paperBlockFeedback(
@@ -117,8 +134,18 @@ export function paperBlockFeedback(
         ),
         check(oi.ok,
           `OI ${esc(oi.regime)} · ${esc(oi.label)}`),
-        check(regime === 'EXPANSION',
-          `Regime ${esc(regime)} · exige EXPANSION`),
+        check(
+          regime === 'EXPANSION' ||
+          (
+            cfg.activeBalancedEnabled &&
+            cfg.activeTrendBreakoutEnabled &&
+            regime === 'TREND' &&
+            volume >= cfg.activeTrendBreakoutMinVolume &&
+            breakoutBodyAtr <= cfg.activeTrendBreakoutMaxBodyAtr &&
+            breakoutDistanceAtr <= cfg.activeTrendBreakoutMaxDistanceAtr
+          ),
+          `Regime ${esc(regime)} · EXPANSION ou TREND BOOSTED`
+        ),
         check(
           breakoutBodyAtr <= cfg.quickBreakoutMaxBodyAtr,
           `Corpo ${breakoutBodyAtr.toFixed(2)} ATR/≤${cfg.quickBreakoutMaxBodyAtr.toFixed(2)}`
@@ -127,8 +154,7 @@ export function paperBlockFeedback(
           breakoutDistanceAtr <= cfg.quickBreakoutMaxDistanceAtr,
           `Distância EMA20 ${breakoutDistanceAtr.toFixed(2)} ATR/≤${cfg.quickBreakoutMaxDistanceAtr.toFixed(2)}`
         ),
-        check(aligned4h,
-          '4H alinhado'),
+        `⚖️ 4H ${aligned4h ? 'alinhado · sem penalidade' : 'contrário · peso no score'}`,
         check(exhaustionOk,
           'Trend Exhaustion OK'),
         check(antiChaseOk,
@@ -181,8 +207,7 @@ export function paperBlockFeedback(
           `Origem ${esc(originRegime)} · exige TREND`),
         check(!confirmationRegime || ['TREND','EXPANSION'].includes(confirmationRegime),
           `Confirmação ${esc(confirmationRegime || '—')}`),
-        check(aligned4h,
-          '4H alinhado'),
+        `⚖️ 4H ${aligned4h ? 'alinhado · sem penalidade' : 'contrário · peso no score'}`,
         check(exhaustionOk,
           'Trend Exhaustion OK'),
         check(antiChaseOk,

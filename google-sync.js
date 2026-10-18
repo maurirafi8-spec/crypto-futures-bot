@@ -1,4 +1,4 @@
-const BOT_VERSION = '1.10.2-google-full-verify';
+const BOT_VERSION = '1.11.1-fast-entry';
 
 function boolEnv(name, fallback = false) {
   const raw = process.env[name];
@@ -93,19 +93,9 @@ async function sendEvent(event, payload = {}) {
       parsed = { raw: raw.slice(0, 500) };
     }
 
-    if (
-      !response.ok ||
-      parsed?.ok === false ||
-      parsed?.written !== true
-    ) {
+    if (!response.ok || parsed?.ok === false) {
       throw new Error(
-        `HTTP ${response.status}: ${String(
-          parsed?.error ||
-          parsed?.message ||
-          (!parsed?.written
-            ? 'webhook respondeu OK mas NÃO confirmou gravação (written=true ausente)'
-            : raw)
-        ).slice(0, 400)}`
+        `HTTP ${response.status}: ${String(parsed?.error || parsed?.message || raw).slice(0, 400)}`
       );
     }
 
@@ -157,7 +147,7 @@ export function googleSyncStatusText() {
   const cfg = googleSyncConfig();
 
   return [
-    '☁️ <b>GOOGLE SYNC — V1.10.2 FULL VERIFY</b>',
+    '☁️ <b>GOOGLE SYNC — V1.10.0</b>',
     '',
     `Status: ${!cfg.enabled ? '⛔ DESATIVADO' : cfg.configured ? '✅ CONFIGURADO' : '🟡 AGUARDANDO CONFIGURAÇÃO'}`,
     `📊 Sheets + Drive: ${cfg.configured ? 'PRONTO' : 'webhook/token pendentes'}`,

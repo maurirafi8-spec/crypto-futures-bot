@@ -1,0 +1,111 @@
+CRYPTO FUTURES SCANNER V1.11.1 — FAST ENTRY
+
+OBJETIVO
+Aumentar a frequência de PAPER trades sem desligar as proteções principais.
+Esta versão parte do perfil ACTIVE BALANCED e acelera a entrada de Pullback e Breakout.
+
+FAST ENTRY — DEFAULT ATIVO
+PAPER_FAST_ENTRY_ENABLED=true
+
+Compatibilidade:
+PAPER_ACTIVE_BALANCED_ENABLED continua aceito como fallback.
+
+PULLBACK FAST
+- Score efetivo >= 82
+- IA >= 78%
+- Trigger >= 4/5
+- Confirmed Entry continua obrigatório
+- Janela de confirmação: 1 candle M5 fechado
+- Volume de confirmação >= 1,00x
+- Chase <= 0,65 ATR
+- Momentum >= 2/3
+- Origem TREND
+- 4H NÃO bloqueia sozinho: se contrário, -4 pontos no score
+- OI neutro/suporte permitido
+- OI levemente contrário: -4 pontos no score
+- OI fortemente contrário: bloqueia
+- Trend Exhaustion continua obrigatório
+- Anti-chase continua obrigatório
+- BTC fortemente contrário continua bloqueando
+
+BREAKOUT STRONG FAST
+- Score efetivo >= 88
+- IA >= 78%
+- Volume >= 1,00x
+- Edge >= 8
+- Momentum >= 2/3
+- Entrada direta: não entra em ARMED
+- 4H contrário: -4 pontos no score, sem bloqueio automático
+- OI neutro/suporte permitido
+- OI levemente contrário: -4 pontos no score
+- OI fortemente contrário: bloqueia
+- Trend Exhaustion e Anti-chase continuam ativos
+
+CLASSIFICAÇÃO DO OI
+Por padrão, um OI contrário é considerado forte quando a variação absoluta de OI é >= 0,20%.
+Abaixo disso, é tratado como contrário leve e apenas reduz o score.
+
+TREND BOOSTED
+Breakout em TREND continua possível quando estiver muito limpo:
+- volume >= 1,80x
+- corpo <= 1,00 ATR
+- distância EMA20 <= 1,10 ATR
+
+PROTEÇÕES MANTIDAS
+- PAPER Trading
+- Momentum mínimo 2/3
+- Confirmed Entry para Pullback
+- Anti-chase
+- Trend Exhaustion
+- BTC guard
+- Max 1 Quick simultâneo
+- Quick Economics Guard
+- Daily loss lock real
+- Performance Guard
+- Google Sync / Dashboard / Backups
+
+ENVS OPCIONAIS PRINCIPAIS
+MIN_SCORE=82
+AI_MIN_CONFIDENCE=78
+QUALITY_BREAKOUT_MIN_SCORE=88
+QUALITY_BREAKOUT_MIN_VOLUME_RATIO=1.00
+QUALITY_BREAKOUT_MIN_EDGE=8
+PAPER_MIN_SCORE=82
+PAPER_MIN_AI_CONFIDENCE=78
+PAPER_BREAKOUT_MIN_SCORE=88
+PAPER_BREAKOUT_MIN_AI_CONFIDENCE=78
+
+PAPER_FAST_ENTRY_ENABLED=true
+PAPER_FAST_4H_SCORE_PENALTY=4
+PAPER_FAST_MILD_OI_SCORE_PENALTY=4
+PAPER_FAST_STRONG_OI_CONTRARY_PCT=0.20
+
+PAPER_ACTIVE_PULLBACK_MIN_SCORE=82
+PAPER_ACTIVE_PULLBACK_MIN_AI=78
+PAPER_ACTIVE_PULLBACK_MAX_CHASE_ATR=0.65
+PAPER_ACTIVE_PULLBACK_MIN_CONFIRM_VOLUME=1.00
+PAPER_ACTIVE_PULLBACK_MIN_TRIGGER_QUALITY=4
+
+PAPER_ACTIVE_BREAKOUT_MIN_SCORE=88
+PAPER_ACTIVE_BREAKOUT_MIN_AI=78
+PAPER_ACTIVE_BREAKOUT_MIN_VOLUME=1.00
+PAPER_ACTIVE_BREAKOUT_MIN_EDGE=8
+PAPER_ACTIVE_BREAKOUT_MAX_BODY_ATR=1.20
+PAPER_ACTIVE_BREAKOUT_MAX_DISTANCE_ATR=1.35
+
+PAPER_ACTIVE_TREND_BREAKOUT_ENABLED=true
+PAPER_ACTIVE_TREND_BREAKOUT_MIN_VOLUME=1.80
+PAPER_ACTIVE_TREND_BREAKOUT_MAX_BODY_ATR=1.00
+PAPER_ACTIVE_TREND_BREAKOUT_MAX_DISTANCE_ATR=1.10
+
+CONFIRMED_ENTRY_MAX_WAIT_BARS=1
+CONFIRMED_ENTRY_MIN_VOLUME_RATIO=1.00
+CONFIRMED_ENTRY_VOLUME_RESUME_MULTIPLIER=1.00
+CONFIRMED_ENTRY_NEUTRAL_OI_MIN_VOLUME_RATIO=0
+CONFIRMED_ENTRY_NEUTRAL_OI_REQUIRE_MACD=false
+CONFIRMED_ENTRY_STRONG_OI_CONTRARY_PCT=0.20
+
+Não é obrigatório criar essas ENVs no Render: os defaults da V1.11.1 já usam esses valores.
+
+IMPORTANTE
+Esta versão continua PAPER. Mais frequência pode aumentar falsos sinais; compare WR, Profit Factor, MFE/MAE e resultado por setup antes de qualquer uso real.

@@ -56,7 +56,73 @@ export function paperConfig() {
     leverage:
       intEnv('PAPER_LEVERAGE', 2, 1, 50),
 
-    // V1.10.2 GOOGLE FULL VERIFY
+    // V1.11.1 FAST ENTRY
+    activeBalancedEnabled:
+      String(process.env.PAPER_FAST_ENTRY_ENABLED ?? process.env.PAPER_ACTIVE_BALANCED_ENABLED ?? 'true')
+        .toLowerCase() !== 'false',
+
+    // FAST ENTRY: 4H e OI levemente contrário reduzem score,
+    // mas não cancelam sozinhos. OI fortemente contrário continua bloqueando.
+    fast4hScorePenalty:
+      numEnv('PAPER_FAST_4H_SCORE_PENALTY', 4, 0, 20),
+
+    fastMildOiScorePenalty:
+      numEnv('PAPER_FAST_MILD_OI_SCORE_PENALTY', 4, 0, 20),
+
+    fastStrongOiContraryPct:
+      numEnv('PAPER_FAST_STRONG_OI_CONTRARY_PCT', 0.20, 0.05, 5),
+
+    // O FAST ENTRY usa um segundo conjunto de limites para evitar que
+    // ENVs antigas mais rígidas da V1.9.x mantenham o bot parado.
+    activePullbackMinScore:
+      numEnv('PAPER_ACTIVE_PULLBACK_MIN_SCORE', 82, 68, 100),
+
+    activePullbackMinAi:
+      numEnv('PAPER_ACTIVE_PULLBACK_MIN_AI', 78, 0, 100),
+
+    activePullbackMaxChaseAtr:
+      numEnv('PAPER_ACTIVE_PULLBACK_MAX_CHASE_ATR', 0.65, 0.1, 2),
+
+    activePullbackMinConfirmVolume:
+      numEnv('PAPER_ACTIVE_PULLBACK_MIN_CONFIRM_VOLUME', 1.00, 0.2, 5),
+
+    activePullbackMinTriggerQuality:
+      intEnv('PAPER_ACTIVE_PULLBACK_MIN_TRIGGER_QUALITY', 4, 1, 5),
+
+    activeBreakoutMinScore:
+      numEnv('PAPER_ACTIVE_BREAKOUT_MIN_SCORE', 88, 68, 100),
+
+    activeBreakoutMinAi:
+      numEnv('PAPER_ACTIVE_BREAKOUT_MIN_AI', 78, 0, 100),
+
+    activeBreakoutMinVolume:
+      numEnv('PAPER_ACTIVE_BREAKOUT_MIN_VOLUME', 1.00, 0.2, 5),
+
+    activeBreakoutMinEdge:
+      numEnv('PAPER_ACTIVE_BREAKOUT_MIN_EDGE', 8, 0, 50),
+
+    activeBreakoutMaxBodyAtr:
+      numEnv('PAPER_ACTIVE_BREAKOUT_MAX_BODY_ATR', 1.20, 0.2, 5),
+
+    activeBreakoutMaxDistanceAtr:
+      numEnv('PAPER_ACTIVE_BREAKOUT_MAX_DISTANCE_ATR', 1.35, 0.2, 5),
+
+    // TREND BOOSTED: permite breakout em TREND apenas quando a força é
+    // muito superior ao normal e o preço ainda não está esticado.
+    activeTrendBreakoutEnabled:
+      String(process.env.PAPER_ACTIVE_TREND_BREAKOUT_ENABLED || 'true')
+        .toLowerCase() !== 'false',
+
+    activeTrendBreakoutMinVolume:
+      numEnv('PAPER_ACTIVE_TREND_BREAKOUT_MIN_VOLUME', 1.80, 0.5, 10),
+
+    activeTrendBreakoutMaxBodyAtr:
+      numEnv('PAPER_ACTIVE_TREND_BREAKOUT_MAX_BODY_ATR', 1.00, 0.2, 3),
+
+    activeTrendBreakoutMaxDistanceAtr:
+      numEnv('PAPER_ACTIVE_TREND_BREAKOUT_MAX_DISTANCE_ATR', 1.10, 0.2, 3),
+
+    // V1.11.1 FAST ENTRY
     quickScalpEnabled:
       String(process.env.PAPER_QUICK_SCALP_ENABLED || 'true')
         .toLowerCase() !== 'false',
@@ -165,16 +231,16 @@ export function paperConfig() {
       numEnv('PAPER_MIN_NOTIONAL_USDC', 10, 1, 10000),
 
     minAiConfidence:
-      numEnv('PAPER_MIN_AI_CONFIDENCE', 65, 0, 100),
+      numEnv('PAPER_MIN_AI_CONFIDENCE', 78, 0, 100),
 
     minScore:
-      numEnv('PAPER_MIN_SCORE', 68, 0, 100),
+      numEnv('PAPER_MIN_SCORE', 82, 0, 100),
 
     breakoutMinAiConfidence:
-      numEnv('PAPER_BREAKOUT_MIN_AI_CONFIDENCE', 75, 0, 100),
+      numEnv('PAPER_BREAKOUT_MIN_AI_CONFIDENCE', 78, 0, 100),
 
     breakoutMinScore:
-      numEnv('PAPER_BREAKOUT_MIN_SCORE', 82, 0, 100),
+      numEnv('PAPER_BREAKOUT_MIN_SCORE', 88, 0, 100),
 
     // V1.9.1 SMART ARMED CONFIRM
     strategyProfile:
@@ -189,7 +255,7 @@ export function paperConfig() {
       numEnv('PAPER_HIGH_ACCURACY_RISK_PCT', 0.35, 0.1, 2),
 
     highAccuracyPullbackMinScore:
-      numEnv('PAPER_HIGH_ACCURACY_PULLBACK_MIN_SCORE', 84, 68, 100),
+      numEnv('PAPER_HIGH_ACCURACY_PULLBACK_MIN_SCORE', 82, 68, 100),
 
     highAccuracyPullbackMinAi:
       numEnv('PAPER_HIGH_ACCURACY_PULLBACK_MIN_AI', 78, 0, 100),
@@ -198,13 +264,13 @@ export function paperConfig() {
       numEnv('PAPER_HIGH_ACCURACY_BREAKOUT_MIN_SCORE', 88, 68, 100),
 
     highAccuracyBreakoutMinAi:
-      numEnv('PAPER_HIGH_ACCURACY_BREAKOUT_MIN_AI', 80, 0, 100),
+      numEnv('PAPER_HIGH_ACCURACY_BREAKOUT_MIN_AI', 78, 0, 100),
 
     highAccuracyPullbackMinVolume:
-      numEnv('PAPER_HIGH_ACCURACY_PULLBACK_MIN_VOLUME', 0.65, 0.2, 5),
+      numEnv('PAPER_HIGH_ACCURACY_PULLBACK_MIN_VOLUME', 1.00, 0.2, 5),
 
     highAccuracyBreakoutMinVolume:
-      numEnv('PAPER_HIGH_ACCURACY_BREAKOUT_MIN_VOLUME', 1.10, 0.2, 5),
+      numEnv('PAPER_HIGH_ACCURACY_BREAKOUT_MIN_VOLUME', 1.00, 0.2, 5),
 
     highAccuracyPullbackMinEdge:
       numEnv('PAPER_HIGH_ACCURACY_PULLBACK_MIN_EDGE', 8, 0, 50),
@@ -300,13 +366,13 @@ export function paperConfig() {
       intEnv('PAPER_LOSS_BRAKE_CONSECUTIVE', 2, 2, 10),
 
     lossBrakeMinutes:
-      numEnv('PAPER_LOSS_BRAKE_MINUTES', 45, 10, 240),
+      numEnv('PAPER_LOSS_BRAKE_MINUTES', 30, 10, 240),
 
     lossBrakeScoreBoost:
-      numEnv('PAPER_LOSS_BRAKE_SCORE_BOOST', 8, 0, 30),
+      numEnv('PAPER_LOSS_BRAKE_SCORE_BOOST', 4, 0, 30),
 
     lossBrakeAiBoost:
-      numEnv('PAPER_LOSS_BRAKE_AI_BOOST', 5, 0, 30),
+      numEnv('PAPER_LOSS_BRAKE_AI_BOOST', 3, 0, 30),
 
     // V1.7.6 PERFORMANCE GUARD
     performanceGuardEnabled:
@@ -529,7 +595,13 @@ function highAccuracyOptions(
     minMomentumConfirmations:
       cfg.highAccuracyMinMomentumConfirmations,
     requireConfirmedPullback: true,
-    breakoutExpansionOnly: true
+    breakoutExpansionOnly: true,
+    unaligned4hScorePenalty:
+      cfg.fast4hScorePenalty,
+    mildOiScorePenalty:
+      cfg.fastMildOiScorePenalty,
+    strongOiContraryPct:
+      cfg.fastStrongOiContraryPct
   };
 }
 
@@ -1985,7 +2057,7 @@ function eligibility(signal) {
 
     // Em modo HIGH_ACCURACY forçado, o primeiro candle do Pullback
     // ainda precisa passar pelo paperEligibilityPreview para poder virar ARMED.
-    // Nesse ponto a ausência do 2º candle não é falha; ela será exigida
+    // Nesse ponto a ausência do candle de confirmação não é falha; ela será exigida
     // na abertura real depois da confirmação.
     if (!preArmPullback) {
       return {
@@ -2586,7 +2658,7 @@ export function paperNetRRPreview(signal) {
 
 
 
-export function paperGoogleSnapshot() {
+function googlePaperSnapshot() {
   return {
     at: Date.now(),
     startingBalance: Number(state.startingBalance || 0),
@@ -2606,7 +2678,7 @@ export function paperGoogleSnapshot() {
 function googleSyncPaperEvent(event, payload = {}) {
   void googleSyncEvent(event, {
     ...payload,
-    snapshot: paperGoogleSnapshot()
+    snapshot: googlePaperSnapshot()
   });
 }
 
@@ -2614,32 +2686,72 @@ function eliteQuickOptions(
   cfg,
   strategyProfile
 ) {
+  const active =
+    cfg.activeBalancedEnabled === true;
+
   return {
     strategyProfile,
     pullbackMinScore:
-      cfg.quickPullbackMinScore,
+      active
+        ? cfg.activePullbackMinScore
+        : cfg.quickPullbackMinScore,
     pullbackMinAi:
-      cfg.quickPullbackMinAi,
+      active
+        ? cfg.activePullbackMinAi
+        : cfg.quickPullbackMinAi,
     pullbackMaxChaseAtr:
-      cfg.quickPullbackMaxChaseAtr,
+      active
+        ? cfg.activePullbackMaxChaseAtr
+        : cfg.quickPullbackMaxChaseAtr,
     pullbackMinConfirmVolume:
-      cfg.quickPullbackMinConfirmVolume,
+      active
+        ? cfg.activePullbackMinConfirmVolume
+        : cfg.quickPullbackMinConfirmVolume,
     pullbackMinTriggerQuality:
-      cfg.quickPullbackMinTriggerQuality,
+      active
+        ? cfg.activePullbackMinTriggerQuality
+        : cfg.quickPullbackMinTriggerQuality,
     minMomentumConfirmations:
       cfg.quickMinMomentumConfirmations,
     breakoutMinScore:
-      cfg.quickBreakoutMinScore,
+      active
+        ? cfg.activeBreakoutMinScore
+        : cfg.quickBreakoutMinScore,
     breakoutMinAi:
-      cfg.quickBreakoutMinAi,
+      active
+        ? cfg.activeBreakoutMinAi
+        : cfg.quickBreakoutMinAi,
     breakoutMinVolume:
-      cfg.quickBreakoutMinVolume,
+      active
+        ? cfg.activeBreakoutMinVolume
+        : cfg.quickBreakoutMinVolume,
     breakoutMinEdge:
-      cfg.quickBreakoutMinEdge,
+      active
+        ? cfg.activeBreakoutMinEdge
+        : cfg.quickBreakoutMinEdge,
     breakoutMaxBodyAtr:
-      cfg.quickBreakoutMaxBodyAtr,
+      active
+        ? cfg.activeBreakoutMaxBodyAtr
+        : cfg.quickBreakoutMaxBodyAtr,
     breakoutMaxDistanceAtr:
-      cfg.quickBreakoutMaxDistanceAtr
+      active
+        ? cfg.activeBreakoutMaxDistanceAtr
+        : cfg.quickBreakoutMaxDistanceAtr,
+    trendBreakoutEnabled:
+      active &&
+      cfg.activeTrendBreakoutEnabled,
+    trendBreakoutMinVolume:
+      cfg.activeTrendBreakoutMinVolume,
+    trendBreakoutMaxBodyAtr:
+      cfg.activeTrendBreakoutMaxBodyAtr,
+    trendBreakoutMaxDistanceAtr:
+      cfg.activeTrendBreakoutMaxDistanceAtr,
+    unaligned4hScorePenalty:
+      cfg.fast4hScorePenalty,
+    mildOiScorePenalty:
+      cfg.fastMildOiScorePenalty,
+    strongOiContraryPct:
+      cfg.fastStrongOiContraryPct
   };
 }
 
@@ -3423,7 +3535,7 @@ export function maybeOpenPaperPosition(signal) {
         `${!position.quickScalpEnabled && position.strategyProfile !== 'HIGH_ACCURACY' && cfg.trailingRunnerEnabled ? `🪜 Stop Gain: TP1→BE líquido · TP2→TP1 · TP3→TP2 · depois runner sobe por degraus\n` : ''}` +
         `${!position.quickScalpEnabled && position.strategyProfile !== 'HIGH_ACCURACY' && cfg.trailingRunnerEnabled ? `🏃 Saídas: 30% / 30% / ${cfg.tp3ClosePct.toFixed(0)}% · runner ${Math.max(0, 40 - cfg.tp3ClosePct).toFixed(0)}%\n` : ''}` +
         `🌦 Regime: ${position.setupMarketRegime || 'UNKNOWN'} · trigger ${position.setupPullbackTriggerQuality || 0}/5\n` +
-        `${position.confirmedEntryUsed ? `✅ Confirmed Entry: 2º candle 5m · ${position.confirmedEntryOriginRegime || 'TREND'}→${position.confirmedEntryConfirmationRegime || '—'} · chase ${position.confirmedEntryChaseAtr.toFixed(2)} ATR · vol ${position.confirmedEntryVolumeRatio.toFixed(2)}x\n` : ''}` +
+        `${position.confirmedEntryUsed ? `✅ Confirmed Entry: 1 candle 5m · ${position.confirmedEntryOriginRegime || 'TREND'}→${position.confirmedEntryConfirmationRegime || '—'} · chase ${position.confirmedEntryChaseAtr.toFixed(2)} ATR · vol ${position.confirmedEntryVolumeRatio.toFixed(2)}x\n` : ''}` +
         `${position.quickScalpEnabled ? '' : `🎚 Teto de risco da banca: ${riskBudget.toFixed(3)} USDC (${effectiveRiskPct.toFixed(2)}%)${riskStatus.throttled ? ' · THROTTLE QUALIDADE' : ''}\n`}` +
         `💸 Taxa de entrada simulada: ${entryFee.toFixed(4)} USDC`
     };
@@ -4638,7 +4750,7 @@ function updateOnePosition(position, snap) {
     }
   }
 
-  // V1.10.2 GOOGLE FULL VERIFY:
+  // V1.11.1 FAST ENTRY:
   // fecha 100% ao tocar o preço que entrega o alvo LÍQUIDO configurado,
   // já descontando fee + slippage.
   if (position.quickScalpEnabled) {
@@ -6108,7 +6220,7 @@ export function paperPerformanceText() {
       `${fmtSigned(runnerProfileMetrics.pnl)} USDC · MFE +${runnerProfileMetrics.avgMfe.toFixed(2)}R / MAE -${runnerProfileMetrics.avgMae.toFixed(2)}R`,
     '',
     '<b>Confirmação de entrada</b>',
-    `• CONFIRMED PULLBACK 2x5m: ${confirmedEntryMetrics.total} · ` +
+    `• CONFIRMED PULLBACK 1x5m: ${confirmedEntryMetrics.total} · ` +
       `${confirmedEntryMetrics.wins}W/${confirmedEntryMetrics.losses}L · ` +
       `PF ${fmtPf(confirmedEntryMetrics.profitFactor)} · ${fmtSigned(confirmedEntryMetrics.pnl)} USDC · ` +
       `MFE +${confirmedEntryMetrics.avgMfe.toFixed(2)}R / MAE -${confirmedEntryMetrics.avgMae.toFixed(2)}R`,
@@ -6201,7 +6313,7 @@ export function paperStatusText() {
       : null;
 
   return [
-    '☁️ <b>PAPER TRADING — V1.10.2 GOOGLE FULL VERIFY</b>',
+    '⚡ <b>PAPER TRADING — V1.11.1 FAST ENTRY</b>',
     '',
     `Status: ${cfg.enabled ? '✅ ATIVO' : '⛔ DESATIVADO'} · ${state.paused ? '⏸ PAUSADO' : '▶️ RODANDO'}`,
     `💰 Banca inicial: ${state.startingBalance.toFixed(2)} USDC`,
@@ -6217,7 +6329,7 @@ export function paperStatusText() {
     `🧠 Performance Guard: ${cfg.performanceGuardEnabled ? 'ATIVO' : 'INATIVO'} · lado/setup · janela ${cfg.performanceLookback} · pausa ${cfg.performancePauseMin.toFixed(0)}m`,
     `🟠 Side Probation: ${cfg.sideProbationEnabled ? 'ATIVO' : 'INATIVO'} · recuperação PF ${cfg.sideRecoveryMinProfitFactor.toFixed(2)}+ / WR ${cfg.sideRecoveryMinWinRatePct.toFixed(0)}%+`,
     `🧭 Setup Probation: ${cfg.setupProbationEnabled ? 'ATIVO' : 'INATIVO'} · recuperação PF ${cfg.setupRecoveryMinProfitFactor.toFixed(2)}+ / WR ${cfg.setupRecoveryMinWinRatePct.toFixed(0)}%+`,
-    `🌦 Regime Filter: PULLBACK só TREND · 4H obrigatório · BREAKOUT priorizado EXPANSION`,
+    `🌦 Regime Filter: PULLBACK só TREND · 4H vira peso de score · BREAKOUT priorizado EXPANSION`,
     `✅ Confirmed Entry: Pullback abre somente após o próximo 5m fechar além do candle gatilho`,
     `🎯 Strategy Profile: ${cfg.strategyProfile} · High Accuracy ${cfg.highAccuracyEnabled ? 'ATIVO' : 'INATIVO'}`,
     `⚡ HA Elite: PB ${cfg.highAccuracyPullbackMinScore}+ / IA ${cfg.highAccuracyPullbackMinAi}% · BO ${cfg.highAccuracyBreakoutMinScore}+ / IA ${cfg.highAccuracyBreakoutMinAi}%`,
@@ -6229,12 +6341,16 @@ export function paperStatusText() {
     `⚖️ Risco Runner/HA: ${currentRisk.riskPct.toFixed(2)}%${currentRisk.throttled ? ` · THROTTLE (config ${cfg.riskPct.toFixed(2)}%)` : ''}`,
     `🧯 Risco Quick no STOP: ${(cfg.quickScalpMarginUsdc * cfg.quickScalpLeverage * cfg.quickScalpStopNetPct / 100).toFixed(2)} USDC ≈ ${(cfg.quickScalpMarginUsdc * cfg.quickScalpLeverage * cfg.quickScalpStopNetPct / 100 / Math.max(0.01, state.balance) * 100).toFixed(2)}% da banca atual`,
     `⚙️ Alavancagem base: ${cfg.leverage}x`,
+    `⚡ FAST ENTRY: ${cfg.activeBalancedEnabled ? 'ATIVO' : 'INATIVO'} · 1 candle · 4H com peso · OI neutro permitido · OI forte contrário bloqueia`,
+    `↩️ FAST PB: score ${cfg.activePullbackMinScore}+ · IA ${cfg.activePullbackMinAi}%+ · chase ≤${cfg.activePullbackMaxChaseAtr.toFixed(2)} · vol ≥${cfg.activePullbackMinConfirmVolume.toFixed(2)}x · trigger ${cfg.activePullbackMinTriggerQuality}/5+`,
+    `🚀 FAST BO: score ${cfg.activeBreakoutMinScore}+ · IA ${cfg.activeBreakoutMinAi}%+ · vol ≥${cfg.activeBreakoutMinVolume.toFixed(2)}x · edge ${cfg.activeBreakoutMinEdge}+ · entrada direta`,
+    `🔥 TREND BOOSTED: ${cfg.activeTrendBreakoutEnabled ? 'ATIVO' : 'INATIVO'} · vol ≥${cfg.activeTrendBreakoutMinVolume.toFixed(2)}x · corpo ≤${cfg.activeTrendBreakoutMaxBodyAtr.toFixed(2)} ATR · EMA ≤${cfg.activeTrendBreakoutMaxDistanceAtr.toFixed(2)} ATR`,
     `⚡ Elite Quick: ${cfg.quickScalpEnabled ? 'ATIVO' : 'INATIVO'} · elite-only ${cfg.quickScalpEliteOnly ? 'SIM' : 'NÃO'} · fallback Runner ${cfg.quickScalpFallbackRunner ? 'SIM' : 'NÃO'}`,
     `🔔 Feedback PAPER bloqueado: ${cfg.notifyBlockedSignals ? 'ATIVO' : 'INATIVO'}`,
     `💵 Execução Elite: ${cfg.quickScalpMarginUsdc.toFixed(2)} USDC x ${cfg.quickScalpLeverage} = ${(cfg.quickScalpMarginUsdc * cfg.quickScalpLeverage).toFixed(2)} USDC · máx ${cfg.quickScalpMaxOpen} posição`,
     `🎯 Quick NET: +${cfg.quickScalpTargetNetPct.toFixed(2)}% (+${(cfg.quickScalpMarginUsdc * cfg.quickScalpLeverage * cfg.quickScalpTargetNetPct / 100).toFixed(2)} USDC) · stop -${cfg.quickScalpStopNetPct.toFixed(2)}% (-${(cfg.quickScalpMarginUsdc * cfg.quickScalpLeverage * cfg.quickScalpStopNetPct / 100).toFixed(2)} USDC) · ${cfg.quickScalpMaxMinutes.toFixed(0)}m`,
     `🚦 Momentum Quick/HA: mínimo ${cfg.quickMinMomentumConfirmations}/3 confirmações`,
-    `↩️ Quick PB: score ${cfg.quickPullbackMinScore}+ · IA ${cfg.quickPullbackMinAi}%+ · chase ≤${cfg.quickPullbackMaxChaseAtr.toFixed(2)} ATR · trigger execução ${cfg.quickPullbackMinTriggerQuality}/5+ · OI FAVORABLE`,
+    `↩️ Quick PB legado: score ${cfg.quickPullbackMinScore}+ · IA ${cfg.quickPullbackMinAi}%+ · chase ≤${cfg.quickPullbackMaxChaseAtr.toFixed(2)} ATR · trigger execução ${cfg.quickPullbackMinTriggerQuality}/5+`,
     `🚀 Quick BO: score ${cfg.quickBreakoutMinScore}+ · IA ${cfg.quickBreakoutMinAi}%+ · vol ${cfg.quickBreakoutMinVolume.toFixed(2)}x+ · EXPANSION · corpo ≤${cfg.quickBreakoutMaxBodyAtr.toFixed(2)} ATR · dist EMA ≤${cfg.quickBreakoutMaxDistanceAtr.toFixed(2)} ATR`,
     `🧮 Quick Economics Guard: R:R ≥${cfg.quickMinRewardRisk.toFixed(2)} · break-even ≤${cfg.quickMaxBreakEvenPct.toFixed(0)}% · ladder Net R/R antigo IGNORADO no Quick`,
     `⚡ Scalp: ${cfg.scalpMode ? 'ATIVO' : 'INATIVO'} · stale adaptativo ${cfg.scalpStaleMin}/${cfg.scalpStaleMaxMin} min`,

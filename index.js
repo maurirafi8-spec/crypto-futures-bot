@@ -39,7 +39,6 @@ import {
   paperResume,
   paperReset,
   paperStateInfo,
-  paperGoogleSnapshot,
   paperOpenSymbols,
   paperHasOpenPosition
 } from './paper-trader.js';
@@ -138,7 +137,7 @@ const cfg = {
       )
     ),
 
-  minScore: Number(process.env.MIN_SCORE || 68),
+  minScore: Number(process.env.MIN_SCORE || 82),
   preCandidateMinScore: Number(process.env.PRE_CANDIDATE_MIN_SCORE || 60),
   minVolume: Number(process.env.MIN_QUOTE_VOLUME_USDT || 20_000_000),
   cooldownMin: Number(process.env.COOLDOWN_MINUTES || 90),
@@ -247,7 +246,7 @@ const cfg = {
       75,
       Math.min(
         100,
-        Number(process.env.QUALITY_BREAKOUT_MIN_SCORE || 82)
+        Number(process.env.QUALITY_BREAKOUT_MIN_SCORE || 88)
       )
     ),
 
@@ -256,7 +255,7 @@ const cfg = {
       0.45,
       Math.min(
         3,
-        Number(process.env.QUALITY_BREAKOUT_MIN_VOLUME_RATIO || 1.25)
+        Number(process.env.QUALITY_BREAKOUT_MIN_VOLUME_RATIO || 1.00)
       )
     ),
 
@@ -265,7 +264,7 @@ const cfg = {
       5,
       Math.min(
         50,
-        Number(process.env.QUALITY_BREAKOUT_MIN_EDGE || 10)
+        Number(process.env.QUALITY_BREAKOUT_MIN_EDGE || 8)
       )
     ),
 
@@ -310,7 +309,7 @@ const cfg = {
     ),
 
   aiEnabled: String(process.env.AI_ENABLED || 'true').toLowerCase() !== 'false',
-  aiMinConfidence: Number(process.env.AI_MIN_CONFIDENCE || 65),
+  aiMinConfidence: Number(process.env.AI_MIN_CONFIDENCE || 78),
   aiFailOpen: String(process.env.AI_FAIL_OPEN || 'false').toLowerCase() === 'true',
   // V1.6.8 HOLD AI: até 2 candidatos por ciclo.
   // O limite diário global continua protegendo a cota.
@@ -468,20 +467,20 @@ const cfg = {
       1,
       Math.min(
         3,
-        Number(process.env.CONFIRMED_ENTRY_MAX_WAIT_BARS || 2)
+        Number(process.env.CONFIRMED_ENTRY_MAX_WAIT_BARS || 1)
       )
     ),
 
   confirmedEntryMinVolumeRatio:
     Math.max(
       0.30,
-      Number(process.env.CONFIRMED_ENTRY_MIN_VOLUME_RATIO || 0.55)
+      Number(process.env.CONFIRMED_ENTRY_MIN_VOLUME_RATIO || 1.00)
     ),
 
   confirmedEntryVolumeResumeMultiplier:
     Math.max(
       0.80,
-      Number(process.env.CONFIRMED_ENTRY_VOLUME_RESUME_MULTIPLIER || 1.05)
+      Number(process.env.CONFIRMED_ENTRY_VOLUME_RESUME_MULTIPLIER || 1.00)
     ),
 
   confirmedEntryMaxChaseAtr:
@@ -514,13 +513,19 @@ const cfg = {
 
   confirmedEntryNeutralOiMinVolumeRatio:
     Math.max(
-      0.55,
-      Number(process.env.CONFIRMED_ENTRY_NEUTRAL_OI_MIN_VOLUME_RATIO || 0.70)
+      0,
+      Number(process.env.CONFIRMED_ENTRY_NEUTRAL_OI_MIN_VOLUME_RATIO || 0)
     ),
 
   confirmedEntryNeutralOiRequireMacd:
-    String(process.env.CONFIRMED_ENTRY_NEUTRAL_OI_REQUIRE_MACD || 'true')
-      .toLowerCase() !== 'false'
+    String(process.env.CONFIRMED_ENTRY_NEUTRAL_OI_REQUIRE_MACD || 'false')
+      .toLowerCase() !== 'false',
+
+  confirmedEntryStrongOiContraryPct:
+    Math.max(
+      0.05,
+      Number(process.env.CONFIRMED_ENTRY_STRONG_OI_CONTRARY_PCT || 0.20)
+    )
 };
 
 if (!cfg.token) throw new Error('BOT_TOKEN não configurado');
@@ -578,7 +583,7 @@ const aiWaitWatchlist = new Map();
 const technicalWatchlist = new Map();
 
 // V1.9.1: IA aprova o primeiro trigger, mas o PAPER só entra
-// após confirmação inteligente em até 2 candles 5m fechados.
+// após confirmação inteligente no próximo candle 5m fechado.
 const confirmedEntryManager =
   new ConfirmedEntryManager({
     enabled:
@@ -596,7 +601,7 @@ const confirmedEntryManager =
     maxOppositeExcursionAtr:
       cfg.confirmedEntryMaxOppositeExcursionAtr,
     requireTrend: true,
-    require4h: true,
+    require4h: false,
     requireOi: true,
     requireBtc: true,
     requireExhaustionOk: true,
@@ -609,7 +614,9 @@ const confirmedEntryManager =
     neutralOiMinVolumeRatio:
       cfg.confirmedEntryNeutralOiMinVolumeRatio,
     neutralOiRequireMacd:
-      cfg.confirmedEntryNeutralOiRequireMacd
+      cfg.confirmedEntryNeutralOiRequireMacd,
+    strongOiContraryPct:
+      cfg.confirmedEntryStrongOiContraryPct
   });
 
 const universeManager =
@@ -3089,7 +3096,7 @@ function lastScanDebugText() {
     `♻️ Respostas vindas do cache: ${a?.cacheHits ?? 0}`,
     `⏸ Sem vaga nova neste scan: ${a?.freshDeferred ?? 0}`,
     `🎯 Sinais liberados: ${lastScanReport.finalSignals ?? 0}`,
-    `🟠 ARMED aguardando 2º candle: ${lastScanReport.confirmedEntryArmed ?? confirmedEntryManager.size()}`,
+    `🟠 ARMED aguardando confirmação 1x5m: ${lastScanReport.confirmedEntryArmed ?? confirmedEntryManager.size()}`,
     `✅ Confirmed Entry abertas neste scan: ${lastScanReport.confirmedEntryOpened ?? 0}`,
     `❌ ARMED invalidados neste scan: ${lastScanReport.confirmedEntryInvalidated ?? 0}`
   ];
@@ -3234,7 +3241,7 @@ function scanNoSignalText(report) {
     ...(a?.technicalHardReject
       ? [`🧱 ${a.technicalHardReject} hard reject(s) antes da IA`]
       : []),
-    `🟠 ARMED aguardando 2º candle: ${report.confirmedEntryArmed ?? confirmedEntryManager.size()}`,
+    `🟠 ARMED aguardando confirmação 1x5m: ${report.confirmedEntryArmed ?? confirmedEntryManager.size()}`,
     `🎯 0 sinais liberados`
   ];
 
@@ -3788,7 +3795,7 @@ async function processConfirmedEntrySnapshots(
       );
     } else {
       console.log(
-        `[confirmed-entry] ${signal.symbol}: confirmou 2º candle, ` +
+        `[confirmed-entry] ${signal.symbol}: confirmou candle 5m, ` +
         `mas PAPER bloqueou — ${paperOpen.reason}`
       );
 
@@ -4202,10 +4209,10 @@ async function doScan({
     const directPaperBlocks =
       new Map();
 
-    // V1.10.2 GOOGLE FULL VERIFY:
+    // V1.11.1 FAST ENTRY:
     // Pullback aprovado pela IA NÃO abre imediatamente.
-    // Primeiro passa pelo gate PAPER e vira ARMED; a entrada real só acontece
-    // se o próximo candle 5m fechado confirmar o rompimento.
+    // Primeiro passa pelo gate PAPER e vira ARMED; a entrada real acontece
+    // somente se o próximo candle 5m FECHADO confirmar o rompimento.
     for (const signal of signals) {
       if (
         confirmedEntryManager.shouldArm(
@@ -4477,7 +4484,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      '🤖 <b>Crypto Futures Scanner V1.10.2 GOOGLE FULL VERIFY</b>\n\n' +
+      '🤖 <b>Crypto Futures Scanner V1.11.1 FAST ENTRY</b>\n\n' +
       'Comandos:\n' +
       '/scan — varrer o próximo lote agora\n' +
       '/scheduler — ver rotação automática de 1 minuto\n' +
@@ -4520,7 +4527,7 @@ async function handleMessage(msg) {
     await sendMessage(
       cfg.token,
       activeChatId,
-      `✅ Online — V1.10.2 GOOGLE FULL VERIFY\n` +
+      `✅ Online — V1.11.1 FAST ENTRY\n` +
       `⏱ Scan: ${cfg.intervalMin} min\n` +
       `🛡 Modo: CONFIDENCE GUARD V1.5.9\n` +
       `🤖 APPROVE exige confidence válida; ausente/0% vira WAIT\n` +
@@ -4540,7 +4547,7 @@ async function handleMessage(msg) {
       `🎯 V1.9.6: Quick Entry Quality · Pullback trigger 4/5+ · Breakout anti-exhaustion · Quick Economics Guard próprio\n` +
       `🟠 ARMED: ${confirmedEntryManager.size()} · IA não é chamada novamente enquanto aguarda confirmação\n` +
       `📊 Confirmação: próximo 5m deve fechar além do candle gatilho · vol >= ${cfg.confirmedEntryMinVolumeRatio.toFixed(2)}x · retomada x${cfg.confirmedEntryVolumeResumeMultiplier.toFixed(2)}\n` +
-      `🧯 Exaustão: 4H alinhado · distância 1H controlada · sem sequência impulsiva extrema\n` +
+      `🧯 Exaustão: 4H vira peso de score · distância 1H controlada · sem sequência impulsiva extrema\n` +
       `⚖️ Perfil: BALANCED ACTIVE · qualidade antes de quantidade\n` +
       `⭐ Score mínimo para sinal: ${cfg.minScore}\n` +
       `⚖️ Direction Balance: ATIVO · LONG/SHORT simétricos\n` +
@@ -4667,44 +4674,18 @@ async function handleMessage(msg) {
       await googleSyncEvent(
         'TEST',
         {
-          message:
-            'Teste completo solicitado pelo Telegram',
-          phase:
-            'MANUAL_FULL_TEST',
-          paper:
-            paperStateInfo(),
-          snapshot:
-            paperGoogleSnapshot()
+          message: 'Teste manual solicitado pelo Telegram',
+          phase: 'MANUAL_TEST',
+          paper: paperStateInfo()
         }
       );
-
-    const verify =
-      result?.response || {};
-
-    const fullOk =
-      result.ok &&
-      verify.written === true &&
-      verify.dashboardUpdated === true &&
-      verify.backupWritten === true;
 
     await sendMessage(
       cfg.token,
       activeChatId,
-      fullOk
-        ? (
-            '✅ <b>GOOGLE SYNC COMPLETO OK</b>\n' +
-            `📊 Events: linha ${verify.row || '—'} gravada\n` +
-            '📈 Dashboard: atualizado\n' +
-            '☁️ Drive: paper-state-latest.json gravado\n' +
-            `🧾 Apps Script: ${verify.version || '—'}`
-          )
-        : (
-            '❌ <b>GOOGLE SYNC INCOMPLETO</b>\n' +
-            `Events: ${verify.written === true ? '✅' : '❌'}\n` +
-            `Dashboard: ${verify.dashboardUpdated === true ? '✅' : '❌'}\n` +
-            `Backup Drive: ${verify.backupWritten === true ? '✅' : '❌'}\n` +
-            `Erro: ${result.reason || result.error || verify.error || 'resposta incompleta do Apps Script'}`
-          )
+      result.ok
+        ? '✅ Google Sync respondeu OK. Confira Events/Dashboard no Google Sheets.'
+        : `❌ Google Sync não confirmou: ${result.reason || result.error || 'erro desconhecido'}`
     );
   } else if (text.startsWith('/google')) {
     await sendMessage(
@@ -5040,7 +5021,7 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({
     ok: true,
     service: 'crypto-futures-scanner',
-    version: '1.10.2-google-full-verify',
+    version: '1.11.1-fast-entry',
     scanning,
     activeSignals: 0,
     legacyTrackerEnabled: false,
@@ -5102,7 +5083,7 @@ http.createServer((req, res) => {
   }));
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
-console.log('Crypto Futures Scanner V1.10.2 GOOGLE FULL VERIFY pronto ✅');
+console.log('Crypto Futures Scanner V1.11.1 FAST ENTRY pronto ✅');
 
 // Em rolling deploy o processo antigo do Render pode permanecer vivo por
 // alguns segundos. Um pequeno atraso evita duas instâncias consumindo a

@@ -12,63 +12,94 @@ function bool(value, fallback = false) {
   return fallback;
 }
 
-function oiFavorableForSide(signal) {
+function oiPolicyForSide(
+  signal,
+  strongContraryPct = 0.20
+) {
   const side = upper(signal?.side);
   const confirmedClass =
     upper(signal?.confirmedEntry?.smartOiClass);
+  const regime =
+    upper(
+      signal?.confirmedEntry?.smartOiRegime ||
+      signal?.oiContext?.regime ||
+      'NEUTRAL'
+    );
+  const oiPct = Math.abs(num(signal?.oiContext?.oiPct));
 
   if (confirmedClass) {
+    if (confirmedClass === 'STRONG_CONTRARY') {
+      return { ok: false, label: 'STRONG_CONTRARY', regime, oiPct };
+    }
+
+    if (confirmedClass === 'MILD_CONTRARY') {
+      return { ok: true, label: 'MILD_CONTRARY', regime, oiPct };
+    }
+
+    return { ok: true, label: confirmedClass, regime, oiPct };
+  }
+
+  if (signal?.oiContext?.confirmed === true) {
+    return { ok: true, label: 'FAVORABLE', regime, oiPct };
+  }
+
+  const neutral = new Set([
+    'NEUTRAL',
+    'OI_BUILDUP_NEUTRAL_PRICE',
+    'OI_UNWIND_NEUTRAL_PRICE'
+  ]);
+
+  if (neutral.has(regime)) {
+    return { ok: true, label: 'NEUTRAL', regime, oiPct };
+  }
+
+  if (
+    (side === 'LONG' && regime === 'SHORT_COVERING') ||
+    (side === 'SHORT' && regime === 'LONG_UNWIND')
+  ) {
+    return { ok: true, label: 'SUPPORTIVE', regime, oiPct };
+  }
+
+  const contrary =
+    (side === 'LONG' && ['SHORT_BUILDUP', 'LONG_UNWIND'].includes(regime)) ||
+    (side === 'SHORT' && ['LONG_BUILDUP', 'SHORT_COVERING'].includes(regime));
+
+  if (contrary) {
+    const strong = oiPct >= strongContraryPct;
     return {
-      ok: confirmedClass === 'FAVORABLE',
-      label: confirmedClass,
-      regime:
-        upper(signal?.confirmedEntry?.smartOiRegime) ||
-        upper(signal?.oiContext?.regime)
+      ok: !strong,
+      label: strong ? 'STRONG_CONTRARY' : 'MILD_CONTRARY',
+      regime,
+      oiPct
     };
   }
 
-  const regime =
-    upper(signal?.oiContext?.regime);
-
-  const confirmed =
-    signal?.oiContext?.confirmed === true;
-
-  if (confirmed) {
-    return {
-      ok: true,
-      label: 'FAVORABLE',
-      regime
-    };
-  }
-
-  // Fallback explícito para snapshots que não carregam confirmed=true.
-  const directional =
-    (side === 'LONG' && regime === 'LONG_BUILDUP') ||
-    (side === 'SHORT' && regime === 'SHORT_BUILDUP');
-
-  return {
-    ok: directional,
-    label: directional ? 'FAVORABLE' : 'NOT_FAVORABLE',
-    regime
-  };
+  return { ok: true, label: 'NEUTRAL', regime, oiPct };
 }
 
 export function eliteQuickScalpAssessment(
   signal,
   {
     strategyProfile = 'RUNNER',
-    pullbackMinScore = 88,
-    pullbackMinAi = 82,
-    pullbackMaxChaseAtr = 0.55,
-    pullbackMinConfirmVolume = 0.80,
+    pullbackMinScore = 82,
+    pullbackMinAi = 78,
+    pullbackMaxChaseAtr = 0.65,
+    pullbackMinConfirmVolume = 1.00,
     pullbackMinTriggerQuality = 4,
     minMomentumConfirmations = 2,
-    breakoutMinScore = 90,
-    breakoutMinAi = 80,
-    breakoutMinVolume = 1.25,
-    breakoutMinEdge = 10,
+    breakoutMinScore = 88,
+    breakoutMinAi = 78,
+    breakoutMinVolume = 1.00,
+    breakoutMinEdge = 8,
     breakoutMaxBodyAtr = 1.20,
-    breakoutMaxDistanceAtr = 1.35
+    breakoutMaxDistanceAtr = 1.35,
+    trendBreakoutEnabled = true,
+    trendBreakoutMinVolume = 1.80,
+    trendBreakoutMaxBodyAtr = 1.00,
+    trendBreakoutMaxDistanceAtr = 1.10,
+    unaligned4hScorePenalty = 4,
+    mildOiScorePenalty = 4,
+    strongOiContraryPct = 0.20
   } = {}
 ) {
   if (!signal) {
@@ -85,7 +116,7 @@ export function eliteQuickScalpAssessment(
   const side =
     upper(signal.side);
 
-  const score =
+  const rawScore =
     num(signal.score);
 
   const ai =
@@ -140,13 +171,22 @@ export function eliteQuickScalpAssessment(
     );
 
   const oi =
-    oiFavorableForSide(signal);
+    oiPolicyForSide(signal, strongOiContraryPct);
 
   const aligned4h =
     bool(
       signal?.trendExhaustion?.aligned4h,
       bool(signal?.marketRegime?.aligned4h)
     );
+
+  const scorePenalty4h =
+    aligned4h ? 0 : Math.max(0, num(unaligned4hScorePenalty));
+  const scorePenaltyOi =
+    oi.label === 'MILD_CONTRARY'
+      ? Math.max(0, num(mildOiScorePenalty))
+      : 0;
+  const effectiveScore =
+    Math.max(0, rawScore - scorePenalty4h - scorePenaltyOi);
 
   const exhaustionOk =
     signal?.trendExhaustion?.ok !== false;
@@ -162,10 +202,6 @@ export function eliteQuickScalpAssessment(
 
   if (!['LONG', 'SHORT'].includes(side)) {
     reasons.push('direção inválida');
-  }
-
-  if (!aligned4h) {
-    reasons.push('4H não alinhado');
   }
 
   if (!exhaustionOk) {
@@ -189,8 +225,20 @@ export function eliteQuickScalpAssessment(
   }
 
   if (!oi.ok) {
-    reasons.push(`OI não FAVORABLE (${oi.regime || 'UNKNOWN'})`);
+    reasons.push(
+      `OI fortemente contrário (${oi.regime || 'UNKNOWN'}; ${oi.oiPct.toFixed(2)}%)`
+    );
   }
+
+  const scoreReason = minScore => {
+    const weights = [];
+    if (scorePenalty4h > 0) weights.push(`4H -${scorePenalty4h}`);
+    if (scorePenaltyOi > 0) weights.push(`OI leve -${scorePenaltyOi}`);
+    return (
+      `score efetivo ${effectiveScore} < ${minScore}` +
+      `${weights.length ? ` (${rawScore} bruto; ${weights.join(', ')})` : ''}`
+    );
+  };
 
   if (setup === 'PULLBACK') {
     if (upper(strategyProfile) !== 'HIGH_ACCURACY') {
@@ -201,8 +249,8 @@ export function eliteQuickScalpAssessment(
       reasons.push('Confirmed Entry obrigatório');
     }
 
-    if (score < pullbackMinScore) {
-      reasons.push(`score ${score} < ${pullbackMinScore}`);
+    if (effectiveScore < pullbackMinScore) {
+      reasons.push(scoreReason(pullbackMinScore));
     }
 
     if (ai < pullbackMinAi) {
@@ -242,8 +290,8 @@ export function eliteQuickScalpAssessment(
       );
     }
   } else if (setup === 'BREAKOUT_STRONG') {
-    if (score < breakoutMinScore) {
-      reasons.push(`score ${score} < ${breakoutMinScore}`);
+    if (effectiveScore < breakoutMinScore) {
+      reasons.push(scoreReason(breakoutMinScore));
     }
 
     if (ai < breakoutMinAi) {
@@ -260,21 +308,70 @@ export function eliteQuickScalpAssessment(
       reasons.push(`edge ${edge} < ${breakoutMinEdge}`);
     }
 
-    if (regime !== 'EXPANSION') {
+    const trendBoosted =
+      trendBreakoutEnabled &&
+      regime === 'TREND' &&
+      volume5 >= trendBreakoutMinVolume &&
+      breakoutBodyAtr <= trendBreakoutMaxBodyAtr &&
+      breakoutDistanceAtr <= trendBreakoutMaxDistanceAtr;
+
+    if (
+      regime !== 'EXPANSION' &&
+      !trendBoosted
+    ) {
+      if (
+        trendBreakoutEnabled &&
+        regime === 'TREND'
+      ) {
+        const missing = [];
+
+        if (volume5 < trendBreakoutMinVolume) {
+          missing.push(
+            `vol ${volume5.toFixed(2)}x < ${trendBreakoutMinVolume.toFixed(2)}x`
+          );
+        }
+
+        if (breakoutBodyAtr > trendBreakoutMaxBodyAtr) {
+          missing.push(
+            `corpo ${breakoutBodyAtr.toFixed(2)} ATR > ${trendBreakoutMaxBodyAtr.toFixed(2)}`
+          );
+        }
+
+        if (breakoutDistanceAtr > trendBreakoutMaxDistanceAtr) {
+          missing.push(
+            `EMA ${breakoutDistanceAtr.toFixed(2)} ATR > ${trendBreakoutMaxDistanceAtr.toFixed(2)}`
+          );
+        }
+
+        reasons.push(
+          `TREND BOOSTED não qualificou: ${missing.join(' · ')}`
+        );
+      } else {
+        reasons.push(
+          `Breakout Quick exige EXPANSION${trendBreakoutEnabled ? ' ou TREND BOOSTED' : ''}; atual ${regime || 'UNKNOWN'}`
+        );
+      }
+    }
+
+    const maxBody =
+      trendBoosted
+        ? trendBreakoutMaxBodyAtr
+        : breakoutMaxBodyAtr;
+
+    const maxDistance =
+      trendBoosted
+        ? trendBreakoutMaxDistanceAtr
+        : breakoutMaxDistanceAtr;
+
+    if (breakoutBodyAtr > maxBody) {
       reasons.push(
-        `Breakout Quick exige EXPANSION; atual ${regime || 'UNKNOWN'}`
+        `corpo breakout ${breakoutBodyAtr.toFixed(2)} ATR > ${maxBody.toFixed(2)} ATR`
       );
     }
 
-    if (breakoutBodyAtr > breakoutMaxBodyAtr) {
+    if (breakoutDistanceAtr > maxDistance) {
       reasons.push(
-        `corpo breakout ${breakoutBodyAtr.toFixed(2)} ATR > ${breakoutMaxBodyAtr.toFixed(2)} ATR`
-      );
-    }
-
-    if (breakoutDistanceAtr > breakoutMaxDistanceAtr) {
-      reasons.push(
-        `distância EMA20 ${breakoutDistanceAtr.toFixed(2)} ATR > ${breakoutMaxDistanceAtr.toFixed(2)} ATR`
+        `distância EMA20 ${breakoutDistanceAtr.toFixed(2)} ATR > ${maxDistance.toFixed(2)} ATR`
       );
     }
 
@@ -289,7 +386,11 @@ export function eliteQuickScalpAssessment(
     eligible: reasons.length === 0,
     setup,
     side,
-    score,
+    score: rawScore,
+    rawScore,
+    effectiveScore,
+    scorePenalty4h,
+    scorePenaltyOi,
     ai,
     regime,
     originRegime,
@@ -306,6 +407,17 @@ export function eliteQuickScalpAssessment(
     breakoutDistanceAtr,
     breakoutMaxBodyAtr,
     breakoutMaxDistanceAtr,
+    trendBreakoutEnabled,
+    trendBreakoutMinVolume,
+    trendBreakoutMaxBodyAtr,
+    trendBreakoutMaxDistanceAtr,
+    trendBoosted:
+      setup === 'BREAKOUT_STRONG' &&
+      trendBreakoutEnabled &&
+      regime === 'TREND' &&
+      volume5 >= trendBreakoutMinVolume &&
+      breakoutBodyAtr <= trendBreakoutMaxBodyAtr &&
+      breakoutDistanceAtr <= trendBreakoutMaxDistanceAtr,
     oiLevel: oi.label,
     oiRegime: oi.regime,
     aligned4h,

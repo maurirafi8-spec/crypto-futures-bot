@@ -1,36 +1,62 @@
-V1.10.2 GOOGLE FULL VERIFY
+V1.10.0 GOOGLE SYNC — CONFIGURAÇÃO
 
-O /googletest agora testa TUDO:
-1. grava uma linha na aba Events;
-2. atualiza o Dashboard;
-3. cria/atualiza paper-state-latest.json na pasta Backups.
+O bot agora pode mandar automaticamente para sua conta Google:
 
-IMPORTANTE:
-Depois de trocar o código do Apps Script, não basta salvar.
-É obrigatório atualizar a implantação Web App:
+GOOGLE SHEETS
+- trades abertos/fechados
+- PnL, taxas, score, IA, setup, regime, OI, MFE/MAE
+- Dashboard de banca, win rate, PF e Quick trades
+- Events: ARMED, cancelamentos e PAPER bloqueado
 
-Implantar
-> Gerenciar implantações
-> lápis
-> Versão: NOVA VERSÃO
-> Implantar
+GOOGLE DRIVE
+- paper-state-latest.json
+- backup histórico após cada trade fechado
 
-Depois faça deploy/restart da V1.10.2 no Render.
+PASSO 1 — Apps Script
+1. Abra https://script.google.com/
+2. Novo projeto.
+3. Abra o arquivo google-apps-script.gs deste ZIP.
+4. Copie todo o código para o Apps Script e salve.
+5. Rode a função setupCryptoBot.
+6. Autorize Google Sheets e Drive.
+7. No log da execução copie:
+   SHEET_URL
+   DRIVE_FOLDER_URL
+   SYNC_TOKEN
 
-TESTE:
-Telegram:
+NÃO envie o SYNC_TOKEN em chat, Telegram ou GitHub.
+
+PASSO 2 — Publicar
+Deploy > New deployment > Web app
+Execute as: Me
+Who has access: Anyone
+Deploy.
+
+Copie a URL final que termina em /exec.
+
+PASSO 3 — Render Environment
+GOOGLE_SYNC_ENABLED=true
+GOOGLE_SYNC_WEBHOOK_URL=<URL /exec>
+GOOGLE_SYNC_TOKEN=<token gerado>
+GOOGLE_SYNC_TIMEOUT_MS=8000
+
+Save / Deploy.
+
+PASSO 4 — Telegram
+/google
 /googletest
 
-Resposta correta:
+Se /googletest responder OK, abra a planilha e veja a aba Events.
 
-GOOGLE SYNC COMPLETO OK
-Events: linha X gravada
-Dashboard: atualizado
-Drive: paper-state-latest.json gravado
+IMPORTANTE
+A sincronização é auxiliar. Se o Google estiver indisponível,
+o scanner e o PAPER continuam funcionando.
 
-Também existe no Apps Script:
-testeCompletoLocal
+GEMINI
+O bot já usa GEMINI_API_KEY como fallback/rescue se configurado.
+Não coloque login/senha da conta Google no bot.
 
-Essa função testa Sheets + Dashboard + Drive sem depender do Render.
-
-O SYNC_TOKEN continua o mesmo e não deve ser compartilhado.
+GOOGLE CLOUD
+Não migrei o processo do Render nesta versão.
+Como o scanner trabalha em loop contínuo, vamos escolher a hospedagem
+Google separadamente para não trocar algo estável por uma arquitetura pior.

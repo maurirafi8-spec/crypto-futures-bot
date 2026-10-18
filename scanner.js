@@ -997,6 +997,52 @@ function contextualOiStatus({
   };
 }
 
+function entryOiPolicy(
+  side,
+  oiContext = null,
+  strongContraryPct = 0.20
+) {
+  const dir = String(side || '').toUpperCase();
+  const regime = String(oiContext?.regime || 'NEUTRAL').toUpperCase();
+  const oiAbs = Math.abs(finiteNumber(oiContext?.oiPct, 0));
+
+  if (oiContext?.confirmed === true) {
+    return { level: 'FAVORABLE', accepted: true, penalty: 0, regime, oiAbs };
+  }
+
+  if ([
+    'NEUTRAL',
+    'OI_BUILDUP_NEUTRAL_PRICE',
+    'OI_UNWIND_NEUTRAL_PRICE'
+  ].includes(regime)) {
+    return { level: 'NEUTRAL', accepted: true, penalty: 0, regime, oiAbs };
+  }
+
+  if (
+    (dir === 'LONG' && regime === 'SHORT_COVERING') ||
+    (dir === 'SHORT' && regime === 'LONG_UNWIND')
+  ) {
+    return { level: 'SUPPORTIVE', accepted: true, penalty: 0, regime, oiAbs };
+  }
+
+  const contrary =
+    (dir === 'LONG' && ['SHORT_BUILDUP', 'LONG_UNWIND'].includes(regime)) ||
+    (dir === 'SHORT' && ['LONG_BUILDUP', 'SHORT_COVERING'].includes(regime));
+
+  if (contrary) {
+    const strong = oiAbs >= strongContraryPct;
+    return {
+      level: strong ? 'STRONG_CONTRARY' : 'MILD_CONTRARY',
+      accepted: !strong,
+      penalty: strong ? 0 : 4,
+      regime,
+      oiAbs
+    };
+  }
+
+  return { level: 'NEUTRAL', accepted: true, penalty: 0, regime, oiAbs };
+}
+
 function adaptivePullbackDistanceAtr(
   t5,
   minAtr = 0.90,
@@ -1207,7 +1253,7 @@ function marketRegimeStatus({
     slope15 >= 0.08 &&
     slope1h >= 0.05 &&
     body5 >= 0.35 &&
-    volumeRatio >= 1.15;
+    volumeRatio >= 1.00;
 
   const trend =
     aligned15 &&
@@ -1239,8 +1285,7 @@ function marketRegimeStatus({
   return {
     regime,
     pullbackAllowed:
-      regime === 'TREND' &&
-      aligned4h,
+      regime === 'TREND',
     breakoutAllowed:
       regime === 'EXPANSION' ||
       regime === 'TREND',
@@ -1404,10 +1449,6 @@ function trendExhaustionStatus({
 
   const reasons = [];
 
-  if (!aligned4h) {
-    reasons.push('4H não confirma');
-  }
-
   if (distanceEma20_1hAtr > 2.40) {
     reasons.push(
       `1H ${distanceEma20_1hAtr.toFixed(2)} ATR da EMA20`
@@ -1452,7 +1493,9 @@ function trendExhaustionStatus({
     reason:
       reasons.length
         ? reasons.join(' · ')
-        : '4H alinhado e tendência sem sinais fortes de exaustão'
+        : aligned4h
+          ? '4H alinhado e tendência sem sinais fortes de exaustão'
+          : '4H contrário: não bloqueia; entra como peso de score no FAST ENTRY'
   };
 }
 
@@ -1825,40 +1868,31 @@ function pullbackTriggerStatus({
       slope1hOk
     ].filter(Boolean).length;
 
+  // FAST ENTRY: o candle direcional (triggerOk) continua essencial,
+  // mas o conjunto de confirmação passa de 5/5 para pelo menos 4/5.
   const strongTrigger =
     triggerOk &&
-    reclaimOk &&
-    rejectionOk &&
-    slope15Ok &&
-    slope1hOk;
+    triggerQuality >= 4;
 
   const confirmed =
     structure15Ok &&
     structure1hOk &&
-    structure4hOk &&
     pullbackFound &&
     strongTrigger;
 
+  // 4H continua exposto como contexto/peso, mas não cancela sozinho.
   const reason =
-    !structure4hOk
-      ? `4H ${trend4h} não confirma ${side}`
-      : !structure1hOk
-        ? `1H ${trend1h} não confirma ${side}`
-        : !structure15Ok
+    !structure1hOk
+      ? `1H ${trend1h} não confirma ${side}`
+      : !structure15Ok
         ? `15m ${trend15} não confirma ${side}`
-        : !slope1hOk
-          ? `EMA20 1H sem inclinação suficiente (${slope1h.toFixed(3)} ATR)`
-          : !slope15Ok
-            ? `EMA20 15m sem inclinação suficiente (${slope15.toFixed(3)} ATR)`
-            : !pullbackFound
-              ? `sem pullback/reteste EMA20-EMA50 nos últimos ${lookback} candles`
-              : !triggerOk
-                ? `pullback ocorreu, mas candle 5m ainda não confirmou (corpo ${bodyAtr.toFixed(2)} ATR; distância ${distanceAtr.toFixed(2)}/${maxDistanceAtr.toFixed(2)} ATR)`
-                : !reclaimOk
-                  ? 'trigger sem reclaim real da EMA20'
-                  : !rejectionOk
-                    ? `trigger sem rejeição forte da região (closeLocation ${closeLocation.toFixed(2)})`
-                    : 'trend + slope + reteste + reclaim + rejeição 5m confirmados';
+        : !pullbackFound
+          ? `sem pullback/reteste EMA20-EMA50 nos últimos ${lookback} candles`
+          : !triggerOk
+            ? `pullback ocorreu, mas candle 5m ainda não confirmou (corpo ${bodyAtr.toFixed(2)} ATR; distância ${distanceAtr.toFixed(2)}/${maxDistanceAtr.toFixed(2)} ATR)`
+            : triggerQuality < 4
+              ? `trigger ${triggerQuality}/5 insuficiente para FAST ENTRY`
+              : `FAST ENTRY trigger ${triggerQuality}/5 confirmado`;
 
   return {
     confirmed,
@@ -2089,8 +2123,24 @@ function breakoutStrongStatus({
       t1h
     ) === side;
 
+  const oiPolicy =
+    entryOiPolicy(
+      side,
+      oiContext
+    );
+
+  const rawScore =
+    Number(score || 0);
+
+  const effectiveScore =
+    Math.max(
+      0,
+      rawScore -
+      Number(oiPolicy.penalty || 0)
+    );
+
   const scoreOk =
-    Number(score || 0) >=
+    effectiveScore >=
     minScore;
 
   const volumeOk =
@@ -2110,9 +2160,7 @@ function breakoutStrongStatus({
       : Number(t5?.macdHist || 0) < 0;
 
   const oiOk =
-    Boolean(
-      oiContext?.confirmed
-    );
+    oiPolicy.accepted;
 
   const bodyOk =
     bodyAtr >=
@@ -2133,7 +2181,8 @@ function breakoutStrongStatus({
 
   if (!scoreOk) {
     missing.push(
-      `score ${Number(score || 0)} abaixo de ${minScore}`
+      `score efetivo ${effectiveScore} abaixo de ${minScore}` +
+      `${oiPolicy.penalty ? ` (${rawScore} bruto; OI leve -${oiPolicy.penalty})` : ''}`
     );
   }
 
@@ -2151,7 +2200,7 @@ function breakoutStrongStatus({
 
   if (!oiOk) {
     missing.push(
-      'OI contextual não confirma'
+      `OI fortemente contrário (${oiPolicy.regime}; ${oiPolicy.oiAbs.toFixed(2)}%)`
     );
   }
 
@@ -4131,7 +4180,7 @@ export function signalText(s) {
 
     `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
 
-    `<i>V1.10.2: Google Sync · histórico no Sheets + backup no Drive · Quick Entry Quality preservado. ` +
+    `<i>V1.11.1: Fast Entry · 1 candle · 4H com peso · OI neutro permitido · Google Sync preservado. ` +
     `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

@@ -20,14 +20,20 @@ function baseOf(symbol) {
     .replace(/PERP.*$/, '');
 }
 
-function oiClassForSide(side, oiContext = null) {
+function oiClassForSide(
+  side,
+  oiContext = null,
+  strongContraryPct = 0.20
+) {
   const dir = String(side || '').toUpperCase();
   const regime = String(oiContext?.regime || 'NEUTRAL').toUpperCase();
+  const oiPct = Math.abs(finiteNumber(oiContext?.oiPct, 0));
 
   if (oiContext?.confirmed === true) {
     return {
       level: 'FAVORABLE',
       regime,
+      oiPct,
       reason: 'OI confirmou a direção'
     };
   }
@@ -42,7 +48,8 @@ function oiClassForSide(side, oiContext = null) {
     return {
       level: 'NEUTRAL',
       regime,
-      reason: 'OI sem confirmação, mas também sem oposição direcional clara'
+      oiPct,
+      reason: 'OI neutro: permitido no FAST ENTRY'
     };
   }
 
@@ -51,7 +58,8 @@ function oiClassForSide(side, oiContext = null) {
       return {
         level: 'SUPPORTIVE',
         regime,
-        reason: 'short covering favorece a continuação LONG, embora sem novo OI comprador'
+        oiPct,
+        reason: 'short covering favorece a continuação LONG'
       };
     }
 
@@ -59,10 +67,14 @@ function oiClassForSide(side, oiContext = null) {
       regime === 'SHORT_BUILDUP' ||
       regime === 'LONG_UNWIND'
     ) {
+      const strong = oiPct >= strongContraryPct;
       return {
-        level: 'CONTRARY',
+        level: strong ? 'STRONG_CONTRARY' : 'MILD_CONTRARY',
         regime,
-        reason: `${regime} é contrário ao LONG`
+        oiPct,
+        reason: strong
+          ? `${regime} fortemente contrário ao LONG`
+          : `${regime} levemente contrário ao LONG; aplica peso no score`
       };
     }
   }
@@ -72,7 +84,8 @@ function oiClassForSide(side, oiContext = null) {
       return {
         level: 'SUPPORTIVE',
         regime,
-        reason: 'long unwind favorece a continuação SHORT, embora sem novo OI vendedor'
+        oiPct,
+        reason: 'long unwind favorece a continuação SHORT'
       };
     }
 
@@ -80,10 +93,14 @@ function oiClassForSide(side, oiContext = null) {
       regime === 'LONG_BUILDUP' ||
       regime === 'SHORT_COVERING'
     ) {
+      const strong = oiPct >= strongContraryPct;
       return {
-        level: 'CONTRARY',
+        level: strong ? 'STRONG_CONTRARY' : 'MILD_CONTRARY',
         regime,
-        reason: `${regime} é contrário ao SHORT`
+        oiPct,
+        reason: strong
+          ? `${regime} fortemente contrário ao SHORT`
+          : `${regime} levemente contrário ao SHORT; aplica peso no score`
       };
     }
   }
@@ -91,7 +108,8 @@ function oiClassForSide(side, oiContext = null) {
   return {
     level: 'NEUTRAL',
     regime,
-    reason: 'OI sem leitura direcional conclusiva'
+    oiPct,
+    reason: 'OI sem leitura direcional conclusiva; permitido'
   };
 }
 
@@ -99,7 +117,7 @@ function cancellationBucket(code = 'OTHER') {
   const key = String(code || 'OTHER').toUpperCase();
   const labels = {
     OI_CONTRARY: 'OI contrário',
-    NO_CONFIRMATION: 'sem confirmação em 2 candles',
+    NO_CONFIRMATION: 'sem confirmação na janela FAST ENTRY',
     EXHAUSTION: 'Trend Exhaustion',
     REGIME: 'regime',
     STRUCTURE_4H: '4H',
@@ -204,27 +222,28 @@ export class ConfirmedEntryManager {
   constructor({
     enabled = true,
     pullbackOnly = true,
-    maxWaitBars = 2,
-    minVolumeRatio = 0.55,
-    volumeResumeMultiplier = 1.05,
+    maxWaitBars = 1,
+    minVolumeRatio = 1.00,
+    volumeResumeMultiplier = 1.00,
     maxChaseAtr = 0.90,
     maxOppositeExcursionAtr = 0.55,
     requireTrend = true,
-    require4h = true,
+    require4h = false,
     requireOi = true,
     requireBtc = true,
     requireExhaustionOk = true,
     smartOiEnabled = true,
     allowSupportiveOi = true,
     allowNeutralOi = true,
-    neutralOiMinVolumeRatio = 0.70,
-    neutralOiRequireMacd = true
+    neutralOiMinVolumeRatio = 0,
+    neutralOiRequireMacd = false,
+    strongOiContraryPct = 0.20
   } = {}) {
     this.enabled = enabled;
     this.pullbackOnly = pullbackOnly;
     this.maxWaitBars = Math.max(1, Math.min(3, Number(maxWaitBars || 1)));
-    this.minVolumeRatio = Math.max(0.2, Number(minVolumeRatio || 0.55));
-    this.volumeResumeMultiplier = Math.max(0.5, Number(volumeResumeMultiplier || 1.05));
+    this.minVolumeRatio = Math.max(0.2, Number(minVolumeRatio || 1.00));
+    this.volumeResumeMultiplier = Math.max(0.5, Number(volumeResumeMultiplier || 1.00));
     this.maxChaseAtr = Math.max(0.2, Number(maxChaseAtr || 0.90));
     this.maxOppositeExcursionAtr = Math.max(0.1, Number(maxOppositeExcursionAtr || 0.55));
     this.requireTrend = Boolean(requireTrend);
@@ -236,10 +255,11 @@ export class ConfirmedEntryManager {
     this.allowSupportiveOi = Boolean(allowSupportiveOi);
     this.allowNeutralOi = Boolean(allowNeutralOi);
     this.neutralOiMinVolumeRatio = Math.max(
-      this.minVolumeRatio,
-      Number(neutralOiMinVolumeRatio || 0.70)
+      0,
+      Number(neutralOiMinVolumeRatio || 0)
     );
     this.neutralOiRequireMacd = Boolean(neutralOiRequireMacd);
+    this.strongOiContraryPct = Math.max(0.05, Number(strongOiContraryPct || 0.20));
     this.armed = new Map();
     this.lastResolvedBar = new Map();
     this.stats = {
@@ -493,7 +513,7 @@ export class ConfirmedEntryManager {
       `🧱 Candle gatilho: ${side === 'LONG' ? 'romper/fechar acima de' : 'romper/fechar abaixo de'} ` +
       `${side === 'LONG' ? item.triggerHigh : item.triggerLow}\n` +
       `⏳ Janela inteligente: até ${this.maxWaitBars} candles 5m FECHADOS para confirmar. ` +
-      `OI neutro/suporte não cancela sozinho; OI realmente contrário cancela. ` +
+      `OI neutro/suporte é aceito; OI leve contrário reduz score; OI forte contrário cancela. ` +
       `Nenhuma nova chamada de IA enquanto estiver ARMED.`
     );
   }
@@ -506,7 +526,7 @@ export class ConfirmedEntryManager {
 
     const statsLines = [
       `📊 Desde o deploy: ${stats.created} ARMED · ${stats.confirmed} confirmados · ${stats.canceled} cancelados · ${stats.pending} aguardando`,
-      `🎯 Conversão resolvida ARMED→TRADE: ${stats.conversionPct.toFixed(1)}% · extensões para 2º candle: ${Number(stats.extended || 0)}`
+      `🎯 Conversão resolvida ARMED→TRADE: ${stats.conversionPct.toFixed(1)}% · esperas extras: ${Number(stats.extended || 0)}`
     ];
 
     if (reasonEntries.length) {
@@ -701,7 +721,8 @@ export class ConfirmedEntryManager {
       const oiClass =
         oiClassForSide(
           side,
-          snap?.oiContext
+          snap?.oiContext,
+          this.strongOiContraryPct
         );
 
       item.lastOiClass =
@@ -725,10 +746,10 @@ export class ConfirmedEntryManager {
       ) {
         if (
           oiClass.level ===
-          'CONTRARY'
+          'STRONG_CONTRARY'
         ) {
           invalidate(
-            `OI realmente contrário ao ${side}: ${oiClass.regime}`,
+            `OI fortemente contrário ao ${side}: ${oiClass.regime} (${oiClass.oiPct.toFixed(2)}%)`,
             'OI_CONTRARY'
           );
           continue;
@@ -876,7 +897,7 @@ export class ConfirmedEntryManager {
       if (confirmationFailures.length) {
         if (!lastAllowedBar) {
           softWait(
-            `1º candle não confirmou: ${confirmationFailures.join(' · ')}; aguarda o 2º`
+            `candle não confirmou: ${confirmationFailures.join(' · ')}`
           );
           continue;
         }
@@ -936,13 +957,11 @@ export class ConfirmedEntryManager {
         confirmedEntry: {
           armedAt: item.armedAt,
           smartOiClass:
-            oiClass.level === 'NEUTRAL'
-              ? 'NEUTRAL_STRONG'
-              : oiClass.level,
+            oiClass.level,
           smartOiRegime:
             oiClass.regime,
           smartOiAccepted:
-            oiClass.level !== 'CONTRARY',
+            oiClass.level !== 'STRONG_CONTRARY',
           confirmationBarNumber:
             barNumber,
           triggerBarTime: item.triggerBarTime,
