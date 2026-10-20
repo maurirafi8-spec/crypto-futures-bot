@@ -1,41 +1,62 @@
-/**
- * SCANNER.JS — V2.0 OTIMIZADO
- * Motor de busca e classificação técnica de futuros cripto.
- */
-
 import {
   futureMarkets,
   exchanges,
   ohlcvHistory,
+  fundingRates,
   openInterestHistory
 } from './binance.js';
 
-import {
-  ema,
-  rsi,
-  atr,
-  macd,
-  pctChange,
-  bollingerBands,
-  adx,
-  dailyVwap
-} from './indicators.js';
+import { ema, rsi, atr, macd, pctChange, bollingerBands, adx, dailyVwap } from './indicators.js';
 
-const CORE_BASES = ['BTC', 'ETH', 'SOL', 'XRP', 'BNB', 'DOGE'];
+const CORE_BASES = [
+  'BTC',
+  'ETH',
+  'SOL',
+  'XRP',
+  'BNB',
+  'DOGE'
+];
+
 const ROTATING_BASES = [
-  'ADA', 'LINK', 'AVAX', 'SUI', 'LTC', 'BCH', 'DOT', 'NEAR',
-  'UNI', 'AAVE', 'ETC', 'ATOM', 'INJ', 'HBAR', 'TRX', 'FIL', 'ARB', 'OP'
+  'ADA',
+  'LINK',
+  'AVAX',
+  'SUI',
+  'LTC',
+  'BCH',
+  'DOT',
+  'NEAR',
+  'UNI',
+  'AAVE',
+  'ETC',
+  'ATOM',
+  'INJ',
+  'HBAR',
+  'TRX',
+  'FIL',
+  'ARB',
+  'OP'
 ];
 
 let marketRotationCursor = 0;
+
+// V1.6.4: contexto BTC persiste entre os lotes de 1 minuto.
+// Assim uma altcoin pode usar o último BTC mesmo quando BTC não está
+// no lote atual.
 let cachedBtcContext = null;
 let cachedBtcContextAt = 0;
 const BTC_CONTEXT_MAX_AGE_MS = 10 * 60 * 1000;
 
-const EXCHANGE_PRIORITY = ['BINANCE', 'HYPERLIQUID', 'BYBIT', 'OKX', 'BITGET'];
+const EXCHANGE_PRIORITY = [
+  'BINANCE',
+  'HYPERLIQUID',
+  'BYBIT',
+  'OKX',
+  'BITGET'
+];
 
 function last(arr) {
-  return arr && arr.length ? arr[arr.length - 1] : null;
+  return arr[arr.length - 1];
 }
 
 const M5_MS = 5 * 60 * 1000;
@@ -43,8 +64,11 @@ const M15_MS = 15 * 60 * 1000;
 const H1_MS = 60 * 60 * 1000;
 const H4_MS = 4 * 60 * 60 * 1000;
 
+// V1.3.4: indicadores e volume usam somente candles totalmente fechados.
+// Isso evita volume relativo artificialmente baixo logo após abrir uma vela nova.
 function onlyClosedCandles(candles, intervalMs, nowMs = Date.now()) {
   const graceMs = 5000;
+
   return (candles || [])
     .filter(c =>
       Number.isFinite(c.openTime) &&
@@ -55,10 +79,15 @@ function onlyClosedCandles(candles, intervalMs, nowMs = Date.now()) {
 
 function onlyClosedOi(history, intervalMs = M15_MS, nowMs = Date.now()) {
   const graceMs = 5000;
+
   return (history || []).filter(x => {
     const rawTs = Number(x.t ?? x.timestamp ?? 0);
     if (!Number.isFinite(rawTs) || rawTs <= 0) return true;
-    const tsMs = rawTs < 10_000_000_000 ? rawTs * 1000 : rawTs;
+
+    const tsMs = rawTs < 10_000_000_000
+      ? rawTs * 1000
+      : rawTs;
+
     return tsMs + intervalMs <= nowMs - graceMs;
   });
 }
@@ -75,11 +104,14 @@ function mapHistory(data) {
   }));
 }
 
-function resampleCandlesSafe(candles, bucketMs, minRequiredSubCandles) {
+function resampleCandles(candles, bucketMs) {
   const groups = new Map();
+  const expectedCount = bucketMs >= H4_MS ? 4 : 3;
 
   for (const c of candles) {
-    const bucket = Math.floor(c.openTime / bucketMs) * bucketMs;
+    const bucket =
+      Math.floor(c.openTime / bucketMs) *
+      bucketMs;
 
     if (!groups.has(bucket)) {
       groups.set(bucket, {
@@ -103,17 +135,23 @@ function resampleCandlesSafe(candles, bucketMs, minRequiredSubCandles) {
     }
   }
 
-  return [...groups.values()]
-    .filter(g => g.count >= minRequiredSubCandles)
+  const sorted = [...groups.values()]
     .sort((a, b) => a.openTime - b.openTime);
+
+  // Remove o primeiro bucket se estiver incompleto (recorte inicial da janela)
+  if (sorted.length > 1 && sorted[0].count < expectedCount) {
+    sorted.shift();
+  }
+
+  return sorted;
 }
 
 function resample15m(candles5m) {
-  return resampleCandlesSafe(candles5m, M15_MS, 3);
+  return resampleCandles(candles5m, M15_MS);
 }
 
 function resample4h(candles1h) {
-  return resampleCandlesSafe(candles1h, H4_MS, 4);
+  return resampleCandles(candles1h, H4_MS);
 }
 
 function analyzeTf(candles) {
@@ -127,7 +165,7 @@ function analyzeTf(candles) {
   const at = atr(candles, 14);
   const mc = macd(closes);
   const bb = bollingerBands(closes, 20, 2);
-  const adxResult = adx(candles, 14);
+  const adxRes = adx(candles, 14);
 
   const c = last(candles);
   const previousVolumes = volumes.slice(-21, -1);
@@ -149,27 +187,21 @@ function analyzeTf(candles) {
     macdHist: last(mc.histogram),
     bandwidth: last(bb.bandwidth),
     percentB: last(bb.percentB),
-    adx: last(adxResult.adx),
-    plusDi: last(adxResult.plusDi),
-    minusDi: last(adxResult.minusDi),
+    adx: last(adxRes.adx),
+    plusDi: last(adxRes.plusDi),
+    minusDi: last(adxRes.minusDi),
     quoteVolume: Number(c.quoteVolume || 0),
     avgQuoteVolume: Number(avgVol || 0),
     volumeRatio: avgVol > 0 ? c.quoteVolume / avgVol : 1,
     bullish:
       c.close > last(e20) &&
       last(e20) > last(e50) &&
-      last(e50) > (last(e200) || 0),
+      last(e50) > last(e200),
     bearish:
       c.close < last(e20) &&
       last(e20) < last(e50) &&
-      last(e50) < (last(e200) || Infinity)
+      last(e50) < last(e200)
   };
-}
-
-function directionalStructure(tf) {
-  if (tf?.price > tf?.ema20 && tf?.ema20 > tf?.ema50) return 'LONG';
-  if (tf?.price < tf?.ema20 && tf?.ema20 < tf?.ema50) return 'SHORT';
-  return 'MIXED';
 }
 
 function finiteNumber(value, fallback = 0) {
@@ -177,41 +209,251 @@ function finiteNumber(value, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
-function btcHardGate(side, symbol, btcContext) {
-  const isBtc = String(symbol || '').toUpperCase().startsWith('BTC');
-  if (isBtc || !btcContext) return { ok: true, reason: '' };
-
-  const trend15m = String(btcContext.trend15m || 'MIXED').toUpperCase();
-  const trend1h = String(btcContext.trend1h || 'MIXED').toUpperCase();
-
-  if (side === 'LONG' && (trend15m === 'BEARISH' || trend1h === 'BEARISH')) {
-    return {
-      ok: false,
-      reason: `BTC contrário no 15m (${trend15m}) ou 1h (${trend1h}): compras em altcoins bloqueadas.`
-    };
-  }
-
-  if (side === 'SHORT' && (trend15m === 'BULLISH' || trend1h === 'BULLISH')) {
-    return {
-      ok: false,
-      reason: `BTC em alta no 15m (${trend15m}) ou 1h (${trend1h}): shorts em altcoins bloqueados.`
-    };
-  }
-
-  return { ok: true, reason: '' };
+function fmt(value, digits = 2, fallback = '—') {
+  const n = Number(value);
+  return Number.isFinite(n)
+    ? n.toFixed(digits)
+    : fallback;
 }
 
-function scoreSignal(t5, t15, t1h, t4h, oiPct, symbol = '', btcContext = null) {
-  const rsi5 = finiteNumber(t5?.rsi, 50);
-  const vol5 = finiteNumber(t5?.volumeRatio, 0);
-  const oi = finiteNumber(oiPct, 0);
+function directionalStructure(tf) {
+  if (
+    tf?.price > tf?.ema20 &&
+    tf?.ema20 > tf?.ema50
+  ) {
+    return 'LONG';
+  }
+
+  if (
+    tf?.price < tf?.ema20 &&
+    tf?.ema20 < tf?.ema50
+  ) {
+    return 'SHORT';
+  }
+
+  return 'MIXED';
+}
+
+function buildBtcContext({
+  t5,
+  t15,
+  t1h,
+  t4h,
+  oiPct,
+  change24h = 0,
+  side = null,
+  score = null
+}) {
+  return {
+    side,
+    score,
+    change24hPct:
+      finiteNumber(change24h, 0),
+    trend5m:
+      directionalStructure(t5) === 'LONG'
+        ? 'BULLISH'
+        : directionalStructure(t5) === 'SHORT'
+          ? 'BEARISH'
+          : 'MIXED',
+    trend15m:
+      directionalStructure(t15) === 'LONG'
+        ? 'BULLISH'
+        : directionalStructure(t15) === 'SHORT'
+          ? 'BEARISH'
+          : 'MIXED',
+    trend1h:
+      directionalStructure(t1h) === 'LONG'
+        ? 'BULLISH'
+        : directionalStructure(t1h) === 'SHORT'
+          ? 'BEARISH'
+          : 'MIXED',
+    trend4h:
+      directionalStructure(t4h) === 'LONG'
+        ? 'BULLISH'
+        : directionalStructure(t4h) === 'SHORT'
+          ? 'BEARISH'
+          : 'MIXED',
+    rsi5m:
+      finiteNumber(t5?.rsi, null),
+    rsi15m:
+      finiteNumber(t15?.rsi, null),
+    volumeRatio5m:
+      finiteNumber(t5?.volumeRatio, null),
+    openInterestChangePct:
+      finiteNumber(oiPct, 0),
+    fundingRatePct: null,
+    cached: false,
+    ageMin: 0
+  };
+}
+
+function freshBtcContext(nowMs = Date.now()) {
+  if (
+    !cachedBtcContext ||
+    !cachedBtcContextAt
+  ) {
+    return null;
+  }
+
+  const ageMs =
+    nowMs - cachedBtcContextAt;
+
+  if (
+    ageMs < 0 ||
+    ageMs > BTC_CONTEXT_MAX_AGE_MS
+  ) {
+    return null;
+  }
+
+  return {
+    ...cachedBtcContext,
+    cached:
+      ageMs > 15_000,
+    ageMin:
+      ageMs / 60_000
+  };
+}
+
+function btcDirectionalAdjustment(
+  side,
+  symbol,
+  btcContext
+) {
+  const isBtc =
+    String(symbol || '')
+      .toUpperCase()
+      .startsWith('BTC');
+
+  if (
+    isBtc ||
+    !btcContext
+  ) {
+    return {
+      points: 0,
+      reason: ''
+    };
+  }
+
+  const aligned =
+    side === 'LONG'
+      ? 'BULLISH'
+      : 'BEARISH';
+
+  const opposite =
+    side === 'LONG'
+      ? 'BEARISH'
+      : 'BULLISH';
+
+  const t15 =
+    String(
+      btcContext.trend15m ||
+      'MIXED'
+    ).toUpperCase();
+
+  const t1h =
+    String(
+      btcContext.trend1h ||
+      'MIXED'
+    ).toUpperCase();
+
+  const alignedCount =
+    [t15, t1h]
+      .filter(x => x === aligned)
+      .length;
+
+  const oppositeCount =
+    [t15, t1h]
+      .filter(x => x === opposite)
+      .length;
+
+  if (alignedCount === 2) {
+    return {
+      points: 4,
+      reason:
+        `BTC 15m/1h alinhado com ${side} (+4)`
+    };
+  }
+
+  if (
+    alignedCount === 1 &&
+    oppositeCount === 0
+  ) {
+    return {
+      points: 2,
+      reason:
+        `BTC parcialmente alinhado com ${side} (+2)`
+    };
+  }
+
+  if (oppositeCount === 2) {
+    return {
+      points: -12,
+      reason:
+        `BTC 15m/1h contrário a ${side} (-12)`
+    };
+  }
+
+  if (
+    oppositeCount === 1 &&
+    alignedCount === 0
+  ) {
+    return {
+      points: -7,
+      reason:
+        `BTC parcialmente contrário a ${side} (-7)`
+    };
+  }
+
+  if (
+    oppositeCount === 1 &&
+    alignedCount === 1
+  ) {
+    return {
+      points: -4,
+      reason:
+        `BTC dividido contra ${side} (-4)`
+    };
+  }
+
+  return {
+    points: -4,
+    reason:
+      `BTC 15m/1h misto (-4)`
+  };
+}
+
+function scoreSignal(
+  t5,
+  t15,
+  t1h,
+  t4h,
+  oiPct,
+  symbol = '',
+  btcContext = null
+) {
+  const rsi5 =
+    finiteNumber(t5?.rsi, 50);
+
+  const vol5 =
+    finiteNumber(
+      t5?.volumeRatio,
+      0
+    );
+
+  const oi =
+    finiteNumber(oiPct, 0);
 
   let long = 0;
   let short = 0;
+
   const whyLong = [];
   const whyShort = [];
 
-  const add = (side, points, reason) => {
+  const add = (
+    side,
+    points,
+    reason
+  ) => {
     if (side === 'LONG') {
       long += points;
       whyLong.push(reason);
@@ -221,244 +463,3744 @@ function scoreSignal(t5, t15, t1h, t4h, oiPct, symbol = '', btcContext = null) {
     }
   };
 
-  const structure5 = directionalStructure(t5);
-  const structure15 = directionalStructure(t15);
-  const structure1h = directionalStructure(t1h);
-  const structure4h = directionalStructure(t4h);
+  // V1.6.4 DIRECTION BALANCE:
+  // LONG e SHORT recebem exatamente os mesmos pesos espelhados.
+  // 5m/15m = timing; 1h = confirmação principal; 4h = contexto.
+  const structure5 =
+    directionalStructure(t5);
 
-  if (structure1h === 'LONG') add('LONG', 22, '1H confirma tendência de alta');
-  if (structure1h === 'SHORT') add('SHORT', 22, '1H confirma tendência de baixa');
+  const structure15 =
+    directionalStructure(t15);
 
-  if (structure15 === 'LONG') add('LONG', 18, '15m alinhado');
-  if (structure15 === 'SHORT') add('SHORT', 18, '15m alinhado');
+  const structure1h =
+    directionalStructure(t1h);
 
-  if (structure5 === 'LONG') add('LONG', 15, '5m acima das EMAs');
-  if (structure5 === 'SHORT') add('SHORT', 15, '5m abaixo das EMAs');
+  const structure4h =
+    directionalStructure(t4h);
 
-  if (rsi5 >= 50 && rsi5 <= 68) add('LONG', 10, `RSI 5m saudável (${rsi5.toFixed(1)})`);
-  if (rsi5 <= 50 && rsi5 >= 32) add('SHORT', 10, `RSI 5m saudável (${rsi5.toFixed(1)})`);
+  if (structure1h === 'LONG') {
+    add(
+      'LONG',
+      20,
+      '1H confirma tendência de alta'
+    );
+  }
 
-  if (t5.macdHist > 0) add('LONG', 10, 'MACD 5m positivo');
-  if (t5.macdHist < 0) add('SHORT', 10, 'MACD 5m negativo');
+  if (structure1h === 'SHORT') {
+    add(
+      'SHORT',
+      20,
+      '1H confirma tendência de baixa'
+    );
+  }
+
+  if (structure15 === 'LONG') {
+    add(
+      'LONG',
+      18,
+      '15m acima das EMAs'
+    );
+  }
+
+  if (structure15 === 'SHORT') {
+    add(
+      'SHORT',
+      18,
+      '15m abaixo das EMAs'
+    );
+  }
+
+  if (structure5 === 'LONG') {
+    add(
+      'LONG',
+      14,
+      '5m acima das EMAs'
+    );
+  }
+
+  if (structure5 === 'SHORT') {
+    add(
+      'SHORT',
+      14,
+      '5m abaixo das EMAs'
+    );
+  }
+
+  if (
+    rsi5 >= 51 &&
+    rsi5 <= 69
+  ) {
+    add(
+      'LONG',
+      10,
+      `RSI 5m ${rsi5.toFixed(1)}`
+    );
+  }
+
+  if (
+    rsi5 <= 49 &&
+    rsi5 >= 31
+  ) {
+    add(
+      'SHORT',
+      10,
+      `RSI 5m ${rsi5.toFixed(1)}`
+    );
+  }
+
+  if (t5.macdHist > 0) {
+    add(
+      'LONG',
+      10,
+      'MACD 5m comprador'
+    );
+  }
+
+  if (t5.macdHist < 0) {
+    add(
+      'SHORT',
+      10,
+      'MACD 5m vendedor'
+    );
+  }
 
   if (vol5 >= 1.10) {
-    if (structure5 === 'LONG') add('LONG', 12, `Volume 5m forte (${vol5.toFixed(2)}x)`);
-    if (structure5 === 'SHORT') add('SHORT', 12, `Volume 5m forte (${vol5.toFixed(2)}x)`);
+    if (structure5 === 'LONG') {
+      add(
+        'LONG',
+        10,
+        `Volume 5m ${vol5.toFixed(2)}x`
+      );
+    }
+
+    if (structure5 === 'SHORT') {
+      add(
+        'SHORT',
+        10,
+        `Volume 5m ${vol5.toFixed(2)}x`
+      );
+    }
   }
 
   if (oi >= 0.50) {
-    if (structure5 === 'LONG') add('LONG', 8, `OI em alta (+${oi.toFixed(2)}%)`);
-    if (structure5 === 'SHORT') add('SHORT', 8, `OI em alta (+${oi.toFixed(2)}%)`);
+    if (structure5 === 'LONG') {
+      add(
+        'LONG',
+        10,
+        `OI +${oi.toFixed(2)}%`
+      );
+    }
+
+    if (structure5 === 'SHORT') {
+      add(
+        'SHORT',
+        10,
+        `OI +${oi.toFixed(2)}%`
+      );
+    }
   }
 
-  if (structure4h === 'LONG') add('LONG', 5, '4H macro favorável');
-  if (structure4h === 'SHORT') add('SHORT', 5, '4H macro favorável');
+  if (t15.macdHist > 0) {
+    add(
+      'LONG',
+      4,
+      'MACD 15m comprador'
+    );
+  }
 
-  const side = long > short ? 'LONG' : short > long ? 'SHORT' : 'NEUTRAL';
-  const selectedScore = side === 'LONG' ? long : side === 'SHORT' ? short : 0;
-  const directionEdge = Math.abs(long - short);
+  if (t15.macdHist < 0) {
+    add(
+      'SHORT',
+      4,
+      'MACD 15m vendedor'
+    );
+  }
+
+  if (structure4h === 'LONG') {
+    add(
+      'LONG',
+      6,
+      '4H favorável'
+    );
+  }
+
+  if (structure4h === 'SHORT') {
+    add(
+      'SHORT',
+      6,
+      '4H favorável'
+    );
+  }
+
+  const rawLongScore = long;
+  const rawShortScore = short;
+
+  const btcLong =
+    btcDirectionalAdjustment(
+      'LONG',
+      symbol,
+      btcContext
+    );
+
+  const btcShort =
+    btcDirectionalAdjustment(
+      'SHORT',
+      symbol,
+      btcContext
+    );
+
+  long += btcLong.points;
+  short += btcShort.points;
+
+  // Sem desempate "LONG >=".
+  // Em empate usa primeiro a estrutura 1H, depois 15m, depois momentum 5m.
+  let side;
+
+  if (long > short) {
+    side = 'LONG';
+  } else if (short > long) {
+    side = 'SHORT';
+  } else if (structure1h !== 'MIXED') {
+    side = structure1h;
+  } else if (structure15 !== 'MIXED') {
+    side = structure15;
+  } else if (t5.macdHist > 0) {
+    side = 'LONG';
+  } else if (t5.macdHist < 0) {
+    side = 'SHORT';
+  } else {
+    side =
+      rsi5 > 50
+        ? 'LONG'
+        : rsi5 < 50
+          ? 'SHORT'
+          : 'NEUTRAL';
+  }
+
+  const selectedScore =
+    side === 'LONG'
+      ? long
+      : side === 'SHORT'
+        ? short
+        : 0;
+
+  const directionEdge =
+    Math.abs(long - short);
+
+  const oneHourConfirmed =
+    side !== 'NEUTRAL' &&
+    structure1h === side;
+
+  const btcSelected =
+    side === 'LONG'
+      ? btcLong
+      : side === 'SHORT'
+        ? btcShort
+        : {
+            points: 0,
+            reason: ''
+          };
+
+  const reasons =
+    side === 'LONG'
+      ? [...whyLong]
+      : side === 'SHORT'
+        ? [...whyShort]
+        : ['Direção neutra'];
+
+  if (btcSelected.reason) {
+    reasons.push(
+      btcSelected.reason
+    );
+  }
 
   return {
     side,
-    score: Math.min(100, Math.max(0, Math.round(selectedScore))),
-    longScore: Math.round(long),
-    shortScore: Math.round(short),
-    directionEdge: Math.round(directionEdge),
-    oneHourConfirmed: structure1h === side,
+    score:
+      Math.min(
+        100,
+        Math.max(
+          0,
+          Math.round(selectedScore)
+        )
+      ),
+    rawLongScore,
+    rawShortScore,
+    longScore:
+      Math.max(
+        0,
+        Math.round(long)
+      ),
+    shortScore:
+      Math.max(
+        0,
+        Math.round(short)
+      ),
+    directionEdge:
+      Math.round(directionEdge),
+    oneHourConfirmed,
     structure5,
     structure15,
     structure1h,
     structure4h,
-    reasons: side === 'LONG' ? whyLong : side === 'SHORT' ? whyShort : ['Neutro']
+    btcScoreAdjustment:
+      btcSelected.points,
+    reasons
   };
 }
 
-function buildLevels(side, price, atrValue) {
-  const px = Number(price);
-  const safeAtr = Number.isFinite(atrValue) && atrValue > 0 ? atrValue : px * 0.003;
-  const isLong = side === 'LONG';
+// Export simples para teste/diagnóstico da lógica direcional.
+export function directionScoreSnapshot({
+  t5,
+  t15,
+  t1h,
+  t4h,
+  oiPct = 0,
+  symbol = 'TESTUSDT',
+  btcContext = null
+}) {
+  return scoreSignal(
+    t5,
+    t15,
+    t1h,
+    t4h,
+    oiPct,
+    symbol,
+    btcContext
+  );
+}
 
-  const risk = safeAtr * 1.5;
+function confirmationStatus(
+  t5,
+  oiPct,
+  score,
+  minVolumeRatio,
+  minOiPct,
+  hardMinVolumeRatio,
+  oiRejectPct,
+  exceptionScore,
+  exceptionVolumeRatio
+) {
+  const volumeRatio = Number(t5?.volumeRatio || 0);
+  const volumeFloorOk = volumeRatio >= hardMinVolumeRatio;
+  const volumeOk = volumeRatio >= minVolumeRatio;
+  const oiOk = oiPct >= minOiPct;
+
+  // V1.2.2: protege contra divergência forte de Open Interest.
+  // Se o OI cair abaixo do limite, o sinal é rejeitado.
+  // Exceção: score alto + volume realmente forte.
+  const oiDivergence = oiPct < oiRejectPct;
+  const divergenceException =
+    oiDivergence &&
+    score >= exceptionScore &&
+    volumeRatio >= exceptionVolumeRatio;
+
+  const confirmed =
+    volumeFloorOk &&
+    (volumeOk || oiOk) &&
+    (!oiDivergence || divergenceException);
+
+  let label = '⏳ AGUARDANDO';
+
+  if (!volumeFloorOk) {
+    label = '🚫 VOLUME MUITO BAIXO';
+  } else if (oiDivergence && !divergenceException) {
+    label = '🚫 OI EM DIVERGÊNCIA';
+  } else if (divergenceException) {
+    label = '⚠️ OI NEGATIVO / VOLUME FORTE';
+  } else if (volumeOk && oiOk) {
+    label = '🔥 VOLUME + OI';
+  } else if (oiOk) {
+    label = '✅ OI FORTE';
+  } else if (volumeOk) {
+    label = '✅ VOLUME CONFIRMADO';
+  }
 
   return {
-    entry: px,
-    stop: isLong ? px - risk : px + risk,
-    tp1: isLong ? px + risk * 1.30 : px - risk * 1.30,
-    tp2: isLong ? px + risk * 1.80 : px - risk * 1.80,
-    tp3: isLong ? px + risk * 2.50 : px - risk * 2.50,
-    tradeStyle: 'SCALP_5M_HIGH_ASSERTIVENESS',
-    stopAtrMultiple: 1.50,
-    stopPct: (risk / px) * 100
+    confirmed,
+    label,
+    volumeFloorOk,
+    volumeOk,
+    oiOk,
+    oiDivergence,
+    divergenceException
   };
 }
 
-function chooseMarkets(markets, exchangeNames, limit, requestedBases = null) {
+
+
+function oiChangePct(
+  history,
+  barsBack = 2
+) {
+  if (
+    !Array.isArray(history) ||
+    history.length < 2
+  ) {
+    return 0;
+  }
+
+  const end =
+    Number(
+      last(history)?.c
+    );
+
+  const startIndex =
+    Math.max(
+      0,
+      history.length -
+      1 -
+      barsBack
+    );
+
+  const start =
+    Number(
+      history[startIndex]?.c
+    );
+
+  if (
+    !Number.isFinite(start) ||
+    !Number.isFinite(end) ||
+    start === 0
+  ) {
+    return 0;
+  }
+
+  return pctChange(
+    start,
+    end
+  );
+}
+
+function contextualOiStatus({
+  side,
+  c15,
+  oiHistory,
+  pullback,
+  minOiPct = 0.08,
+  minPricePct = 0.03
+}) {
+  const oiPct =
+    oiChangePct(
+      oiHistory,
+      2
+    );
+
+  const priceNow =
+    Number(
+      last(c15)?.close
+    );
+
+  const ref =
+    c15?.[
+      Math.max(
+        0,
+        c15.length - 3
+      )
+    ];
+
+  const priceThen =
+    Number(
+      ref?.close
+    );
+
+  const pricePct =
+    Number.isFinite(priceNow) &&
+    Number.isFinite(priceThen) &&
+    priceThen !== 0
+      ? pctChange(
+          priceThen,
+          priceNow
+        )
+      : 0;
+
+  const oiRising =
+    oiPct >=
+    minOiPct;
+
+  const oiFalling =
+    oiPct <=
+    -minOiPct;
+
+  const alignedPrice =
+    side === 'LONG'
+      ? pricePct >=
+        minPricePct
+      : side === 'SHORT'
+        ? pricePct <=
+          -minPricePct
+        : false;
+
+  const oppositePrice =
+    side === 'LONG'
+      ? pricePct <=
+        -0.15
+      : side === 'SHORT'
+        ? pricePct >=
+          0.15
+        : false;
+
+  const neutralPrice =
+    !alignedPrice &&
+    !oppositePrice;
+
+  let regime =
+    'NEUTRAL';
+
+  if (
+    oiRising &&
+    pricePct >=
+      minPricePct
+  ) {
+    regime =
+      'LONG_BUILDUP';
+  } else if (
+    oiRising &&
+    pricePct <=
+      -minPricePct
+  ) {
+    regime =
+      'SHORT_BUILDUP';
+  } else if (
+    oiFalling &&
+    pricePct >=
+      minPricePct
+  ) {
+    regime =
+      'SHORT_COVERING';
+  } else if (
+    oiFalling &&
+    pricePct <=
+      -minPricePct
+  ) {
+    regime =
+      'LONG_UNWIND';
+  } else if (oiRising) {
+    regime =
+      'OI_BUILDUP_NEUTRAL_PRICE';
+  } else if (oiFalling) {
+    regime =
+      'OI_UNWIND_NEUTRAL_PRICE';
+  }
+
+  // Se o preço de 30m está quase neutro, um pullback+trigger
+  // recém confirmado pode validar o OI crescente.
+  const pullbackReload =
+    oiRising &&
+    neutralPrice &&
+    Boolean(
+      pullback?.confirmed
+    );
+
+  const confirmed =
+    oiRising &&
+    (
+      alignedPrice ||
+      pullbackReload
+    ) &&
+    !oppositePrice;
+
+  return {
+    confirmed,
+    regime,
+    oiPct,
+    pricePct,
+    oiRising,
+    oiFalling,
+    alignedPrice,
+    oppositePrice,
+    pullbackReload
+  };
+}
+
+function entryOiPolicy(
+  side,
+  oiContext = null,
+  strongContraryPct = 0.20
+) {
+  const dir = String(side || '').toUpperCase();
+  const regime = String(oiContext?.regime || 'NEUTRAL').toUpperCase();
+  const oiAbs = Math.abs(finiteNumber(oiContext?.oiPct, 0));
+
+  if (oiContext?.confirmed === true) {
+    return { level: 'FAVORABLE', accepted: true, penalty: 0, regime, oiAbs };
+  }
+
+  if ([
+    'NEUTRAL',
+    'OI_BUILDUP_NEUTRAL_PRICE',
+    'OI_UNWIND_NEUTRAL_PRICE'
+  ].includes(regime)) {
+    return { level: 'NEUTRAL', accepted: true, penalty: 0, regime, oiAbs };
+  }
+
+  if (
+    (dir === 'LONG' && regime === 'SHORT_COVERING') ||
+    (dir === 'SHORT' && regime === 'LONG_UNWIND')
+  ) {
+    return { level: 'SUPPORTIVE', accepted: true, penalty: 0, regime, oiAbs };
+  }
+
+  const contrary =
+    (dir === 'LONG' && ['SHORT_BUILDUP', 'LONG_UNWIND'].includes(regime)) ||
+    (dir === 'SHORT' && ['LONG_BUILDUP', 'SHORT_COVERING'].includes(regime));
+
+  if (contrary) {
+    const strong = oiAbs >= strongContraryPct;
+    return {
+      level: strong ? 'STRONG_CONTRARY' : 'MILD_CONTRARY',
+      accepted: !strong,
+      penalty: strong ? 0 : 4,
+      regime,
+      oiAbs
+    };
+  }
+
+  return { level: 'NEUTRAL', accepted: true, penalty: 0, regime, oiAbs };
+}
+
+function adaptivePullbackDistanceAtr(
+  t5,
+  minAtr = 0.90,
+  maxAtr = 1.25
+) {
+  const price =
+    finiteNumber(
+      t5?.price,
+      0
+    );
+
+  const atrValue =
+    finiteNumber(
+      t5?.atr,
+      0
+    );
+
+  if (
+    price <= 0 ||
+    atrValue <= 0
+  ) {
+    return minAtr;
+  }
+
+  const atrPct =
+    atrValue /
+    price *
+    100;
+
+  // Moeda mais volátil ganha mais espaço relativo da EMA20.
+  // <=0.45% ATR: 0.90 ATR
+  // >=1.50% ATR: 1.25 ATR
+  const normalized =
+    Math.max(
+      0,
+      Math.min(
+        1,
+        (atrPct - 0.45) /
+        (1.50 - 0.45)
+      )
+    );
+
+  return (
+    minAtr +
+    (
+      maxAtr -
+      minAtr
+    ) *
+    normalized
+  );
+}
+
+export function adaptivePullbackDistancePreview(
+  t5,
+  minAtr = 0.90,
+  maxAtr = 1.25
+) {
+  return adaptivePullbackDistanceAtr(
+    t5,
+    minAtr,
+    maxAtr
+  );
+}
+
+
+function ema20SlopeAtr(
+  candles = [],
+  steps = 3
+) {
+  if (
+    !Array.isArray(candles) ||
+    candles.length < 60 + steps
+  ) {
+    return 0;
+  }
+
+  const current =
+    analyzeTf(candles);
+
+  const previous =
+    analyzeTf(
+      candles.slice(
+        0,
+        -steps
+      )
+    );
+
+  const atrValue =
+    Math.max(
+      finiteNumber(current?.atr, 0),
+      finiteNumber(current?.price, 0) * 0.001
+    );
+
+  if (atrValue <= 0) {
+    return 0;
+  }
+
+  return (
+    finiteNumber(current?.ema20, 0) -
+    finiteNumber(previous?.ema20, 0)
+  ) / atrValue;
+}
+
+function signedForSide(
+  side,
+  value
+) {
+  const n =
+    finiteNumber(value, 0);
+
+  return side === 'SHORT'
+    ? -n
+    : n;
+}
+
+function marketRegimeStatus({
+  side,
+  t5,
+  t15,
+  t1h,
+  t4h,
+  candles5m = [],
+  candles15m = [],
+  candles1h = []
+}) {
+  const structure15 =
+    directionalStructure(t15);
+
+  const structure1h =
+    directionalStructure(t1h);
+
+  const structure4h =
+    directionalStructure(t4h);
+
+  const slope15Raw =
+    ema20SlopeAtr(
+      candles15m,
+      3
+    );
+
+  const slope1hRaw =
+    ema20SlopeAtr(
+      candles1h,
+      3
+    );
+
+  const slope15 =
+    signedForSide(
+      side,
+      slope15Raw
+    );
+
+  const slope1h =
+    signedForSide(
+      side,
+      slope1hRaw
+    );
+
+  const atr1h =
+    Math.max(
+      finiteNumber(t1h?.atr, 0),
+      finiteNumber(t1h?.price, 0) * 0.001
+    );
+
+  const emaSpread1h =
+    atr1h > 0
+      ? Math.abs(
+          finiteNumber(t1h?.ema20, 0) -
+          finiteNumber(t1h?.ema50, 0)
+        ) / atr1h
+      : 0;
+
+  const last5 =
+    last(candles5m);
+
+  const atr5 =
+    Math.max(
+      finiteNumber(t5?.atr, 0),
+      finiteNumber(t5?.price, 0) * 0.001
+    );
+
+  const body5 =
+    last5 && atr5 > 0
+      ? Math.abs(
+          Number(last5.close) -
+          Number(last5.open)
+        ) / atr5
+      : 0;
+
+  const volumeRatio =
+    finiteNumber(
+      t5?.volumeRatio,
+      0
+    );
+
+  const aligned15 =
+    structure15 === side;
+
+  const aligned1h =
+    structure1h === side;
+
+  const aligned4h =
+    structure4h === side;
+
+  const expansion =
+    aligned15 &&
+    aligned1h &&
+    slope15 >= 0.08 &&
+    slope1h >= 0.05 &&
+    body5 >= 0.35 &&
+    volumeRatio >= 1.00;
+
+  const trend =
+    aligned15 &&
+    aligned1h &&
+    slope15 >= 0.04 &&
+    slope1h >= 0.025 &&
+    emaSpread1h >= 0.18;
+
+  const chop =
+    (
+      structure15 === 'MIXED' &&
+      structure1h === 'MIXED'
+    ) ||
+    (
+      Math.abs(slope15Raw) < 0.035 &&
+      Math.abs(slope1hRaw) < 0.025 &&
+      emaSpread1h < 0.18
+    );
+
+  const regime =
+    expansion
+      ? 'EXPANSION'
+      : trend
+        ? 'TREND'
+        : chop
+          ? 'CHOP'
+          : 'TRANSITION';
+
+  return {
+    regime,
+    pullbackAllowed:
+      regime === 'TREND',
+    breakoutAllowed:
+      regime === 'EXPANSION' ||
+      regime === 'TREND',
+    aligned15,
+    aligned1h,
+    aligned4h,
+    structure15,
+    structure1h,
+    structure4h,
+    slope15,
+    slope1h,
+    slope15Raw,
+    slope1hRaw,
+    emaSpread1h,
+    body5,
+    volumeRatio,
+    reason:
+      regime === 'TREND'
+        ? `TREND: 15m+1H alinhados · 4H ${aligned4h ? 'OK' : 'CONTRÁRIO'} · slope15 ${slope15.toFixed(2)} ATR · slope1H ${slope1h.toFixed(2)} ATR`
+        : regime === 'EXPANSION'
+          ? `EXPANSION: tendência + volume ${volumeRatio.toFixed(2)}x + corpo ${body5.toFixed(2)} ATR`
+          : regime === 'CHOP'
+            ? `CHOP: estrutura/slope fracos · spread1H ${emaSpread1h.toFixed(2)} ATR`
+            : 'TRANSITION: estrutura ainda sem regime limpo'
+  };
+}
+
+export function marketRegimePreview(
+  args = {}
+) {
+  return marketRegimeStatus(args);
+}
+
+function trendExhaustionStatus({
+  side,
+  t5,
+  t1h,
+  t4h,
+  candles5m = []
+}) {
+  const atr5 =
+    Math.max(
+      finiteNumber(t5?.atr, 0),
+      finiteNumber(t5?.price, 0) * 0.001
+    );
+
+  const atr1h =
+    Math.max(
+      finiteNumber(t1h?.atr, 0),
+      finiteNumber(t1h?.price, 0) * 0.001
+    );
+
+  const price5 =
+    finiteNumber(t5?.price, 0);
+
+  const price1h =
+    finiteNumber(t1h?.price, price5);
+
+  const distanceEma20_1hAtr =
+    atr1h > 0
+      ? Math.abs(
+          price1h -
+          finiteNumber(t1h?.ema20, price1h)
+        ) / atr1h
+      : 99;
+
+  const distanceEma50_1hAtr =
+    atr1h > 0
+      ? Math.abs(
+          price1h -
+          finiteNumber(t1h?.ema50, price1h)
+        ) / atr1h
+      : 99;
+
+  const rsi1h =
+    finiteNumber(t1h?.rsi, 50);
+
+  const aligned4h =
+    directionalStructure(t4h) === side;
+
+  const prior =
+    Array.isArray(candles5m)
+      ? candles5m.slice(-7, -1)
+      : [];
+
+  let impulseStreak = 0;
+
+  for (
+    let i = prior.length - 1;
+    i >= 0;
+    i -= 1
+  ) {
+    const candle = prior[i];
+    const open = finiteNumber(candle?.open, 0);
+    const close = finiteNumber(candle?.close, open);
+    const bodyAtr =
+      atr5 > 0
+        ? Math.abs(close - open) / atr5
+        : 0;
+
+    const directional =
+      side === 'LONG'
+        ? close > open
+        : close < open;
+
+    if (
+      directional &&
+      bodyAtr >= 0.35
+    ) {
+      impulseStreak += 1;
+    } else {
+      break;
+    }
+  }
+
+  const recent =
+    Array.isArray(candles5m)
+      ? candles5m.slice(-24)
+      : [];
+
+  const recentHigh =
+    recent.length
+      ? Math.max(...recent.map(c => finiteNumber(c?.high, price5)))
+      : price5;
+
+  const recentLow =
+    recent.length
+      ? Math.min(...recent.map(c => finiteNumber(c?.low, price5)))
+      : price5;
+
+  const range =
+    Math.max(
+      recentHigh - recentLow,
+      atr5 * 0.25
+    );
+
+  const rangePosition =
+    range > 0
+      ? (price5 - recentLow) / range
+      : 0.5;
+
+  const distanceEma20_5mAtr =
+    atr5 > 0
+      ? Math.abs(
+          price5 -
+          finiteNumber(t5?.ema20, price5)
+        ) / atr5
+      : 99;
+
+  const nearExtreme =
+    side === 'LONG'
+      ? rangePosition >= 0.95 &&
+        distanceEma20_5mAtr >= 0.80
+      : rangePosition <= 0.05 &&
+        distanceEma20_5mAtr >= 0.80;
+
+  const rsiExtreme =
+    side === 'LONG'
+      ? rsi1h >= 78
+      : rsi1h <= 22;
+
+  const reasons = [];
+
+  if (distanceEma20_1hAtr > 2.40) {
+    reasons.push(
+      `1H ${distanceEma20_1hAtr.toFixed(2)} ATR da EMA20`
+    );
+  }
+
+  if (distanceEma50_1hAtr > 3.50) {
+    reasons.push(
+      `1H ${distanceEma50_1hAtr.toFixed(2)} ATR da EMA50`
+    );
+  }
+
+  if (impulseStreak >= 4) {
+    reasons.push(
+      `${impulseStreak} candles 5m impulsivos seguidos antes do trigger`
+    );
+  }
+
+  if (rsiExtreme) {
+    reasons.push(
+      `RSI 1H extremo ${rsi1h.toFixed(1)}`
+    );
+  }
+
+  if (nearExtreme) {
+    reasons.push(
+      `entrada perto do extremo recente (${(rangePosition * 100).toFixed(0)}% do range)`
+    );
+  }
+
+  return {
+    ok:
+      reasons.length === 0,
+    aligned4h,
+    distanceEma20_1hAtr,
+    distanceEma50_1hAtr,
+    distanceEma20_5mAtr,
+    impulseStreak,
+    rsi1h,
+    rangePosition,
+    nearExtreme,
+    reason:
+      reasons.length
+        ? reasons.join(' · ')
+        : aligned4h
+          ? '4H alinhado e tendência sem sinais fortes de exaustão'
+          : '4H contrário: não bloqueia; entra como peso de score no FAST ENTRY'
+  };
+}
+
+export function trendExhaustionPreview(
+  args = {}
+) {
+  return trendExhaustionStatus(args);
+}
+
+function pullbackTriggerStatus({
+  side,
+  t5,
+  t15,
+  t1h,
+  t4h,
+  candles5m = [],
+  candles15m = [],
+  candles1h = [],
+  lookback = 7,
+  touchAtr = 0.35,
+  minBodyAtr = 0.12,
+  maxDistanceAtrMin = 0.90,
+  maxDistanceAtrMax = 1.25
+}) {
+  const atrValue =
+    Math.max(
+      finiteNumber(
+        t5?.atr,
+        0
+      ),
+      finiteNumber(
+        t5?.price,
+        0
+      ) *
+        0.001
+    );
+
+  const ema20 =
+    finiteNumber(
+      t5?.ema20,
+      0
+    );
+
+  const ema50 =
+    finiteNumber(
+      t5?.ema50,
+      ema20
+    );
+
+  const price =
+    finiteNumber(
+      t5?.price,
+      0
+    );
+
+  const trend15 =
+    directionalStructure(
+      t15
+    );
+
+  const trend1h =
+    directionalStructure(
+      t1h
+    );
+
+  const trend4h =
+    directionalStructure(
+      t4h
+    );
+
+  const structure15Ok =
+    trend15 === side;
+
+  const structure1hOk =
+    trend1h === side;
+
+  const structure4hOk =
+    trend4h === side;
+
+  const slope15Raw =
+    ema20SlopeAtr(
+      candles15m,
+      3
+    );
+
+  const slope1hRaw =
+    ema20SlopeAtr(
+      candles1h,
+      3
+    );
+
+  const slope15 =
+    signedForSide(
+      side,
+      slope15Raw
+    );
+
+  const slope1h =
+    signedForSide(
+      side,
+      slope1hRaw
+    );
+
+  const slope15Ok =
+    candles15m.length < 63 ||
+    slope15 >= 0.035;
+
+  const slope1hOk =
+    candles1h.length < 63 ||
+    slope1h >= 0.020;
+
+  if (
+    !Array.isArray(candles5m) ||
+    candles5m.length <
+      lookback + 1 ||
+    atrValue <= 0 ||
+    price <= 0 ||
+    ema20 <= 0
+  ) {
+    return {
+      confirmed: false,
+      pullbackFound: false,
+      triggerOk: false,
+      structure15Ok,
+      structure1hOk,
+      structure4hOk,
+      trend15,
+      trend1h,
+      trend4h,
+      bodyAtr: 0,
+      distanceAtr: 99,
+      closeLocation: 0,
+      reclaimOk: false,
+      rejectionOk: false,
+      strongTrigger: false,
+      triggerQuality: 0,
+      slope15,
+      slope1h,
+      slope15Ok,
+      slope1hOk,
+      pullbackAvgQuoteVolume: 0,
+      pullbackAvgVolumeRatio: 0,
+      reason:
+        'histórico insuficiente para pullback'
+    };
+  }
+
+  const trigger =
+    last(candles5m);
+
+  const prior =
+    candles5m.slice(
+      -(lookback + 1),
+      -1
+    );
+
+  const zoneLow =
+    Math.min(
+      ema20,
+      ema50
+    ) -
+    atrValue *
+      0.55;
+
+  const zoneHigh =
+    Math.max(
+      ema20,
+      ema50
+    ) +
+    atrValue *
+      touchAtr;
+
+  const pullbackTouchCandles =
+    side === 'LONG'
+      ? prior.filter(
+          c =>
+            Number(c.low) <=
+              zoneHigh &&
+            Number(c.low) >=
+              zoneLow
+        )
+      : side === 'SHORT'
+        ? prior.filter(
+            c =>
+              Number(c.high) >=
+                (
+                  Math.min(
+                    ema20,
+                    ema50
+                  ) -
+                  atrValue *
+                    touchAtr
+                ) &&
+              Number(c.high) <=
+                (
+                  Math.max(
+                    ema20,
+                    ema50
+                  ) +
+                  atrValue *
+                    0.55
+                )
+          )
+        : [];
+
+  const pullbackFound =
+    pullbackTouchCandles.length > 0;
+
+  const volumeSource =
+    pullbackTouchCandles.length
+      ? pullbackTouchCandles
+      : prior;
+
+  const pullbackAvgQuoteVolume =
+    volumeSource.length
+      ? volumeSource.reduce(
+          (sum, c) =>
+            sum +
+            finiteNumber(c?.quoteVolume, 0),
+          0
+        ) / volumeSource.length
+      : 0;
+
+  const pullbackAvgVolumeRatio =
+    finiteNumber(t5?.avgQuoteVolume, 0) > 0
+      ? pullbackAvgQuoteVolume /
+        finiteNumber(t5?.avgQuoteVolume, 1)
+      : 0;
+
+  const open =
+    Number(
+      trigger.open
+    );
+
+  const close =
+    Number(
+      trigger.close
+    );
+
+  const high =
+    Number(
+      trigger.high
+    );
+
+  const low =
+    Number(
+      trigger.low
+    );
+
+  const range =
+    Math.max(
+      high - low,
+      atrValue *
+        0.05
+    );
+
+  const body =
+    Math.abs(
+      close - open
+    );
+
+  const bodyAtr =
+    body /
+    atrValue;
+
+  const closeLocation =
+    (
+      close - low
+    ) /
+    range;
+
+  const bullishTrigger =
+    close > open &&
+    close > ema20 &&
+    bodyAtr >=
+      minBodyAtr &&
+    closeLocation >=
+      0.60;
+
+  const bearishTrigger =
+    close < open &&
+    close < ema20 &&
+    bodyAtr >=
+      minBodyAtr &&
+    closeLocation <=
+      0.40;
+
+  const distanceAtr =
+    Math.abs(
+      close - ema20
+    ) /
+    atrValue;
+
+  const maxDistanceAtr =
+    adaptivePullbackDistanceAtr(
+      t5,
+      maxDistanceAtrMin,
+      maxDistanceAtrMax
+    );
+
+  const notExtended =
+    distanceAtr <=
+    maxDistanceAtr;
+
+  const triggerOk =
+    side === 'LONG'
+      ? bullishTrigger &&
+        notExtended
+      : side === 'SHORT'
+        ? bearishTrigger &&
+          notExtended
+        : false;
+
+  const reclaimOk =
+    side === 'LONG'
+      ? (
+        low <=
+          ema20 +
+          atrValue * 0.45 &&
+        close > ema20
+      )
+      : side === 'SHORT'
+        ? (
+          high >=
+            ema20 -
+            atrValue * 0.45 &&
+          close < ema20
+        )
+        : false;
+
+  const lowerWick =
+    Math.max(
+      0,
+      Math.min(open, close) -
+      low
+    );
+
+  const upperWick =
+    Math.max(
+      0,
+      high -
+      Math.max(open, close)
+    );
+
+  const bodySafe =
+    Math.max(
+      body,
+      atrValue * 0.03
+    );
+
+  const rejectionOk =
+    side === 'LONG'
+      ? (
+        closeLocation >= 0.68 ||
+        lowerWick / bodySafe >= 0.35
+      )
+      : side === 'SHORT'
+        ? (
+          closeLocation <= 0.32 ||
+          upperWick / bodySafe >= 0.35
+        )
+        : false;
+
+  const triggerQuality =
+    [
+      triggerOk,
+      reclaimOk,
+      rejectionOk,
+      slope15Ok,
+      slope1hOk
+    ].filter(Boolean).length;
+
+  // FAST ENTRY: o candle direcional (triggerOk) continua essencial,
+  // mas o conjunto de confirmação passa de 5/5 para pelo menos 4/5.
+  const strongTrigger =
+    triggerOk &&
+    triggerQuality >= 4;
+
+  const confirmed =
+    structure15Ok &&
+    structure1hOk &&
+    pullbackFound &&
+    strongTrigger;
+
+  // 4H continua exposto como contexto/peso, mas não cancela sozinho.
+  const reason =
+    !structure1hOk
+      ? `1H ${trend1h} não confirma ${side}`
+      : !structure15Ok
+        ? `15m ${trend15} não confirma ${side}`
+        : !pullbackFound
+          ? `sem pullback/reteste EMA20-EMA50 nos últimos ${lookback} candles`
+          : !triggerOk
+            ? `pullback ocorreu, mas candle 5m ainda não confirmou (corpo ${bodyAtr.toFixed(2)} ATR; distância ${distanceAtr.toFixed(2)}/${maxDistanceAtr.toFixed(2)} ATR)`
+            : triggerQuality < 4
+              ? `trigger ${triggerQuality}/5 insuficiente para FAST ENTRY`
+              : `FAST ENTRY trigger ${triggerQuality}/5 confirmado`;
+
+  return {
+    confirmed,
+    pullbackFound,
+    triggerOk,
+    reclaimOk,
+    rejectionOk,
+    strongTrigger,
+    triggerQuality,
+    structure15Ok,
+    structure1hOk,
+    structure4hOk,
+    trend15,
+    trend1h,
+    trend4h,
+    slope15,
+    slope1h,
+    slope15Ok,
+    slope1hOk,
+    pullbackAvgQuoteVolume,
+    pullbackAvgVolumeRatio,
+    bodyAtr,
+    distanceAtr,
+    maxDistanceAtr,
+    closeLocation,
+    reason
+  };
+}
+
+export function pullbackEnginePreview({
+  side,
+  t5,
+  t15,
+  t1h,
+  t4h = null,
+  candles5m,
+  candles15m = [],
+  candles1h = [],
+  oiHistory = [],
+  c15 = [],
+  lookback = 7,
+  touchAtr = 0.35,
+  minBodyAtr = 0.12,
+  minOiPct = 0.08,
+  minPricePct = 0.03
+}) {
+  const pullback =
+    pullbackTriggerStatus({
+      side,
+      t5,
+      t15,
+      t1h,
+      t4h:
+        t4h || t1h,
+      candles5m,
+      candles15m,
+      candles1h,
+      lookback,
+      touchAtr,
+      minBodyAtr
+    });
+
+  const oiContext =
+    contextualOiStatus({
+      side,
+      c15,
+      oiHistory,
+      pullback,
+      minOiPct,
+      minPricePct
+    });
+
+  return {
+    pullback,
+    oiContext
+  };
+}
+
+function momentumBundleStatus(
+  side,
+  t5,
+  oiPct,
+  minVolumeRatio,
+  minOiPct,
+  oiContext = null,
+  minConfirmations = 2
+) {
+  const volumeRatio =
+    finiteNumber(t5?.volumeRatio, 0);
+
+  const oi =
+    finiteNumber(oiPct, 0);
+
+  const macdHist =
+    finiteNumber(t5?.macdHist, 0);
+
+  const volumeOk =
+    volumeRatio >= minVolumeRatio;
+
+  const oiOk =
+    oiContext
+      ? Boolean(
+          oiContext.confirmed
+        )
+      : oi >=
+        minOiPct;
+
+  const macdOk =
+    side === 'LONG'
+      ? macdHist > 0
+      : side === 'SHORT'
+        ? macdHist < 0
+        : false;
+
+  const confirmationCount =
+    [
+      volumeOk,
+      oiOk,
+      macdOk
+    ].filter(Boolean).length;
+
+  return {
+    confirmed:
+      confirmationCount >=
+      minConfirmations,
+    confirmationCount,
+    minConfirmations,
+    volumeOk,
+    oiOk,
+    macdOk,
+    volumeRatio,
+    minVolumeRatio,
+    oiPct: oi,
+    macdHist
+  };
+}
+
+
+function breakoutStrongStatus({
+  side,
+  t5,
+  t15,
+  t1h,
+  candles5m = [],
+  score,
+  directionEdge,
+  oiContext,
+  minScore = 82,
+  minVolumeRatio = 0.80,
+  minDirectionEdge = 10,
+  minBodyAtr = 0.20
+}) {
+  const lastCandle =
+    candles5m?.[
+      candles5m.length - 1
+    ] || null;
+
+  const atrValue =
+    Math.max(
+      finiteNumber(
+        t5?.atr,
+        0
+      ),
+      finiteNumber(
+        t5?.price,
+        0
+      ) *
+        0.001
+    );
+
+  if (
+    !lastCandle ||
+    atrValue <= 0
+  ) {
+    return {
+      qualified: false,
+      reason:
+        'sem candle fechado suficiente para breakout'
+    };
+  }
+
+  const open =
+    Number(lastCandle.open);
+
+  const close =
+    Number(lastCandle.close);
+
+  const high =
+    Number(lastCandle.high);
+
+  const low =
+    Number(lastCandle.low);
+
+  const bodyAtr =
+    Math.abs(
+      close - open
+    ) /
+    atrValue;
+
+  const range =
+    Math.max(
+      high - low,
+      atrValue * 0.05
+    );
+
+  const closeLocation =
+    (
+      close - low
+    ) /
+    range;
+
+  const directionalCandle =
+    side === 'LONG'
+      ? close > open &&
+        closeLocation >= 0.65
+      : side === 'SHORT'
+        ? close < open &&
+          closeLocation <= 0.35
+        : false;
+
+  const structure15Ok =
+    directionalStructure(
+      t15
+    ) === side;
+
+  const structure1hOk =
+    directionalStructure(
+      t1h
+    ) === side;
+
+  const oiPolicy =
+    entryOiPolicy(
+      side,
+      oiContext
+    );
+
+  const rawScore =
+    Number(score || 0);
+
+  const effectiveScore =
+    Math.max(
+      0,
+      rawScore -
+      Number(oiPolicy.penalty || 0)
+    );
+
+  const scoreOk =
+    effectiveScore >=
+    minScore;
+
+  const volumeOk =
+    Number(
+      t5?.volumeRatio ||
+      0
+    ) >=
+    minVolumeRatio;
+
+  const edgeOk =
+    Number(directionEdge || 0) >=
+    minDirectionEdge;
+
+  const macdOk =
+    side === 'LONG'
+      ? Number(t5?.macdHist || 0) > 0
+      : Number(t5?.macdHist || 0) < 0;
+
+  const oiOk =
+    oiPolicy.accepted;
+
+  const bodyOk =
+    bodyAtr >=
+    minBodyAtr;
+
+  const qualified =
+    scoreOk &&
+    volumeOk &&
+    edgeOk &&
+    macdOk &&
+    oiOk &&
+    bodyOk &&
+    directionalCandle &&
+    structure15Ok &&
+    structure1hOk;
+
+  const missing = [];
+
+  if (!scoreOk) {
+    missing.push(
+      `score efetivo ${effectiveScore} abaixo de ${minScore}` +
+      `${oiPolicy.penalty ? ` (${rawScore} bruto; OI leve -${oiPolicy.penalty})` : ''}`
+    );
+  }
+
+  if (!volumeOk) {
+    missing.push(
+      `volume ${Number(t5?.volumeRatio || 0).toFixed(2)}x abaixo de ${minVolumeRatio.toFixed(2)}x`
+    );
+  }
+
+  if (!edgeOk) {
+    missing.push(
+      `edge ${Number(directionEdge || 0)} abaixo de ${minDirectionEdge}`
+    );
+  }
+
+  if (!oiOk) {
+    missing.push(
+      `OI fortemente contrário (${oiPolicy.regime}; ${oiPolicy.oiAbs.toFixed(2)}%)`
+    );
+  }
+
+  if (!macdOk) {
+    missing.push(
+      `MACD 5m não confirma ${side}`
+    );
+  }
+
+  if (!bodyOk) {
+    missing.push(
+      `corpo ${bodyAtr.toFixed(2)} ATR abaixo de ${minBodyAtr.toFixed(2)}`
+    );
+  }
+
+  if (!directionalCandle) {
+    missing.push(
+      'candle de breakout sem fechamento forte'
+    );
+  }
+
+  if (!structure15Ok) {
+    missing.push(
+      `15m não confirma ${side}`
+    );
+  }
+
+  if (!structure1hOk) {
+    missing.push(
+      `1H não confirma ${side}`
+    );
+  }
+
+  return {
+    qualified,
+    scoreOk,
+    volumeOk,
+    edgeOk,
+    macdOk,
+    oiOk,
+    bodyOk,
+    directionalCandle,
+    structure15Ok,
+    structure1hOk,
+    bodyAtr,
+    closeLocation,
+    reason:
+      qualified
+        ? 'breakout forte confirmado'
+        : missing.join(' · ')
+  };
+}
+
+function antiChaseStatus(
+  side,
+  t5,
+  candles5m = []
+) {
+  const price =
+    finiteNumber(t5?.price, 0);
+
+  const atrValue =
+    Math.max(
+      finiteNumber(t5?.atr, 0),
+      price * 0.001
+    );
+
+  const ema20 =
+    finiteNumber(t5?.ema20, price);
+
+  const lastCandle =
+    candles5m?.[candles5m.length - 1] || null;
+
+  if (
+    !lastCandle ||
+    atrValue <= 0 ||
+    price <= 0
+  ) {
+    return {
+      ok: true,
+      stretched: false,
+      extreme: false,
+      retest: false,
+      distanceAtr: 0,
+      bodyAtr: 0,
+      reason: 'dados insuficientes; anti-chase neutro'
+    };
+  }
+
+  const directionalBody =
+    side === 'LONG'
+      ? Number(lastCandle.close) - Number(lastCandle.open)
+      : Number(lastCandle.open) - Number(lastCandle.close);
+
+  const bodyAtr =
+    Math.max(
+      0,
+      directionalBody / atrValue
+    );
+
+  const distanceAtr =
+    Math.abs(
+      price - ema20
+    ) / atrValue;
+
+  const retest =
+    side === 'LONG'
+      ? Number(lastCandle.low) <= ema20 + atrValue * 0.35
+      : side === 'SHORT'
+        ? Number(lastCandle.high) >= ema20 - atrValue * 0.35
+        : false;
+
+  const stretched =
+    distanceAtr >= 1.25 ||
+    bodyAtr >= 1.00;
+
+  const extreme =
+    distanceAtr >= 1.75 ||
+    bodyAtr >= 1.40;
+
+  const ok =
+    !extreme &&
+    (
+      !stretched ||
+      retest
+    );
+
+  return {
+    ok,
+    stretched,
+    extreme,
+    retest,
+    distanceAtr,
+    bodyAtr,
+    reason:
+      ok
+        ? retest
+          ? 'reteste/EMA20 confirmado'
+          : 'entrada não esticada'
+        : `movimento esticado sem reteste (${distanceAtr.toFixed(2)} ATR da EMA20; corpo ${bodyAtr.toFixed(2)} ATR)`
+  };
+}
+
+function btcRegimeGuardStatus({
+  side,
+  symbol,
+  btcContext,
+  score,
+  volumeRatio,
+  oiPct,
+  directionEdge
+}) {
+  const isBtc =
+    String(symbol || '')
+      .toUpperCase()
+      .startsWith('BTC');
+
+  if (
+    isBtc ||
+    !btcContext
+  ) {
+    return {
+      ok: true,
+      strongAligned: false,
+      strongOpposite: false,
+      exceptional: false,
+      regime:
+        isBtc
+          ? 'BTC_SELF'
+          : 'UNKNOWN'
+    };
+  }
+
+  const aligned =
+    side === 'LONG'
+      ? 'BULLISH'
+      : 'BEARISH';
+
+  const opposite =
+    side === 'LONG'
+      ? 'BEARISH'
+      : 'BULLISH';
+
+  const t15 =
+    String(btcContext.trend15m || 'MIXED')
+      .toUpperCase();
+
+  const t1h =
+    String(btcContext.trend1h || 'MIXED')
+      .toUpperCase();
+
+  const t4h =
+    String(btcContext.trend4h || 'MIXED')
+      .toUpperCase();
+
+  const strongAligned =
+    t1h === aligned &&
+    (t4h === aligned || t15 === aligned);
+
+  const strongOpposite =
+    (t1h === opposite && t4h === opposite) ||
+    (t15 === opposite && t1h === opposite);
+
+  const exceptional =
+    Number(score || 0) >= 85 &&
+    Number(volumeRatio || 0) >= 0.80 &&
+    Number(oiPct || 0) >= 1.00 &&
+    Number(directionEdge || 0) >= 12;
+
+  return {
+    ok:
+      !strongOpposite ||
+      exceptional,
+    strongAligned,
+    strongOpposite,
+    exceptional,
+    regime:
+      strongAligned
+        ? 'ALIGNED'
+        : strongOpposite
+          ? 'OPPOSITE'
+          : 'MIXED',
+    t1h,
+    t4h
+  };
+}
+
+
+export function balancedEntryPreview({
+  side,
+  t5,
+  t15,
+  t1h,
+  t4h = null,
+  candles5m = [],
+  candles15m = [],
+  candles1h = [],
+  c15 = [],
+  oiHistory = [],
+  score = 68,
+  directionEdge = 5,
+  minVolumeRatio = 0.45,
+  contextualOiMinPct = 0.05,
+  contextualPriceMinPct = 0.03,
+  momentumMinConfirmations = 2,
+  pullbackMinVolumeRatio = 0.55,
+  pullbackMaxDistanceAtrMin = 0.90,
+  pullbackMaxDistanceAtrMax = 1.25,
+  breakoutMinScore = 82,
+  breakoutMinVolumeRatio = 1.25,
+  breakoutMinDirectionEdge = 10,
+  breakoutMinBodyAtr = 0.20
+}) {
+  const pullback =
+    pullbackTriggerStatus({
+      side,
+      t5,
+      t15,
+      t1h,
+      t4h:
+        t4h || t1h,
+      candles5m,
+      candles15m,
+      candles1h,
+      lookback: 7,
+      touchAtr: 0.35,
+      minBodyAtr: 0.12,
+      maxDistanceAtrMin:
+        pullbackMaxDistanceAtrMin,
+      maxDistanceAtrMax:
+        pullbackMaxDistanceAtrMax
+    });
+
+  const marketRegime =
+    marketRegimeStatus({
+      side,
+      t5,
+      t15,
+      t1h,
+      t4h:
+        t4h || t1h,
+      candles5m,
+      candles15m,
+      candles1h
+    });
+
+  const trendExhaustion =
+    trendExhaustionStatus({
+      side,
+      t5,
+      t1h,
+      t4h:
+        t4h || t1h,
+      candles5m
+    });
+
+  const oiContext =
+    contextualOiStatus({
+      side,
+      c15,
+      oiHistory,
+      pullback,
+      minOiPct:
+        contextualOiMinPct,
+      minPricePct:
+        contextualPriceMinPct
+    });
+
+  const breakout =
+    breakoutStrongStatus({
+      side,
+      t5,
+      t15,
+      t1h,
+      candles5m,
+      score,
+      directionEdge,
+      oiContext,
+      minScore:
+        breakoutMinScore,
+      minVolumeRatio:
+        breakoutMinVolumeRatio,
+      minDirectionEdge:
+        breakoutMinDirectionEdge,
+      minBodyAtr:
+        breakoutMinBodyAtr
+    });
+
+  const entryMode =
+    (
+      marketRegime.regime ===
+        'EXPANSION' &&
+      breakout.qualified &&
+      marketRegime.breakoutAllowed
+    )
+      ? 'BREAKOUT_STRONG'
+      : (
+        pullback.confirmed &&
+        marketRegime.pullbackAllowed &&
+        trendExhaustion.ok
+      )
+        ? 'PULLBACK'
+        : (
+          breakout.qualified &&
+          marketRegime.breakoutAllowed
+        )
+          ? 'BREAKOUT_STRONG'
+          : 'WAIT_SETUP';
+
+  const entryVolumeTarget =
+    entryMode ===
+      'BREAKOUT_STRONG'
+      ? breakoutMinVolumeRatio
+      : pullbackMinVolumeRatio;
+
+  const momentum =
+    momentumBundleStatus(
+      side,
+      t5,
+      oiContext.oiPct,
+      entryVolumeTarget,
+      contextualOiMinPct,
+      oiContext,
+      momentumMinConfirmations
+    );
+
+  return {
+    entryMode,
+    entryVolumeTarget,
+    entryModeOk:
+      entryMode !==
+      'WAIT_SETUP',
+    pullback,
+    marketRegime,
+    trendExhaustion,
+    oiContext,
+    momentum,
+    breakout
+  };
+}
+
+export function qualityEntryPreview({
+  side,
+  symbol = 'TESTUSDT',
+  t5,
+  candles5m = [],
+  oiPct = 0,
+  minVolumeRatio = 0.50,
+  minOiPct = 0.50,
+  btcContext = null,
+  score = 70,
+  directionEdge = 6
+}) {
+  return {
+    momentum:
+      momentumBundleStatus(
+        side,
+        t5,
+        oiPct,
+        minVolumeRatio,
+        minOiPct
+      ),
+    antiChase:
+      antiChaseStatus(
+        side,
+        t5,
+        candles5m
+      ),
+    btcRegime:
+      btcRegimeGuardStatus({
+        side,
+        symbol,
+        btcContext,
+        score,
+        volumeRatio: t5?.volumeRatio,
+        oiPct,
+        directionEdge
+      })
+  };
+}
+
+function smartStopConfig() {
+  const numberEnv = (
+    name,
+    fallback,
+    min,
+    max
+  ) => {
+    const n =
+      Number(
+        process.env[name] ??
+        fallback
+      );
+
+    if (!Number.isFinite(n)) {
+      return fallback;
+    }
+
+    return Math.max(
+      min,
+      Math.min(
+        max,
+        n
+      )
+    );
+  };
+
+  return {
+    lookback:
+      Math.trunc(
+        numberEnv(
+          'SMART_STOP_LOOKBACK_CANDLES',
+          10,
+          5,
+          24
+        )
+      ),
+
+    minAtr:
+      numberEnv(
+        'SMART_STOP_MIN_ATR',
+        1.25,
+        0.80,
+        3.00
+      ),
+
+    maxAtr:
+      numberEnv(
+        'SMART_STOP_MAX_ATR',
+        2.00,
+        1.00,
+        4.00
+      ),
+
+    bufferAtr:
+      numberEnv(
+        'SMART_STOP_STRUCTURE_BUFFER_ATR',
+        0.25,
+        0,
+        1.00
+      ),
+
+    minPct:
+      numberEnv(
+        'SMART_STOP_MIN_PCT',
+        0.35,
+        0.10,
+        3.00
+      ),
+
+    maxPct:
+      numberEnv(
+        'SMART_STOP_MAX_PCT',
+        2.50,
+        0.50,
+        6.00
+      ),
+
+    tp1R:
+      numberEnv(
+        'SMART_STOP_TP1_R',
+        1.15,
+        0.50,
+        3.00
+      ),
+
+    tp2R:
+      numberEnv(
+        'SMART_STOP_TP2_R',
+        1.60,
+        0.80,
+        4.00
+      ),
+
+    tp3R:
+      numberEnv(
+        'SMART_STOP_TP3_R',
+        2.25,
+        1.00,
+        6.00
+      )
+  };
+}
+
+function recentStructurePrice(
+  side,
+  candles5m,
+  lookback
+) {
+  const recent =
+    (
+      candles5m || []
+    )
+      .slice(
+        -lookback
+      )
+      .filter(c =>
+        Number.isFinite(
+          Number(c?.low)
+        ) &&
+        Number.isFinite(
+          Number(c?.high)
+        )
+      );
+
+  if (!recent.length) {
+    return null;
+  }
+
+  if (side === 'LONG') {
+    return Math.min(
+      ...recent.map(
+        c => Number(c.low)
+      )
+    );
+  }
+
+  return Math.max(
+    ...recent.map(
+      c => Number(c.high)
+    )
+  );
+}
+
+function buildLevels(
+  side,
+  price,
+  atrValue,
+  candles5m = []
+) {
+  const cfg =
+    smartStopConfig();
+
+  const px =
+    Number(price);
+
+  const rawAtr =
+    Number(atrValue);
+
+  const safeAtr =
+    Number.isFinite(rawAtr) &&
+    rawAtr > 0
+      ? rawAtr
+      : px * 0.0025;
+
+  const structure =
+    recentStructurePrice(
+      side,
+      candles5m,
+      cfg.lookback
+    );
+
+  const buffer =
+    safeAtr *
+    cfg.bufferAtr;
+
+  let structureStop = null;
+  let structureRisk = null;
+
+  if (
+    Number.isFinite(
+      structure
+    )
+  ) {
+    structureStop =
+      side === 'LONG'
+        ? structure -
+          buffer
+        : structure +
+          buffer;
+
+    structureRisk =
+      Math.abs(
+        px -
+        structureStop
+      );
+  }
+
+  // Piso principal: 1.25 ATR.
+  // Assim um ruído normal de 5m não tira o trade tão facilmente.
+  const minRisk =
+    Math.min(
+      Math.max(
+        safeAtr *
+          cfg.minAtr,
+        px *
+          cfg.minPct /
+          100
+      ),
+      px *
+        cfg.maxPct /
+        100
+    );
+
+  // Teto evita que um fundo/topo muito distante transforme scalp em swing.
+  const maxRisk =
+    Math.max(
+      minRisk,
+      Math.min(
+        safeAtr *
+          cfg.maxAtr,
+        px *
+          cfg.maxPct /
+          100
+      )
+    );
+
+  const desiredRisk =
+    Number.isFinite(
+      structureRisk
+    ) &&
+    structureRisk > 0
+      ? structureRisk
+      : minRisk;
+
+  const risk =
+    Math.max(
+      minRisk,
+      Math.min(
+        maxRisk,
+        desiredRisk
+      )
+    );
+
+  const stop =
+    side === 'LONG'
+      ? px - risk
+      : px + risk;
+
+  const stopMode =
+    !Number.isFinite(
+      structureRisk
+    )
+      ? 'ATR_FALLBACK'
+      : structureRisk <
+          minRisk
+        ? 'ATR_MIN'
+        : structureRisk >
+            maxRisk
+          ? 'ATR_CAP'
+          : 'STRUCTURE_ATR';
+
+  if (side === 'LONG') {
+    return {
+      entry:
+        px,
+      stop,
+      tp1:
+        px +
+        risk *
+          cfg.tp1R,
+      tp2:
+        px +
+        risk *
+          cfg.tp2R,
+      tp3:
+        px +
+        risk *
+          cfg.tp3R,
+      tradeStyle:
+        'SCALP_5M_SMART_STOP',
+      stopMode,
+      stopAtrMultiple:
+        safeAtr > 0
+          ? risk /
+            safeAtr
+          : null,
+      stopPct:
+        px > 0
+          ? risk /
+            px *
+            100
+          : null,
+      structurePrice:
+        structure,
+      structureLookback:
+        cfg.lookback
+    };
+  }
+
+  return {
+    entry:
+      px,
+    stop,
+    tp1:
+      px -
+      risk *
+        cfg.tp1R,
+    tp2:
+      px -
+      risk *
+        cfg.tp2R,
+    tp3:
+      px -
+      risk *
+        cfg.tp3R,
+    tradeStyle:
+      'SCALP_5M_SMART_STOP',
+    stopMode,
+    stopAtrMultiple:
+      safeAtr > 0
+        ? risk /
+          safeAtr
+        : null,
+    stopPct:
+      px > 0
+        ? risk /
+          px *
+          100
+        : null,
+    structurePrice:
+      structure,
+    structureLookback:
+      cfg.lookback
+  };
+}
+
+export function smartStopPreview({
+  side,
+  price,
+  atrValue,
+  candles5m = []
+}) {
+  return buildLevels(
+    side,
+    price,
+    atrValue,
+    candles5m
+  );
+}
+
+function bestMarketForBase(
+  markets,
+  exchangeNames,
+  base
+) {
+  const available = markets.filter(m =>
+    String(m.base_asset).toUpperCase() === base &&
+    String(m.quote_asset).toUpperCase() === 'USDT' &&
+    m.is_perpetual === true &&
+    m.has_ohlcv_data === true
+  );
+
+  if (!available.length) {
+    return null;
+  }
+
+  available.sort((a, b) => {
+    const aName = String(
+      exchangeNames.get(String(a.exchange)) || a.exchange
+    ).toUpperCase();
+
+    const bName = String(
+      exchangeNames.get(String(b.exchange)) || b.exchange
+    ).toUpperCase();
+
+    const ai = EXCHANGE_PRIORITY.indexOf(aName);
+    const bi = EXCHANGE_PRIORITY.indexOf(bName);
+
+    return (
+      (ai === -1 ? 999 : ai) -
+      (bi === -1 ? 999 : bi)
+    );
+  });
+
+  const picked = available[0];
+
+  return {
+    ...picked,
+    exchangeName:
+      exchangeNames.get(String(picked.exchange)) ||
+      picked.exchange
+  };
+}
+
+function chooseMarkets(
+  markets,
+  exchangeNames,
+  limit,
+  requestedBases = null
+) {
   const selected = [];
   const usedBases = new Set();
 
   const pushBase = base => {
-    const normalized = String(base || '').toUpperCase().replace(/USDT$/, '');
-    if (!normalized || normalized === 'USDT' || selected.length >= limit || usedBases.has(normalized)) return;
+    const normalized =
+      String(base || '')
+        .toUpperCase()
+        .replace(/USDT$/, '');
 
-    const available = markets.filter(m =>
-      String(m.base_asset).toUpperCase() === normalized &&
-      String(m.quote_asset).toUpperCase() === 'USDT' &&
-      m.is_perpetual === true && m.has_ohlcv_data === true
-    );
+    if (
+      !normalized ||
+      normalized === 'USDT' ||
+      selected.length >= limit ||
+      usedBases.has(normalized)
+    ) {
+      return;
+    }
 
-    if (available.length) {
-      available.sort((a, b) => {
-        const ai = EXCHANGE_PRIORITY.indexOf(String(exchangeNames.get(String(a.exchange)) || a.exchange).toUpperCase());
-        const bi = EXCHANGE_PRIORITY.indexOf(String(exchangeNames.get(String(b.exchange)) || b.exchange).toUpperCase());
-        return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
-      });
-      const picked = available[0];
-      selected.push({ ...picked, exchangeName: exchangeNames.get(String(picked.exchange)) || picked.exchange });
+    const picked =
+      bestMarketForBase(
+        markets,
+        exchangeNames,
+        normalized
+      );
+
+    if (picked) {
+      selected.push(picked);
       usedBases.add(normalized);
     }
   };
 
-  if (Array.isArray(requestedBases) && requestedBases.length) {
-    requestedBases.forEach(pushBase);
+  if (
+    Array.isArray(requestedBases) &&
+    requestedBases.length
+  ) {
+    for (const base of requestedBases) {
+      pushBase(base);
+    }
+
     return selected;
   }
 
-  CORE_BASES.forEach(pushBase);
-  const altSlots = Math.max(0, limit - selected.length);
-  for (let o = 0; o < ROTATING_BASES.length && selected.length < limit; o++) {
-    const idx = (marketRotationCursor + o) % ROTATING_BASES.length;
-    pushBase(ROTATING_BASES[idx]);
+  for (const base of CORE_BASES) {
+    pushBase(base);
+  }
+
+  const altSlots =
+    Math.max(0, limit - selected.length);
+
+  for (
+    let offset = 0;
+    offset < ROTATING_BASES.length &&
+    selected.length < limit;
+    offset += 1
+  ) {
+    const idx =
+      (marketRotationCursor + offset) %
+      ROTATING_BASES.length;
+
+    pushBase(
+      ROTATING_BASES[idx]
+    );
   }
 
   if (altSlots > 0) {
-    marketRotationCursor = (marketRotationCursor + altSlots) % ROTATING_BASES.length;
+    marketRotationCursor =
+      (
+        marketRotationCursor +
+        altSlots
+      ) %
+      ROTATING_BASES.length;
   }
 
   return selected;
+}
+
+
+function auditRejectionCategory(
+  result
+) {
+  const g =
+    result?.gates ||
+    {};
+
+  const categories = [];
+
+  if (!g.volume24hOk) {
+    categories.push('volume24h');
+  }
+
+  if (!g.scoreOk) {
+    categories.push('score');
+  }
+
+  if (!g.directionEdgeOk) {
+    categories.push('edge');
+  }
+
+  if (!g.oneHourConfirmationOk) {
+    categories.push('1h');
+  }
+
+  if (!g.confirmationOk) {
+    categories.push('baseConfirmation');
+  }
+
+  if (!g.momentumOk) {
+    categories.push('momentum');
+  }
+
+  if (!g.balancedEntryOk) {
+    categories.push('entrySetup');
+  }
+
+  if (!g.antiChaseOk) {
+    categories.push('antiChase');
+  }
+
+  if (!g.btcRegimeOk) {
+    categories.push('btcRegime');
+  }
+
+  return categories;
+}
+
+export function buildDirectionAudit(
+  results = []
+) {
+  const create =
+    () => ({
+      analyzed: 0,
+      approved: 0,
+      preCandidates: 0,
+      rejections: {
+        score: 0,
+        edge: 0,
+        oneHour: 0,
+        momentum: 0,
+        entrySetup: 0,
+        antiChase: 0,
+        btcRegime: 0,
+        volume24h: 0,
+        baseConfirmation: 0
+      }
+    });
+
+  const audit = {
+    LONG: create(),
+    SHORT: create()
+  };
+
+  for (
+    const result of
+    results
+  ) {
+    const side =
+      String(
+        result?.side ||
+        ''
+      ).toUpperCase();
+
+    if (
+      !audit[side]
+    ) {
+      continue;
+    }
+
+    const bucket =
+      audit[side];
+
+    bucket.analyzed += 1;
+
+    if (
+      result?.gates?.mathApproved
+    ) {
+      bucket.approved += 1;
+    }
+
+    if (
+      result?.gates?.preCandidate
+    ) {
+      bucket.preCandidates += 1;
+    }
+
+    for (
+      const category of
+      auditRejectionCategory(
+        result
+      )
+    ) {
+      const map = {
+        score: 'score',
+        edge: 'edge',
+        '1h': 'oneHour',
+        momentum: 'momentum',
+        entrySetup: 'entrySetup',
+        antiChase: 'antiChase',
+        btcRegime: 'btcRegime',
+        volume24h: 'volume24h',
+        baseConfirmation: 'baseConfirmation'
+      };
+
+      const key =
+        map[category];
+
+      if (key) {
+        bucket.rejections[key] +=
+          1;
+      }
+    }
+  }
+
+  return audit;
 }
 
 export async function scanMarket({
   topMarkets = 12,
   marketBases = null,
   minQuoteVolume = 20_000_000,
-  minScore = 84,
-  minDirectionEdge = 8,
-  minVolumeRatio = 1.00
+  minScore = 70,
+  preCandidateMinScore = 60,
+  minVolumeRatio = 0.45,
+  pullbackMinVolumeRatio = 0.55,
+  minOiPct = 0.50,
+  hardMinVolumeRatio = 0.40,
+  oiRejectPct = -1.00,
+  exceptionScore = 82,
+  exceptionVolumeRatio = 1.00,
+  minDirectionEdge = 6,
+  require1hConfirmation = true,
+  requireMomentumBundle = true,
+  antiChaseEnabled = true,
+  btcRegimeGuardEnabled = true,
+  requirePullbackTrigger = true,
+  requireContextualOi = true,
+  pullbackLookback = 7,
+  pullbackTouchAtr = 0.35,
+  pullbackMaxDistanceAtrMin = 0.90,
+  pullbackMaxDistanceAtrMax = 1.25,
+  triggerMinBodyAtr = 0.12,
+  contextualOiMinPct = 0.05,
+  contextualPriceMinPct = 0.03,
+  momentumMinConfirmations = 2,
+  breakoutEnabled = true,
+  breakoutMinScore = 82,
+  breakoutMinVolumeRatio = 1.25,
+  breakoutMinDirectionEdge = 10,
+  breakoutMinBodyAtr = 0.20
 } = {}) {
-  const [marketList, exchangeList] = await Promise.all([futureMarkets(), exchanges()]);
-  const exchangeNames = new Map(exchangeList.map(e => [String(e.code), e.name]));
-  const markets = chooseMarkets(marketList, exchangeNames, topMarkets, marketBases);
+  const [marketList, exchangeList] = await Promise.all([
+    futureMarkets(),
+    exchanges()
+  ]);
 
-  if (!markets.length) throw new Error('Nenhum mercado perpétuo USDT encontrado');
+  const exchangeNames = new Map(
+    exchangeList.map(e => [String(e.code), e.name])
+  );
+
+  const effectiveLimit =
+    Array.isArray(marketBases) && marketBases.length
+      ? Math.min(marketBases.length, 12)
+      : Math.min(topMarkets, 12);
+
+  const markets = chooseMarkets(
+    marketList,
+    exchangeNames,
+    effectiveLimit,
+    marketBases
+  );
+
+  if (!markets.length) {
+    throw new Error('Nenhum mercado perpétuo USDT encontrado');
+  }
 
   const symbols = markets.map(m => m.symbol);
+
   const now = Math.floor(Date.now() / 1000);
   const from5 = now - 72 * 60 * 60;
   const from1h = now - 900 * 60 * 60;
   const fromOi = now - 6 * 60 * 60;
 
-  const [candles5Raw, candles1hRaw, oiRaw] = await Promise.all([
-    ohlcvHistory(symbols, '5min', from5, now),
-    ohlcvHistory(symbols, '1hour', from1h, now),
-    openInterestHistory(symbols, '15min', fromOi, now)
-  ]);
+  console.log(
+    '[scan] mercados:',
+    markets.map(m => `${m.base_asset}@${m.exchangeName}`).join(', ')
+  );
 
-  const map5 = new Map(candles5Raw.map(x => [x.symbol, x.history]));
-  const map1h = new Map(candles1hRaw.map(x => [x.symbol, x.history]));
-  const oiMap = new Map(oiRaw.map(x => [x.symbol, x.history || []]));
+  console.log(
+    `[scan] modo SCALP 5m · lote ${markets.length} mercado(s) · ` +
+    `pares cotados em USDT · funding omitido para preservar rate limit`
+  );
+
+  const [candles5Raw, candles1hRaw, oiRaw] =
+    await Promise.all([
+      ohlcvHistory(symbols, '5min', from5, now),
+      ohlcvHistory(symbols, '1hour', from1h, now),
+      openInterestHistory(symbols, '15min', fromOi, now)
+    ]);
+
+  const map5 = new Map(
+    candles5Raw.map(x => [x.symbol, x.history])
+  );
+
+  const map1h = new Map(
+    candles1hRaw.map(x => [x.symbol, x.history])
+  );
+
+  const oiMap = new Map(
+    oiRaw.map(x => [x.symbol, x.history || []])
+  );
 
   const allResults = [];
-  const nowMs = Date.now();
+  const preRejected = [];
 
   for (const market of markets) {
     try {
-      const c5All = mapHistory(map5.get(market.symbol));
-      const c1hAll = mapHistory(map1h.get(market.symbol));
+      const nowMs = Date.now();
 
-      const c5 = onlyClosedCandles(c5All, M5_MS, nowMs);
-      const c15 = onlyClosedCandles(resample15m(c5), M15_MS, nowMs);
-      const c1h = onlyClosedCandles(c1hAll, H1_MS, nowMs);
-      const c4h = onlyClosedCandles(resample4h(c1h), H4_MS, nowMs);
+      const c5All =
+        mapHistory(map5.get(market.symbol));
 
-      const displaySymbol = market.symbol_on_exchange || `${market.base_asset}USDT`;
-      if (c5.length < 100 || c15.length < 50 || c1h.length < 50) continue;
+      const c1hAll =
+        mapHistory(map1h.get(market.symbol));
+
+      const c5 =
+        onlyClosedCandles(
+          c5All,
+          M5_MS,
+          nowMs
+        );
+
+      const c15 =
+        onlyClosedCandles(
+          resample15m(c5),
+          M15_MS,
+          nowMs
+        );
+
+      const c1h =
+        onlyClosedCandles(
+          c1hAll,
+          H1_MS,
+          nowMs
+        );
+
+      // Primeiro agrega 1h -> 4h; depois remove o bloco ainda em formação.
+      const c4h = onlyClosedCandles(
+        resample4h(c1h),
+        H4_MS,
+        nowMs
+      );
+
+      const displaySymbol =
+        market.symbol_on_exchange ||
+        `${market.base_asset}USDT`;
+
+      if (
+        c5.length < 210 ||
+        c15.length < 210 ||
+        c1h.length < 210 ||
+        c4h.length < 205
+      ) {
+        console.log(
+          '[scan] poucos candles',
+          market.symbol,
+          c5.length,
+          c15.length,
+          c1h.length,
+          c4h.length
+        );
+
+        preRejected.push({
+          symbol: displaySymbol,
+          exchange: market.exchangeName,
+          side: '—',
+          score: null,
+          volumeRatio: null,
+          oiPct: null,
+          quoteVolume: null,
+          reason:
+            `Histórico fechado insuficiente: ` +
+            `15m ${c15.length}, ` +
+            `1h ${c1h.length}/${c1hAll.length}, ` +
+            `4h ${c4h.length}`
+        });
+        continue;
+      }
 
       const last96 = c15.slice(-96);
-      const quoteVolume24h = last96.reduce((sum, c) => sum + c.quoteVolume, 0);
 
-      const oiHistoryList = onlyClosedOi(oiMap.get(market.symbol) || [], M15_MS, nowMs);
-      let oiPct = 0;
-      if (oiHistoryList.length >= 2) {
-        const lastOi = Number(last(oiHistoryList).c);
-        const prevOi = Number(oiHistoryList[Math.max(0, oiHistoryList.length - 3)].c);
-        if (prevOi > 0) oiPct = pctChange(prevOi, lastOi);
+      const quoteVolume24h = last96.reduce(
+        (sum, c) => sum + c.quoteVolume,
+        0
+      );
+
+      const first24 = last96[0];
+      const last24 = last(last96);
+      const change24h = pctChange(first24.close, last24.close);
+
+      const oi = onlyClosedOi(
+        oiMap.get(market.symbol) || [],
+        M15_MS,
+        nowMs
+      );
+
+      let oiLongPct = 0;
+
+      if (oi.length >= 2) {
+        const firstOi =
+          Number(
+            oi[0].c
+          );
+
+        const lastOi =
+          Number(
+            last(oi).c
+          );
+
+        if (
+          Number.isFinite(firstOi) &&
+          Number.isFinite(lastOi) &&
+          firstOi !== 0
+        ) {
+          oiLongPct =
+            pctChange(
+              firstOi,
+              lastOi
+            );
+        }
       }
+
+      // V1.7.3:
+      // oiPct passa a refletir a janela recente (~30m)
+      // em vez de misturar toda a janela de ~6h.
+      const oiPct =
+        oiChangePct(
+          oi,
+          2
+        );
 
       const t5 = analyzeTf(c5);
       const t15 = analyzeTf(c15);
       const t1h = analyzeTf(c1h);
       const t4h = analyzeTf(c4h);
 
-      const isBtc = String(market.base_asset).toUpperCase() === 'BTC';
-      if (isBtc) {
-        cachedBtcContext = { trend15m: t15.bullish ? 'BULLISH' : t15.bearish ? 'BEARISH' : 'MIXED', trend1h: t1h.bullish ? 'BULLISH' : t1h.bearish ? 'BEARISH' : 'MIXED' };
-        cachedBtcContextAt = nowMs;
+      const fundingRate = null;
+
+      const isBtcMarket =
+        String(
+          market.base_asset || ''
+        ).toUpperCase() === 'BTC';
+
+      let btcContextForScore =
+        freshBtcContext(
+          nowMs
+        );
+
+      // Quando BTC está no lote, atualiza o contexto antes de pontuar
+      // as altcoins que vierem depois dele.
+      if (isBtcMarket) {
+        btcContextForScore =
+          buildBtcContext({
+            t5,
+            t15,
+            t1h,
+            t4h,
+            oiPct,
+            change24h
+          });
+
+        cachedBtcContext =
+          btcContextForScore;
+
+        cachedBtcContextAt =
+          nowMs;
       }
 
-      const sig = scoreSignal(t5, t15, t1h, t4h, oiPct, displaySymbol, cachedBtcContext);
-      const levels = buildLevels(sig.side, t5.price, t5.atr);
+      const sig =
+        scoreSignal(
+          t5,
+          t15,
+          t1h,
+          t4h,
+          oiPct,
+          displaySymbol,
+          btcContextForScore
+        );
 
-      const btcGate = btcHardGate(sig.side, displaySymbol, cachedBtcContext);
-      const bbExpanding = (t15.bandwidth || 0) >= 0.038;
-      const adxTrending = (t15.adx || 0) >= 20;
+      if (isBtcMarket) {
+        cachedBtcContext = {
+          ...btcContextForScore,
+          side: sig.side,
+          score: sig.score
+        };
+      }
 
-      const volumeOk = t5.volumeRatio >= minVolumeRatio;
-      const scoreOk = sig.score >= minScore;
-      const edgeOk = sig.directionEdge >= minDirectionEdge;
-      const mathApproved = scoreOk && edgeOk && volumeOk && btcGate.ok && sig.oneHourConfirmed && (bbExpanding || adxTrending);
+      const confirmation = confirmationStatus(
+        t5,
+        oiPct,
+        sig.score,
+        minVolumeRatio,
+        minOiPct,
+        hardMinVolumeRatio,
+        oiRejectPct,
+        exceptionScore,
+        exceptionVolumeRatio
+      );
+      const levels =
+        buildLevels(
+          sig.side,
+          t5.price,
+          t5.atr,
+          c5
+        );
+
+      const volume24hOk = quoteVolume24h >= minQuoteVolume;
+      const scoreOk =
+        sig.score >= minScore;
+
+      const directionEdgeOk =
+        sig.directionEdge >= minDirectionEdge;
+
+      const oneHourConfirmationOk =
+        !require1hConfirmation ||
+        sig.oneHourConfirmed;
+
+      const directionalSideOk =
+        sig.side === 'LONG' ||
+        sig.side === 'SHORT';
+
+      const pullback =
+        pullbackTriggerStatus({
+          side:
+            sig.side,
+          t5,
+          t15,
+          t1h,
+          t4h,
+          candles5m:
+            c5,
+          candles15m:
+            c15,
+          candles1h:
+            c1h,
+          lookback:
+            pullbackLookback,
+          touchAtr:
+            pullbackTouchAtr,
+          minBodyAtr:
+            triggerMinBodyAtr,
+          maxDistanceAtrMin:
+            pullbackMaxDistanceAtrMin,
+          maxDistanceAtrMax:
+            pullbackMaxDistanceAtrMax
+        });
+
+      const pullbackTriggerOk =
+        !requirePullbackTrigger ||
+        pullback.confirmed;
+
+      const oiContext =
+        contextualOiStatus({
+          side:
+            sig.side,
+          c15,
+          oiHistory:
+            oi,
+          pullback,
+          minOiPct:
+            contextualOiMinPct,
+          minPricePct:
+            contextualPriceMinPct
+        });
+
+      const contextualOiOk =
+        !requireContextualOi ||
+        oiContext.confirmed;
+
+      const marketRegime =
+        marketRegimeStatus({
+          side:
+            sig.side,
+          t5,
+          t15,
+          t1h,
+          t4h,
+          candles5m:
+            c5,
+          candles15m:
+            c15,
+          candles1h:
+            c1h
+        });
+
+      const trendExhaustion =
+        trendExhaustionStatus({
+          side:
+            sig.side,
+          t5,
+          t1h,
+          t4h,
+          candles5m:
+            c5
+        });
+
+      const breakout =
+        breakoutStrongStatus({
+          side:
+            sig.side,
+          t5,
+          t15,
+          t1h,
+          candles5m:
+            c5,
+          score:
+            sig.score,
+          directionEdge:
+            sig.directionEdge,
+          oiContext,
+          minScore:
+            breakoutMinScore,
+          minVolumeRatio:
+            breakoutMinVolumeRatio,
+          minDirectionEdge:
+            breakoutMinDirectionEdge,
+          minBodyAtr:
+            breakoutMinBodyAtr
+        });
+
+      const entryMode =
+        (
+          marketRegime.regime ===
+            'EXPANSION' &&
+          breakoutEnabled &&
+          breakout.qualified &&
+          marketRegime.breakoutAllowed
+        )
+          ? 'BREAKOUT_STRONG'
+          : (
+            pullback.confirmed &&
+            marketRegime.pullbackAllowed &&
+            trendExhaustion.ok
+          )
+            ? 'PULLBACK'
+            : (
+              breakoutEnabled &&
+              breakout.qualified &&
+              marketRegime.breakoutAllowed
+            )
+              ? 'BREAKOUT_STRONG'
+              : 'WAIT_SETUP';
+
+      const balancedEntryOk =
+        entryMode !==
+        'WAIT_SETUP';
+
+      const entryVolumeTarget =
+        entryMode ===
+          'BREAKOUT_STRONG'
+          ? breakoutMinVolumeRatio
+          : pullbackMinVolumeRatio;
+
+      const momentum =
+        momentumBundleStatus(
+          sig.side,
+          t5,
+          oiPct,
+          entryVolumeTarget,
+          minOiPct,
+          oiContext,
+          momentumMinConfirmations
+        );
+
+      const momentumOk =
+        !requireMomentumBundle ||
+        momentum.confirmed;
+
+      const antiChase =
+        antiChaseStatus(
+          sig.side,
+          t5,
+          c5
+        );
+
+      const antiChaseOk =
+        !antiChaseEnabled ||
+        antiChase.ok;
+
+      const btcRegime =
+        btcRegimeGuardStatus({
+          side: sig.side,
+          symbol: displaySymbol,
+          btcContext: btcContextForScore,
+          score: sig.score,
+          volumeRatio: t5?.volumeRatio,
+          oiPct,
+          directionEdge: sig.directionEdge
+        });
+
+      const btcRegimeOk =
+        !btcRegimeGuardEnabled ||
+        btcRegime.ok;
+
+      const isPreCandidate =
+        volume24hOk &&
+        directionalSideOk &&
+        sig.score >= preCandidateMinScore &&
+        sig.score < minScore;
+
+      const mathApproved =
+        volume24hOk &&
+        scoreOk &&
+        confirmation.confirmed &&
+        directionalSideOk &&
+        directionEdgeOk &&
+        oneHourConfirmationOk &&
+        momentumOk &&
+        balancedEntryOk &&
+        antiChaseOk &&
+        btcRegimeOk;
+
+      // V1.3.3: guarda TODOS os motivos de rejeição.
+      const rejectionReasons = [];
+
+      if (!volume24hOk) {
+        rejectionReasons.push(
+          `Volume 24h ${(quoteVolume24h / 1e6).toFixed(1)}M abaixo do mínimo ${(minQuoteVolume / 1e6).toFixed(0)}M`
+        );
+      }
+
+      if (!scoreOk) {
+        rejectionReasons.push(
+          `Score ${sig.score} abaixo do mínimo ${minScore}`
+        );
+      }
+
+      if (!directionalSideOk) {
+        rejectionReasons.push(
+          'Direção neutra: LONG e SHORT sem vantagem suficiente'
+        );
+      }
+
+      if (
+        directionalSideOk &&
+        !directionEdgeOk
+      ) {
+        rejectionReasons.push(
+          `Vantagem direcional ${sig.directionEdge} abaixo do mínimo ${minDirectionEdge} (LONG ${sig.longScore} x SHORT ${sig.shortScore})`
+        );
+      }
+
+      if (
+        directionalSideOk &&
+        !oneHourConfirmationOk
+      ) {
+        rejectionReasons.push(
+          `1H não confirma ${sig.side} (estrutura 1H: ${sig.structure1h})`
+        );
+      }
+
+      if (
+        requireMomentumBundle &&
+        !momentum.confirmed
+      ) {
+        const missing = [];
+
+        if (!momentum.volumeOk) {
+          missing.push(
+            `volume ${momentum.volumeRatio.toFixed(2)}x abaixo de ${Number(momentum.minVolumeRatio || minVolumeRatio).toFixed(2)}x`
+          );
+        }
+
+        if (!momentum.oiOk) {
+          missing.push(
+            `OI ${momentum.oiPct >= 0 ? '+' : ''}${momentum.oiPct.toFixed(2)}% abaixo de +${minOiPct.toFixed(2)}%`
+          );
+        }
+
+        if (!momentum.macdOk) {
+          missing.push(
+            `MACD 5m não confirma ${sig.side}`
+          );
+        }
+
+        rejectionReasons.push(
+          `Momentum ${momentum.confirmationCount}/${momentum.minConfirmations} insuficiente: ${missing.join(' · ')}`
+        );
+      }
+
+      if (
+        !balancedEntryOk
+      ) {
+        rejectionReasons.push(
+          `Market Regime ${marketRegime.regime}: ${marketRegime.reason}; ` +
+          `pullback ${marketRegime.pullbackAllowed ? 'permitido' : 'bloqueado'}; ` +
+          `breakout ${marketRegime.breakoutAllowed ? 'permitido' : 'bloqueado'}`
+        );
+
+        if (!trendExhaustion.ok) {
+          rejectionReasons.push(
+            `Trend Exhaustion Guard: ${trendExhaustion.reason}`
+          );
+        }
+
+        rejectionReasons.push(
+          `Entrada aguardando setup: pullback ${pullback.reason}; breakout forte: ${breakout.reason}`
+        );
+      }
+
+      if (
+        requirePullbackTrigger &&
+        !pullback.confirmed
+      ) {
+        rejectionReasons.push(
+          `Pullback Engine: ${pullback.reason}`
+        );
+      }
+
+      if (
+        requireContextualOi &&
+        !oiContext.confirmed
+      ) {
+        rejectionReasons.push(
+          `OI contextual: ${oiContext.regime} · OI ${oiContext.oiPct >= 0 ? '+' : ''}${oiContext.oiPct.toFixed(2)}% · preço30m ${oiContext.pricePct >= 0 ? '+' : ''}${oiContext.pricePct.toFixed(2)}% não confirma ${sig.side}`
+        );
+      }
+
+      if (
+        antiChaseEnabled &&
+        !antiChase.ok
+      ) {
+        rejectionReasons.push(
+          `Anti-chase: ${antiChase.reason}`
+        );
+      }
+
+      if (
+        btcRegimeGuardEnabled &&
+        !btcRegime.ok
+      ) {
+        rejectionReasons.push(
+          `Regime BTC 1H+4H contrário a ${sig.side}; exige setup excepcional (score 85+, vol 0.80x+, OI +1.00%+, edge 12+)`
+        );
+      }
+
+      if (!confirmation.volumeFloorOk) {
+        rejectionReasons.push(
+          `Volume relativo ${fmt(t5?.volumeRatio, 2, '0.00')}x abaixo do piso ${hardMinVolumeRatio.toFixed(2)}x`
+        );
+      }
+
+      if (confirmation.oiDivergence && !confirmation.divergenceException) {
+        rejectionReasons.push(
+          `OI ${fmt(oiPct, 2, '0.00')}% abaixo do bloqueio ${oiRejectPct.toFixed(2)}%`
+        );
+      }
+
+      if (
+        confirmation.volumeFloorOk &&
+        !confirmation.oiDivergence &&
+        !confirmation.confirmed
+      ) {
+        rejectionReasons.push(
+          `Sem confirmação: volume ${fmt(t5?.volumeRatio, 2, '0.00')}x (alvo ${minVolumeRatio.toFixed(2)}x) e OI ${finiteNumber(oiPct, 0) >= 0 ? '+' : ''}${fmt(oiPct, 2, '0.00')}% (alvo +${minOiPct.toFixed(2)}%)`
+        );
+      }
+
+      const rejectionReason =
+        rejectionReasons[0] || '';
+
+      // "Quase aprovado": score já atingiu o mínimo e somente UM gate
+      // impediu a entrada. Continua rejeitado, mas fica destacado no debug.
+      const nearApproved =
+        !mathApproved &&
+        scoreOk &&
+        volume24hOk &&
+        rejectionReasons.length === 1;
 
       allResults.push({
         symbol: displaySymbol,
         dataSymbol: market.symbol,
         exchange: market.exchangeName,
         quoteVolume: quoteVolume24h,
+        change24h,
         ...sig,
         ...levels,
-        t5, t15, t1h, t4h,
+        confirmation,
+        t5,
+        t15,
+        t1h,
+        t4h,
         oiPct,
-        candidateTier: mathApproved ? 'STANDARD' : 'REJECTED',
+        fundingRate,
+        btcContextUsed:
+          btcContextForScore,
+        momentum,
+        pullback,
+        marketRegime,
+        trendExhaustion,
+        breakout,
+        entryMode,
+        entryVolumeTarget,
+        balancedEntryOk,
+        oiContext,
+        oiLongPct,
+        antiChase,
+        btcRegime,
+        candlePolicy: 'CLOSED_ONLY',
+        nearApproved,
+        candidateTier: mathApproved
+          ? 'STANDARD'
+          : nearApproved
+            ? 'NEAR_APPROVED'
+            : isPreCandidate
+              ? 'PRE_CANDIDATE'
+              : 'REJECTED',
         gates: {
+          volume24hOk,
           scoreOk,
-          volumeOk,
-          edgeOk,
-          btcGateOk: btcGate.ok,
-          oneHourConfirmed: sig.oneHourConfirmed,
+          preCandidate: isPreCandidate,
+          confirmationOk: confirmation.confirmed,
+          directionalSideOk,
+          directionEdgeOk,
+          oneHourConfirmationOk,
+          momentumOk,
+          balancedEntryOk,
+          marketRegimeOk:
+            balancedEntryOk,
+          trendExhaustionOk:
+            trendExhaustion.ok,
+          pullbackTriggerOk,
+          contextualOiOk,
+          antiChaseOk,
+          btcRegimeOk,
           mathApproved
         },
-        rejectionReason: !btcGate.ok ? btcGate.reason : !scoreOk ? `Score ${sig.score} < ${minScore}` : !volumeOk ? `Volume ${t5.volumeRatio.toFixed(2)}x < 1.0x` : ''
+        rejectionReasons,
+        rejectionReason
       });
-    } catch (e) {
-      console.error(`[scanner] erro em ${market.symbol}:`, e.message);
+    } catch (error) {
+      console.error('[scan] falha', market.symbol, error.message);
+      preRejected.push({
+        symbol: market.symbol_on_exchange || `${market.base_asset}USDT`,
+        exchange: market.exchangeName,
+        side: '—',
+        score: null,
+        volumeRatio: null,
+        oiPct: null,
+        quoteVolume: null,
+        reason: `Falha ao analisar: ${error.message}`.slice(0, 180)
+      });
     }
+  }
+
+  const btc =
+    allResults.find(r =>
+      String(r.symbol)
+        .toUpperCase()
+        .startsWith('BTC')
+    );
+
+  if (btc) {
+    cachedBtcContext = {
+      ...buildBtcContext({
+        t5: btc.t5,
+        t15: btc.t15,
+        t1h: btc.t1h,
+        t4h: btc.t4h,
+        oiPct: btc.oiPct,
+        change24h: btc.change24h,
+        side: btc.side,
+        score: btc.score
+      }),
+      side: btc.side,
+      score: btc.score
+    };
+
+    cachedBtcContextAt =
+      Date.now();
+  }
+
+  const btcContext =
+    freshBtcContext();
+
+  for (const r of allResults) {
+    r.btcContext =
+      btcContext;
   }
 
   const signals = allResults
     .filter(r => r.gates.mathApproved)
     .sort((a, b) => b.score - a.score);
 
-  return { signals, snapshots: allResults };
+  // Pré-candidato: score 60–69 (por padrão), sem afrouxar a regra
+  // que libera sinal real. Ele só pode ser analisado pela IA/Watchlist.
+  const preCandidates = allResults
+    .filter(r => r.gates.preCandidate)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      if (b.t5.volumeRatio !== a.t5.volumeRatio) {
+        return b.t5.volumeRatio - a.t5.volumeRatio;
+      }
+      return b.oiPct - a.oiPct;
+    });
+
+  const rejected = [
+    ...allResults
+      .filter(r => !r.gates.mathApproved)
+      .map(r => ({
+        symbol: r.symbol,
+        exchange: r.exchange,
+        side: r.side,
+        score: r.score,
+        volumeRatio: r.t5.volumeRatio,
+        oiPct: r.oiPct,
+        quoteVolume: r.quoteVolume,
+        confirmation: r.confirmation.label,
+        candidateTier: r.candidateTier,
+        nearApproved: Boolean(r.nearApproved),
+        reasons: r.rejectionReasons?.length
+          ? r.rejectionReasons
+          : ['Filtro técnico não confirmado'],
+        reason:
+          r.rejectionReasons?.[0] ||
+          r.rejectionReason ||
+          'Filtro técnico não confirmado'
+      })),
+    ...preRejected.map(r => ({
+      ...r,
+      reasons: [r.reason || 'Falha de análise']
+    }))
+  ].sort((a, b) => {
+    const aScore = Number.isFinite(a.score) ? a.score : -1;
+    const bScore = Number.isFinite(b.score) ? b.score : -1;
+    return bScore - aScore;
+  });
+
+  return {
+    signals,
+    preCandidates,
+    snapshots: allResults,
+    debug: {
+      selectedMarkets: markets.length,
+      analyzedMarkets: allResults.length,
+      mathApproved: signals.length,
+      directionAudit:
+        buildDirectionAudit(
+          allResults
+        ),
+      directionStats: {
+        longApproved:
+          signals.filter(
+            r => r.side === 'LONG'
+          ).length,
+        shortApproved:
+          signals.filter(
+            r => r.side === 'SHORT'
+          ).length,
+        minDirectionEdge,
+        require1hConfirmation,
+        btcContextAgeMin:
+          btcContext?.ageMin ?? null
+      },
+      preCandidateMinScore,
+      closedCandlePolicy: true,
+      nearApproved: rejected.filter(r => r.nearApproved),
+      preCandidates: preCandidates.map(r => ({
+        symbol: r.symbol,
+        exchange: r.exchange,
+        side: r.side,
+        score: r.score,
+        volumeRatio: r.t5.volumeRatio,
+        oiPct: r.oiPct,
+        quoteVolume: r.quoteVolume,
+        longScore: r.longScore,
+        shortScore: r.shortScore,
+        directionEdge: r.directionEdge,
+        oneHourConfirmed: r.oneHourConfirmed,
+        btcScoreAdjustment: r.btcScoreAdjustment,
+        reasons: r.rejectionReasons,
+        reason: r.rejectionReason || 'Pré-candidato'
+      })),
+      rejected
+    }
+  };
+}
+
+function signalStrength(score) {
+  if (score >= 85) return '🔥 MUITO FORTE';
+  if (score >= 78) return '💪 FORTE';
+  return '⚖️ MODERADO';
 }
 
 export function signalText(s) {
   const emoji = s.side === 'LONG' ? '🟢' : '🔴';
+
+  const digits =
+    s.entry >= 1000 ? 2 :
+    s.entry >= 1 ? 4 : 6;
+
+  const n = x => Number(x).toFixed(digits);
+
+  const stopPct =
+    Math.abs(s.entry - s.stop) / s.entry * 100;
+
+  const risk = Math.abs(s.entry - s.stop);
+
+  const rr1 = risk > 0 ? Math.abs(s.tp1 - s.entry) / risk : 0;
+  const rr2 = risk > 0 ? Math.abs(s.tp2 - s.entry) / risk : 0;
+  const rr3 = risk > 0 ? Math.abs(s.tp3 - s.entry) / risk : 0;
+
   return (
     `${emoji} <b>${s.symbol} — ${s.side}</b>\n` +
-    `🏦 ${s.exchange} | ⭐ Score: <b>${s.score}/100</b> (Edge: ${s.directionEdge})\n` +
-    `💰 Entrada Limite: <b>${s.entry.toFixed(4)}</b>\n` +
-    `🛑 Stop Estrutural: <b>${s.stop.toFixed(4)}</b> (-${s.stopPct.toFixed(2)}% | 1.5 ATR)\n` +
-    `🎯 TP1: <b>${s.tp1.toFixed(4)}</b> | TP2: <b>${s.tp2.toFixed(4)}</b> | TP3: <b>${s.tp3.toFixed(4)}</b>\n` +
-    `📊 Vol 5m: ${s.t5?.volumeRatio?.toFixed(2)}x | RSI: ${s.t5?.rsi?.toFixed(1)} | ADX 15m: ${s.t15?.adx?.toFixed(1) || '—'}\n` +
-    `📈 OI: ${s.oiPct >= 0 ? '+' : ''}${s.oiPct.toFixed(2)}% | 1H: ${s.oneHourConfirmed ? '✅ ALINHADO' : '❌'}\n` +
-    `<i>V2.0: Alvos estruturais fora do ruído de mercado.</i>`
+    `🏦 ${s.exchange}\n` +
+    `⭐ Score: <b>${s.score}/100</b>\n` +
+    `⚖️ Direção: LONG ${s.longScore ?? '—'} x SHORT ${s.shortScore ?? '—'} · edge ${s.directionEdge ?? '—'}\n` +
+    `🕐 1H confirma ${s.side}: ${s.oneHourConfirmed ? 'SIM' : 'NÃO'}\n` +
+    `${s.btcScoreAdjustment ? `₿ Ajuste BTC: ${s.btcScoreAdjustment > 0 ? '+' : ''}${s.btcScoreAdjustment}\n` : ''}` +
+    `💪 Força: <b>${signalStrength(s.score)}</b>\n` +
+    `🔎 Confirmação: <b>${s.confirmation.label}</b>\n` +
+    `${s.entryMode ? `🧭 Modo de entrada: <b>${s.entryMode}</b> · vol alvo ${fmt(s.entryVolumeTarget, 2)}x\n` : ''}` +
+    `${s.marketRegime ? `🌦 Regime: ${s.marketRegime.regime} · ${s.marketRegime.reason}\n` : ''}` +
+    `${s.trendExhaustion ? `🧯 Exhaustion Guard: ${s.trendExhaustion.ok ? 'OK' : 'BLOQUEADO'} · ${s.trendExhaustion.reason}\n` : ''}` +
+    `${s.pullback ? `↩️ Pullback: ${s.pullback.confirmed ? 'CONFIRMADO' : 'AGUARDANDO'} · trigger ${s.pullback.triggerQuality ?? 0}/5 · EMA distância ${fmt(s.pullback.distanceAtr, 2)}/${fmt(s.pullback.maxDistanceAtr, 2)} ATR · ${s.pullback.reason}\n` : ''}` +
+    `${s.breakout?.qualified ? `🚀 Breakout forte: CONFIRMADO · corpo ${fmt(s.breakout.bodyAtr, 2)} ATR\n` : ''}` +
+    `${s.oiContext ? `📈 OI contextual: ${s.oiContext.regime} · OI ${s.oiContext.oiPct >= 0 ? '+' : ''}${fmt(s.oiContext.oiPct, 2)}% · preço30m ${s.oiContext.pricePct >= 0 ? '+' : ''}${fmt(s.oiContext.pricePct, 2)}%\n` : ''}` +
+    `${s.momentum ? `🚦 Momentum: ${s.momentum.confirmationCount}/3 · mín ${s.momentum.minConfirmations}/3 · Vol ${s.momentum.volumeOk ? 'OK' : 'NÃO'} · OI ${s.momentum.oiOk ? 'OK' : 'NÃO'} · MACD ${s.momentum.macdOk ? 'OK' : 'NÃO'}\n` : ''}` +
+    `${s.antiChase ? `🛑 Anti-chase: ${s.antiChase.ok ? 'OK' : 'BLOQUEIO'} · ${s.antiChase.reason}\n` : ''}` +
+    `${s.btcRegime ? `₿ Regime BTC 1H+4H: ${s.btcRegime.regime}${s.btcRegime.exceptional ? ' · EXCEÇÃO FORTE' : ''}\n` : ''}` +
+    (s.ai
+      ? `🤖 IA: <b>${s.ai.decision}</b> · Confiança ${Math.round(s.ai.confidence)}% · ` +
+        `${s.ai.style} · Risco ${s.ai.risk}\n` +
+        `${s.ai.cached
+          ? `♻️ Origem: CACHE${Number.isFinite(s.ai.cacheAgeMin) ? ` · ${s.ai.cacheAgeMin.toFixed(0)} min` : ''}`
+          : s.ai.rescueUsed
+            ? '🛟 Origem: OPENROUTER RESCUE'
+            : s.ai.callMode === 'RECHECK'
+              ? '🔄 Origem: RECHECK INTELIGENTE DE WAIT'
+              : s.ai.callMode === 'PRIORITY'
+                ? '⚡ Origem: NOVA ANÁLISE PRIORITÁRIA'
+                : '🧠 Origem: NOVA ANÁLISE NORMAL'}\n` +
+        `🧠 IA: ${s.ai.reason}\n`
+      : '') +
+    `\n` +
+
+    `💰 Entrada: <b>${n(s.entry)}</b>\n` +
+    `🛑 Stop: <b>${n(s.stop)}</b>\n` +
+    `📐 Stop: ${stopPct.toFixed(2)}% do preço` +
+    `${Number.isFinite(Number(s.stopAtrMultiple)) ? ` · ${Number(s.stopAtrMultiple).toFixed(2)} ATR` : ''}\n` +
+    `${s.stopMode ? `🧠 Smart Stop: ${s.stopMode}${Number.isFinite(Number(s.structurePrice)) ? ` · estrutura ${n(s.structurePrice)}` : ''}\n` : ''}\n` +
+
+    `🎯 TP1: ${n(s.tp1)} — 1:${rr1.toFixed(1)}\n` +
+    `🎯 TP2: ${n(s.tp2)} — 1:${rr2.toFixed(1)}\n` +
+    `🎯 TP3: ${n(s.tp3)} — 1:${rr3.toFixed(1)}\n\n` +
+
+    `📊 RSI 5m: ${fmt(s.t5?.rsi, 1)} | RSI 15m: ${fmt(s.t15?.rsi, 1)} | ` +
+    `Vol 5m: ${fmt(s.t5?.volumeRatio, 2)}x\n` +
+
+    `📈 OI: ${finiteNumber(s.oiPct, 0) >= 0 ? '+' : ''}${fmt(s.oiPct, 2)}% | ` +
+    `Funding: ${s.fundingRate == null ? 'omitido no scalp' : `${fmt(s.fundingRate, 4)}%`}\n\n` +
+
+    `🧠 ${s.reasons.slice(0, 4).join(' • ')}\n\n` +
+
+    `<i>V1.11.1: Fast Entry · 1 candle · 4H com peso · OI neutro permitido · Google Sync preservado. ` +
+    `Futuros envolvem risco elevado e liquidação.</i>`
   );
 }

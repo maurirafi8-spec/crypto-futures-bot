@@ -3864,10 +3864,10 @@ async function doScan({
     );
 
     const {
-      signals: mathSignals,
-      preCandidates,
-      snapshots,
-      debug
+      signals: mathSignals = [],
+      preCandidates = [],
+      snapshots = [],
+      debug = {}
     } = await scanMarket({
       topMarkets: cfg.topMarkets,
       marketBases: selectedBases,
@@ -4430,7 +4430,7 @@ async function doScan({
       marketBases:
         Array.isArray(marketBases)
           ? marketBases
-          : lastScanBatch,
+          : universeManager.status().lastBatch,
       quoteAsset: 'USDT',
       durationMs: Date.now() - startedAt,
       math: {

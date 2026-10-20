@@ -143,22 +143,22 @@ export function paperConfig() {
         .toLowerCase() === 'true',
 
     quickScalpMarginUsdc:
-      numEnv('PAPER_QUICK_SCALP_MARGIN_USDC', 20, 1, 100000),
+      numEnv('PAPER_QUICK_SCALP_MARGIN_USDC', 15, 1, 100000),
 
     quickScalpLeverage:
-      intEnv('PAPER_QUICK_SCALP_LEVERAGE', 10, 1, 50),
+      intEnv('PAPER_QUICK_SCALP_LEVERAGE', 5, 1, 50),
 
     // Alvo LÍQUIDO sobre o notional, já considerando fee + slippage.
     // 0.20% de $200 = +$0.40 líquido.
     quickScalpTargetNetPct:
-      numEnv('PAPER_QUICK_SCALP_TARGET_NET_PCT', 0.20, 0.01, 5),
+      numEnv('PAPER_QUICK_SCALP_TARGET_NET_PCT', 1.10, 0.01, 5),
 
     // 0.35% de $200 = -$0.70 líquido.
     quickScalpStopNetPct:
-      numEnv('PAPER_QUICK_SCALP_STOP_NET_PCT', 0.35, 0.05, 10),
+      numEnv('PAPER_QUICK_SCALP_STOP_NET_PCT', 0.75, 0.05, 10),
 
     quickScalpMaxMinutes:
-      numEnv('PAPER_QUICK_SCALP_MAX_MINUTES', 20, 5, 240),
+      numEnv('PAPER_QUICK_SCALP_MAX_MINUTES', 35, 5, 240),
 
     // Apenas 1 scalp 10x por vez por padrão.
     quickScalpMaxOpen:

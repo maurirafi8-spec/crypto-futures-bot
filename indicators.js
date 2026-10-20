@@ -78,6 +78,10 @@ export function pctChange(a, b) {
   return ((b - a) / a) * 100;
 }
 
+/**
+ * NOVO: Bandas de Bollinger (%B e Bandwidth)
+ * Identifica Squeeze (compressão) e expansão real de volatilidade.
+ */
 export function bollingerBands(closes, period = 20, multiplier = 2) {
   const sma = [];
   const upper = [];
@@ -114,6 +118,11 @@ export function bollingerBands(closes, period = 20, multiplier = 2) {
   return { sma, upper, lower, bandwidth, percentB };
 }
 
+/**
+ * NOVO: ADX (Average Directional Index) com +DI e -DI
+ * Filtro de mercado sem tendência (CHOP).
+ * adx >= 22 indica tendência direcional forte.
+ */
 export function adx(candles, period = 14) {
   const n = candles.length;
   if (n < period * 2) {
@@ -146,6 +155,7 @@ export function adx(candles, period = 14) {
     tr.push(trueRange);
   }
 
+  // Suavização Wilder dos primeiros 'period' períodos
   let smoothTr = tr.slice(1, period + 1).reduce((a, b) => a + b, 0);
   let smoothPlusDm = plusDm.slice(1, period + 1).reduce((a, b) => a + b, 0);
   let smoothMinusDm = minusDm.slice(1, period + 1).reduce((a, b) => a + b, 0);
@@ -178,6 +188,7 @@ export function adx(candles, period = 14) {
     dxArr.push(dx);
   }
 
+  // Cálculo da média móvel do DX para obter o ADX final
   const adxArr = Array(period * 2 - 1).fill(null);
   const validDx = dxArr.slice(period);
   if (validDx.length >= period) {
@@ -197,6 +208,11 @@ export function adx(candles, period = 14) {
   };
 }
 
+/**
+ * NOVO: VWAP Diária Ancorada (Daily Anchored VWAP)
+ * Ancorada na virada do dia UTC (00:00).
+ * Nível institucional de preço justo.
+ */
 export function dailyVwap(candles5m) {
   let cumulativePv = 0;
   let cumulativeVol = 0;
