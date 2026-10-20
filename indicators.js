@@ -1,3 +1,9 @@
+/**
+ * INDICATORS.JS — V2.0 OTIMIZADO
+ * Funções matemáticas puras de análise técnica para futuros de criptoativos.
+ * Inclui EMA, RSI, ATR, MACD, Bandas de Bollinger (%B e Bandwidth), ADX e VWAP Diária.
+ */
+
 export function ema(values, period) {
   if (values.length < period) return [];
   const k = 2 / (period + 1);
@@ -70,4 +76,143 @@ export function macd(values, fast = 12, slow = 26, signal = 9) {
 export function pctChange(a, b) {
   if (!a) return 0;
   return ((b - a) / a) * 100;
+}
+
+export function bollingerBands(closes, period = 20, multiplier = 2) {
+  const sma = [];
+  const upper = [];
+  const lower = [];
+  const bandwidth = [];
+  const percentB = [];
+
+  for (let i = 0; i < closes.length; i++) {
+    if (i < period - 1) {
+      sma.push(null);
+      upper.push(null);
+      lower.push(null);
+      bandwidth.push(null);
+      percentB.push(null);
+      continue;
+    }
+    const slice = closes.slice(i - period + 1, i + 1);
+    const mean = slice.reduce((a, b) => a + b, 0) / period;
+    const variance = slice.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / period;
+    const stdDev = Math.sqrt(variance);
+
+    const up = mean + multiplier * stdDev;
+    const low = mean - multiplier * stdDev;
+    const bw = mean > 0 ? (up - low) / mean : 0;
+    const pb = up !== low ? (closes[i] - low) / (up - low) : 0.5;
+
+    sma.push(mean);
+    upper.push(up);
+    lower.push(low);
+    bandwidth.push(bw);
+    percentB.push(pb);
+  }
+
+  return { sma, upper, lower, bandwidth, percentB };
+}
+
+export function adx(candles, period = 14) {
+  const n = candles.length;
+  if (n < period * 2) {
+    return {
+      adx: Array(n).fill(null),
+      plusDi: Array(n).fill(null),
+      minusDi: Array(n).fill(null)
+    };
+  }
+
+  const tr = [0];
+  const plusDm = [0];
+  const minusDm = [0];
+
+  for (let i = 1; i < n; i++) {
+    const cur = candles[i];
+    const prev = candles[i - 1];
+
+    const hDiff = cur.high - prev.high;
+    const lDiff = prev.low - cur.low;
+
+    plusDm.push(hDiff > lDiff && hDiff > 0 ? hDiff : 0);
+    minusDm.push(lDiff > hDiff && lDiff > 0 ? lDiff : 0);
+
+    const trueRange = Math.max(
+      cur.high - cur.low,
+      Math.abs(cur.high - prev.close),
+      Math.abs(cur.low - prev.close)
+    );
+    tr.push(trueRange);
+  }
+
+  let smoothTr = tr.slice(1, period + 1).reduce((a, b) => a + b, 0);
+  let smoothPlusDm = plusDm.slice(1, period + 1).reduce((a, b) => a + b, 0);
+  let smoothMinusDm = minusDm.slice(1, period + 1).reduce((a, b) => a + b, 0);
+
+  const plusDiArr = Array(period).fill(null);
+  const minusDiArr = Array(period).fill(null);
+  const dxArr = Array(period).fill(null);
+
+  const calcDi = () => {
+    const pDi = smoothTr > 0 ? (smoothPlusDm / smoothTr) * 100 : 0;
+    const mDi = smoothTr > 0 ? (smoothMinusDm / smoothTr) * 100 : 0;
+    const sum = pDi + mDi;
+    const dx = sum > 0 ? (Math.abs(pDi - mDi) / sum) * 100 : 0;
+    return { pDi, mDi, dx };
+  };
+
+  const initial = calcDi();
+  plusDiArr.push(initial.pDi);
+  minusDiArr.push(initial.mDi);
+  dxArr.push(initial.dx);
+
+  for (let i = period + 1; i < n; i++) {
+    smoothTr = smoothTr - (smoothTr / period) + tr[i];
+    smoothPlusDm = smoothPlusDm - (smoothPlusDm / period) + plusDm[i];
+    smoothMinusDm = smoothMinusDm - (smoothMinusDm / period) + minusDm[i];
+
+    const { pDi, mDi, dx } = calcDi();
+    plusDiArr.push(pDi);
+    minusDiArr.push(mDi);
+    dxArr.push(dx);
+  }
+
+  const adxArr = Array(period * 2 - 1).fill(null);
+  const validDx = dxArr.slice(period);
+  if (validDx.length >= period) {
+    let adxSmooth = validDx.slice(0, period).reduce((a, b) => a + b, 0) / period;
+    adxArr.push(adxSmooth);
+
+    for (let i = period; i < validDx.length; i++) {
+      adxSmooth = (adxSmooth * (period - 1) + validDx[i]) / period;
+      adxArr.push(adxSmooth);
+    }
+  }
+
+  return {
+    adx: adxArr,
+    plusDi: plusDiArr,
+    minusDi: minusDiArr
+  };
+}
+
+export function dailyVwap(candles5m) {
+  let cumulativePv = 0;
+  let cumulativeVol = 0;
+  let currentDay = '';
+
+  return (candles5m || []).map(c => {
+    const day = new Date(c.openTime).toISOString().slice(0, 10);
+    if (day !== currentDay) {
+      currentDay = day;
+      cumulativePv = 0;
+      cumulativeVol = 0;
+    }
+    const typicalPrice = (Number(c.high) + Number(c.low) + Number(c.close)) / 3;
+    const vol = Number(c.quoteVolume || (Number(c.volume || 0) * Number(c.close)));
+    cumulativePv += typicalPrice * vol;
+    cumulativeVol += vol;
+    return cumulativeVol > 0 ? cumulativePv / cumulativeVol : Number(c.close);
+  });
 }

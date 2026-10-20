@@ -1,30 +1,17 @@
-# Crypto Futures Scanner V1
+# Crypto Futures Trading Bot — V2.0 Otimizado
 
-Scanner experimental de contratos perpétuos USDT da Binance Futures com alertas no Telegram.
+Bot de trading de futuros cripto com motor de alta assertividade.
 
-## O que analisa
-- Tendência em 15m, 1h e 4h com EMA 20/50/200
-- RSI 14
-- MACD
-- ATR para stop e alvos
-- Volume relativo
-- Open Interest
-- Funding rate
-- Score LONG/SHORT de 0 a 100
+## Principais Melhorias:
+1. Payoff Positivo (> 1.47:1) com alvos fora do ruído de 5m (1.10% target / 0.75% stop).
+2. Confirmed Entry com Reteste Limite (elimina compras a mercado no topo de vela esticada).
+3. Novos Indicadores: Bandas de Bollinger (%B e Bandwidth), ADX/DMI e VWAP Diária.
+4. Hard BTC Gate: Bloqueio imediato de compras se o Bitcoin estiver BEARISH no 15m ou 1h.
+5. Resample seguro de velas (3x 5m para 15m; 4x 1h para 4h).
 
-## Rodar localmente (Node 20+)
-1. Copie `.env.example` para `.env`
-2. Preencha `BOT_TOKEN`
-3. Rode:
-   `node --env-file=.env src/index.js`
-
-## Render
-- Runtime: Node
-- Build Command: `npm install`
-- Start Command: `npm start`
-- Variáveis: BOT_TOKEN, TELEGRAM_CHAT_ID (opcional), SCAN_INTERVAL_MINUTES, TOP_MARKETS, MIN_SCORE, MIN_QUOTE_VOLUME_USDT, COOLDOWN_MINUTES
-
-Depois abra o bot no Telegram e mande `/start`.
-
-## Observação
-V1 apenas envia sinais. Não envia ordens para a corretora. Isso é intencional para validar a estratégia antes de qualquer automação de execução.
+## Como Instalar no Render / VPS:
+1. Descompacte os arquivos na pasta do seu projeto.
+2. Execute npm install
+3. Configure o .env
+4. Execute npm start
+5. No Telegram envie: /paperreset CONFIRM
