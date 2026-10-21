@@ -124,7 +124,7 @@ const cfg = {
       0.70,
       Math.min(
         1.20,
-        Number(process.env.PULLBACK_MAX_DISTANCE_ATR_MIN || 0.90)
+        Number(process.env.PULLBACK_MAX_DISTANCE_ATR_MIN || 1.05)
       )
     ),
 
@@ -133,11 +133,11 @@ const cfg = {
       1.00,
       Math.min(
         1.60,
-        Number(process.env.PULLBACK_MAX_DISTANCE_ATR_MAX || 1.25)
+        Number(process.env.PULLBACK_MAX_DISTANCE_ATR_MAX || 1.45)
       )
     ),
 
-  minScore: Number(process.env.MIN_SCORE || 82),
+  minScore: Number(process.env.MIN_SCORE || 80),
   preCandidateMinScore: Number(process.env.PRE_CANDIDATE_MIN_SCORE || 60),
   minVolume: Number(process.env.MIN_QUOTE_VOLUME_USDT || 20_000_000),
   cooldownMin: Number(process.env.COOLDOWN_MINUTES || 90),
@@ -246,7 +246,7 @@ const cfg = {
       75,
       Math.min(
         100,
-        Number(process.env.QUALITY_BREAKOUT_MIN_SCORE || 88)
+        Number(process.env.QUALITY_BREAKOUT_MIN_SCORE || 84)
       )
     ),
 
@@ -309,7 +309,7 @@ const cfg = {
     ),
 
   aiEnabled: String(process.env.AI_ENABLED || 'true').toLowerCase() !== 'false',
-  aiMinConfidence: Number(process.env.AI_MIN_CONFIDENCE || 78),
+  aiMinConfidence: Number(process.env.AI_MIN_CONFIDENCE || 76),
   aiFailOpen: String(process.env.AI_FAIL_OPEN || 'false').toLowerCase() === 'true',
   // V1.6.8 HOLD AI: até 2 candidatos por ciclo.
   // O limite diário global continua protegendo a cota.
@@ -467,20 +467,20 @@ const cfg = {
       1,
       Math.min(
         3,
-        Number(process.env.CONFIRMED_ENTRY_MAX_WAIT_BARS || 1)
+        Number(process.env.CONFIRMED_ENTRY_MAX_WAIT_BARS || 2)
       )
     ),
 
   confirmedEntryMinVolumeRatio:
     Math.max(
       0.30,
-      Number(process.env.CONFIRMED_ENTRY_MIN_VOLUME_RATIO || 1.00)
+      Number(process.env.CONFIRMED_ENTRY_MIN_VOLUME_RATIO || 0.55)
     ),
 
   confirmedEntryVolumeResumeMultiplier:
     Math.max(
       0.80,
-      Number(process.env.CONFIRMED_ENTRY_VOLUME_RESUME_MULTIPLIER || 1.00)
+      Number(process.env.CONFIRMED_ENTRY_VOLUME_RESUME_MULTIPLIER || 0.60)
     ),
 
   confirmedEntryMaxChaseAtr:
@@ -524,7 +524,7 @@ const cfg = {
   confirmedEntryStrongOiContraryPct:
     Math.max(
       0.05,
-      Number(process.env.CONFIRMED_ENTRY_STRONG_OI_CONTRARY_PCT || 0.20)
+      Number(process.env.CONFIRMED_ENTRY_STRONG_OI_CONTRARY_PCT || 0.55)
     )
 };
 

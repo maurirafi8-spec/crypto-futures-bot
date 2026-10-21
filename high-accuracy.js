@@ -80,20 +80,20 @@ function oiPolicyForSide(
 export function highAccuracyAssessment(
   signal,
   {
-    pullbackMinScore = 82,
-    pullbackMinAi = 78,
-    breakoutMinScore = 88,
+    pullbackMinScore = 80,
+    pullbackMinAi = 76,
+    breakoutMinScore = 84,
     breakoutMinAi = 78,
-    pullbackMinVolume = 1.00,
+    pullbackMinVolume = 0.65,
     breakoutMinVolume = 1.00,
-    pullbackMinEdge = 8,
-    breakoutMinEdge = 10,
+    pullbackMinEdge = 6,
+    breakoutMinEdge = 8,
     minMomentumConfirmations = 2,
     requireConfirmedPullback = true,
-    breakoutExpansionOnly = true,
-    unaligned4hScorePenalty = 4,
-    mildOiScorePenalty = 4,
-    strongOiContraryPct = 0.20
+    breakoutExpansionOnly = false,
+    unaligned4hScorePenalty = 2,
+    mildOiScorePenalty = 2,
+    strongOiContraryPct = 0.55
   } = {}
 ) {
   if (!signal) {
@@ -188,8 +188,8 @@ export function highAccuracyAssessment(
   }
 
   if (isPullback) {
-    if (regime !== 'TREND') {
-      reasons.push(`Pullback HA exige TREND; atual ${regime || 'UNKNOWN'}`);
+    if (!['TREND', 'EXPANSION'].includes(regime)) {
+      reasons.push(`Pullback HA exige TREND/EXPANSION; atual ${regime || 'UNKNOWN'}`);
     }
     if (!strongTrigger) reasons.push('trigger forte não confirmado');
     if (requireConfirmedPullback && !confirmedPullback) {

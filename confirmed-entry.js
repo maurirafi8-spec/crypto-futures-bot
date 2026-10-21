@@ -237,11 +237,11 @@ export class ConfirmedEntryManager {
   constructor({
     enabled = true,
     pullbackOnly = true,
-    maxWaitBars = 1,
-    minVolumeRatio = 1.00,
-    volumeResumeMultiplier = 1.00,
-    maxChaseAtr = 0.90,
-    maxOppositeExcursionAtr = 0.55,
+    maxWaitBars = 2,
+    minVolumeRatio = 0.55,
+    volumeResumeMultiplier = 0.60,
+    maxChaseAtr = 1.05,
+    maxOppositeExcursionAtr = 0.70,
     requireTrend = true,
     require4h = false,
     requireOi = true,
@@ -252,7 +252,7 @@ export class ConfirmedEntryManager {
     allowNeutralOi = true,
     neutralOiMinVolumeRatio = 0,
     neutralOiRequireMacd = false,
-    strongOiContraryPct = 0.20
+    strongOiContraryPct = 0.55
   } = {}) {
     this.enabled = enabled;
     this.pullbackOnly = pullbackOnly;
@@ -831,15 +831,27 @@ export class ConfirmedEntryManager {
         continue;
       }
 
+      const triggerBodyHigh = Math.max(item.triggerOpen, item.triggerClose);
+      const triggerBodyLow = Math.min(item.triggerOpen, item.triggerClose);
+      const ema20Now = finiteNumber(snap?.t5?.ema20, close);
+
       const breakoutConfirmed =
         side === 'LONG'
-          ? close > item.triggerHigh
-          : close < item.triggerLow;
+          ? (
+              close > item.triggerHigh ||
+              (high >= item.triggerHigh && close >= item.triggerClose && close >= open) ||
+              (close > triggerBodyHigh && close > open && close > ema20Now)
+            )
+          : (
+              close < item.triggerLow ||
+              (low <= item.triggerLow && close <= item.triggerClose && close <= open) ||
+              (close < triggerBodyLow && close < open && close < ema20Now)
+            );
 
       const directionalClose =
         side === 'LONG'
-          ? close > open
-          : close < open;
+          ? close >= open
+          : close <= open;
 
       const volumeRatio = finiteNumber(snap?.t5?.volumeRatio, 0);
       const quoteVolume = finiteNumber(snap?.t5?.quoteVolume, 0);
@@ -847,10 +859,10 @@ export class ConfirmedEntryManager {
       const baselineVolume = item.pullbackAvgQuoteVolume;
 
       const volumeVsPullbackOk =
-        setup === 'PULLBACK' &&
-        baselineVolume > 0 && quoteVolume > 0
-          ? quoteVolume >= baselineVolume * this.volumeResumeMultiplier
-          : true;
+        volumeRatio >= 0.70 ||
+        (setup === 'PULLBACK' && baselineVolume > 0 && quoteVolume > 0
+          ? quoteVolume >= baselineVolume * Math.min(this.volumeResumeMultiplier, 0.65)
+          : true);
 
       const volumeFloorOk =
         volumeRatio >= this.minVolumeRatio;
@@ -946,6 +958,10 @@ export class ConfirmedEntryManager {
         pullback: {
           ...item.signal.pullback,
           ...snap.pullback,
+          triggerQuality: Math.max(
+            finiteNumber(item.signal?.pullback?.triggerQuality, 0),
+            finiteNumber(snap?.pullback?.triggerQuality, 0)
+          ),
           confirmed: true,
           strongTrigger: true,
           confirmedEntry: true,

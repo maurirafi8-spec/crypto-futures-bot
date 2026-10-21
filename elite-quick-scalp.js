@@ -81,25 +81,25 @@ export function eliteQuickScalpAssessment(
   signal,
   {
     strategyProfile = 'RUNNER',
-    pullbackMinScore = 82,
-    pullbackMinAi = 78,
-    pullbackMaxChaseAtr = 0.65,
-    pullbackMinConfirmVolume = 1.00,
-    pullbackMinTriggerQuality = 4,
+    pullbackMinScore = 80,
+    pullbackMinAi = 76,
+    pullbackMaxChaseAtr = 0.80,
+    pullbackMinConfirmVolume = 0.65,
+    pullbackMinTriggerQuality = 3,
     minMomentumConfirmations = 2,
-    breakoutMinScore = 88,
+    breakoutMinScore = 84,
     breakoutMinAi = 78,
-    breakoutMinVolume = 1.00,
+    breakoutMinVolume = 1.05,
     breakoutMinEdge = 8,
-    breakoutMaxBodyAtr = 1.20,
-    breakoutMaxDistanceAtr = 1.35,
+    breakoutMaxBodyAtr = 1.35,
+    breakoutMaxDistanceAtr = 1.65,
     trendBreakoutEnabled = true,
-    trendBreakoutMinVolume = 1.80,
-    trendBreakoutMaxBodyAtr = 1.00,
-    trendBreakoutMaxDistanceAtr = 1.10,
-    unaligned4hScorePenalty = 4,
-    mildOiScorePenalty = 4,
-    strongOiContraryPct = 0.20
+    trendBreakoutMinVolume = 1.35,
+    trendBreakoutMaxBodyAtr = 1.25,
+    trendBreakoutMaxDistanceAtr = 1.45,
+    unaligned4hScorePenalty = 2,
+    mildOiScorePenalty = 2,
+    strongOiContraryPct = 0.55
   } = {}
 ) {
   if (!signal) {
@@ -275,9 +275,9 @@ export function eliteQuickScalpAssessment(
       );
     }
 
-    if (originRegime !== 'TREND') {
+    if (!['TREND', 'EXPANSION'].includes(originRegime)) {
       reasons.push(
-        `origem ${originRegime || 'UNKNOWN'}; Pullback Quick exige TREND`
+        `origem ${originRegime || 'UNKNOWN'}; Pullback Quick exige TREND/EXPANSION`
       );
     }
 

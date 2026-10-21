@@ -64,48 +64,48 @@ export function paperConfig() {
     // FAST ENTRY: 4H e OI levemente contrário reduzem score,
     // mas não cancelam sozinhos. OI fortemente contrário continua bloqueando.
     fast4hScorePenalty:
-      numEnv('PAPER_FAST_4H_SCORE_PENALTY', 4, 0, 20),
+      numEnv('PAPER_FAST_4H_SCORE_PENALTY', 2, 0, 20),
 
     fastMildOiScorePenalty:
-      numEnv('PAPER_FAST_MILD_OI_SCORE_PENALTY', 4, 0, 20),
+      numEnv('PAPER_FAST_MILD_OI_SCORE_PENALTY', 2, 0, 20),
 
     fastStrongOiContraryPct:
-      numEnv('PAPER_FAST_STRONG_OI_CONTRARY_PCT', 0.20, 0.05, 5),
+      numEnv('PAPER_FAST_STRONG_OI_CONTRARY_PCT', 0.55, 0.05, 5),
 
     // O FAST ENTRY usa um segundo conjunto de limites para evitar que
     // ENVs antigas mais rígidas da V1.9.x mantenham o bot parado.
     activePullbackMinScore:
-      numEnv('PAPER_ACTIVE_PULLBACK_MIN_SCORE', 82, 68, 100),
+      numEnv('PAPER_ACTIVE_PULLBACK_MIN_SCORE', 80, 68, 100),
 
     activePullbackMinAi:
-      numEnv('PAPER_ACTIVE_PULLBACK_MIN_AI', 78, 0, 100),
+      numEnv('PAPER_ACTIVE_PULLBACK_MIN_AI', 76, 0, 100),
 
     activePullbackMaxChaseAtr:
-      numEnv('PAPER_ACTIVE_PULLBACK_MAX_CHASE_ATR', 0.65, 0.1, 2),
+      numEnv('PAPER_ACTIVE_PULLBACK_MAX_CHASE_ATR', 0.85, 0.1, 2),
 
     activePullbackMinConfirmVolume:
-      numEnv('PAPER_ACTIVE_PULLBACK_MIN_CONFIRM_VOLUME', 1.00, 0.2, 5),
+      numEnv('PAPER_ACTIVE_PULLBACK_MIN_CONFIRM_VOLUME', 0.60, 0.2, 5),
 
     activePullbackMinTriggerQuality:
-      intEnv('PAPER_ACTIVE_PULLBACK_MIN_TRIGGER_QUALITY', 4, 1, 5),
+      intEnv('PAPER_ACTIVE_PULLBACK_MIN_TRIGGER_QUALITY', 3, 1, 5),
 
     activeBreakoutMinScore:
-      numEnv('PAPER_ACTIVE_BREAKOUT_MIN_SCORE', 88, 68, 100),
+      numEnv('PAPER_ACTIVE_BREAKOUT_MIN_SCORE', 84, 68, 100),
 
     activeBreakoutMinAi:
       numEnv('PAPER_ACTIVE_BREAKOUT_MIN_AI', 78, 0, 100),
 
     activeBreakoutMinVolume:
-      numEnv('PAPER_ACTIVE_BREAKOUT_MIN_VOLUME', 1.00, 0.2, 5),
+      numEnv('PAPER_ACTIVE_BREAKOUT_MIN_VOLUME', 1.05, 0.2, 5),
 
     activeBreakoutMinEdge:
       numEnv('PAPER_ACTIVE_BREAKOUT_MIN_EDGE', 8, 0, 50),
 
     activeBreakoutMaxBodyAtr:
-      numEnv('PAPER_ACTIVE_BREAKOUT_MAX_BODY_ATR', 1.20, 0.2, 5),
+      numEnv('PAPER_ACTIVE_BREAKOUT_MAX_BODY_ATR', 1.35, 0.2, 5),
 
     activeBreakoutMaxDistanceAtr:
-      numEnv('PAPER_ACTIVE_BREAKOUT_MAX_DISTANCE_ATR', 1.35, 0.2, 5),
+      numEnv('PAPER_ACTIVE_BREAKOUT_MAX_DISTANCE_ATR', 1.65, 0.2, 5),
 
     // TREND BOOSTED: permite breakout em TREND apenas quando a força é
     // muito superior ao normal e o preço ainda não está esticado.
@@ -166,19 +166,19 @@ export function paperConfig() {
 
     // PULLBACK ELITE QUICK
     quickPullbackMinScore:
-      numEnv('PAPER_QUICK_PULLBACK_MIN_SCORE', 88, 68, 100),
+      numEnv('PAPER_QUICK_PULLBACK_MIN_SCORE', 80, 68, 100),
 
     quickPullbackMinAi:
-      numEnv('PAPER_QUICK_PULLBACK_MIN_AI', 82, 0, 100),
+      numEnv('PAPER_QUICK_PULLBACK_MIN_AI', 76, 0, 100),
 
     quickPullbackMaxChaseAtr:
-      numEnv('PAPER_QUICK_PULLBACK_MAX_CHASE_ATR', 0.55, 0.1, 2),
+      numEnv('PAPER_QUICK_PULLBACK_MAX_CHASE_ATR', 0.85, 0.1, 2),
 
     quickPullbackMinConfirmVolume:
-      numEnv('PAPER_QUICK_PULLBACK_MIN_CONFIRM_VOLUME', 0.80, 0.2, 5),
+      numEnv('PAPER_QUICK_PULLBACK_MIN_CONFIRM_VOLUME', 0.60, 0.2, 5),
 
     quickPullbackMinTriggerQuality:
-      intEnv('PAPER_QUICK_PULLBACK_MIN_TRIGGER_QUALITY', 4, 1, 5),
+      intEnv('PAPER_QUICK_PULLBACK_MIN_TRIGGER_QUALITY', 3, 1, 5),
 
     // V1.9.5: 2 de 3 confirmações de momentum já bastam.
     // Ex.: Volume + OI, Volume + MACD, ou OI + MACD.
@@ -187,22 +187,22 @@ export function paperConfig() {
 
     // BREAKOUT ELITE QUICK
     quickBreakoutMinScore:
-      numEnv('PAPER_QUICK_BREAKOUT_MIN_SCORE', 90, 68, 100),
+      numEnv('PAPER_QUICK_BREAKOUT_MIN_SCORE', 84, 68, 100),
 
     quickBreakoutMinAi:
-      numEnv('PAPER_QUICK_BREAKOUT_MIN_AI', 80, 0, 100),
+      numEnv('PAPER_QUICK_BREAKOUT_MIN_AI', 78, 0, 100),
 
     quickBreakoutMinVolume:
-      numEnv('PAPER_QUICK_BREAKOUT_MIN_VOLUME', 1.25, 0.2, 5),
+      numEnv('PAPER_QUICK_BREAKOUT_MIN_VOLUME', 1.05, 0.2, 5),
 
     quickBreakoutMinEdge:
       numEnv('PAPER_QUICK_BREAKOUT_MIN_EDGE', 10, 0, 50),
 
     quickBreakoutMaxBodyAtr:
-      numEnv('PAPER_QUICK_BREAKOUT_MAX_BODY_ATR', 1.20, 0.2, 5),
+      numEnv('PAPER_QUICK_BREAKOUT_MAX_BODY_ATR', 1.35, 0.2, 5),
 
     quickBreakoutMaxDistanceAtr:
-      numEnv('PAPER_QUICK_BREAKOUT_MAX_DISTANCE_ATR', 1.35, 0.2, 5),
+      numEnv('PAPER_QUICK_BREAKOUT_MAX_DISTANCE_ATR', 1.65, 0.2, 5),
 
     // Guard próprio do Quick. Não usa o Net R/R do ladder Runner/HA.
     quickMinRewardRisk:
@@ -231,16 +231,16 @@ export function paperConfig() {
       numEnv('PAPER_MIN_NOTIONAL_USDC', 10, 1, 10000),
 
     minAiConfidence:
-      numEnv('PAPER_MIN_AI_CONFIDENCE', 78, 0, 100),
+      numEnv('PAPER_MIN_AI_CONFIDENCE', 76, 0, 100),
 
     minScore:
-      numEnv('PAPER_MIN_SCORE', 82, 0, 100),
+      numEnv('PAPER_MIN_SCORE', 80, 0, 100),
 
     breakoutMinAiConfidence:
       numEnv('PAPER_BREAKOUT_MIN_AI_CONFIDENCE', 78, 0, 100),
 
     breakoutMinScore:
-      numEnv('PAPER_BREAKOUT_MIN_SCORE', 88, 0, 100),
+      numEnv('PAPER_BREAKOUT_MIN_SCORE', 84, 0, 100),
 
     // V1.9.1 SMART ARMED CONFIRM
     strategyProfile:
@@ -255,19 +255,19 @@ export function paperConfig() {
       numEnv('PAPER_HIGH_ACCURACY_RISK_PCT', 0.35, 0.1, 2),
 
     highAccuracyPullbackMinScore:
-      numEnv('PAPER_HIGH_ACCURACY_PULLBACK_MIN_SCORE', 82, 68, 100),
+      numEnv('PAPER_HIGH_ACCURACY_PULLBACK_MIN_SCORE', 80, 68, 100),
 
     highAccuracyPullbackMinAi:
-      numEnv('PAPER_HIGH_ACCURACY_PULLBACK_MIN_AI', 78, 0, 100),
+      numEnv('PAPER_HIGH_ACCURACY_PULLBACK_MIN_AI', 76, 0, 100),
 
     highAccuracyBreakoutMinScore:
-      numEnv('PAPER_HIGH_ACCURACY_BREAKOUT_MIN_SCORE', 88, 68, 100),
+      numEnv('PAPER_HIGH_ACCURACY_BREAKOUT_MIN_SCORE', 84, 68, 100),
 
     highAccuracyBreakoutMinAi:
       numEnv('PAPER_HIGH_ACCURACY_BREAKOUT_MIN_AI', 78, 0, 100),
 
     highAccuracyPullbackMinVolume:
-      numEnv('PAPER_HIGH_ACCURACY_PULLBACK_MIN_VOLUME', 1.00, 0.2, 5),
+      numEnv('PAPER_HIGH_ACCURACY_PULLBACK_MIN_VOLUME', 0.65, 0.2, 5),
 
     highAccuracyBreakoutMinVolume:
       numEnv('PAPER_HIGH_ACCURACY_BREAKOUT_MIN_VOLUME', 1.00, 0.2, 5),

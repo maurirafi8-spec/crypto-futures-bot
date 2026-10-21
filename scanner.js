@@ -1016,7 +1016,7 @@ function contextualOiStatus({
 function entryOiPolicy(
   side,
   oiContext = null,
-  strongContraryPct = 0.20
+  strongContraryPct = 0.55
 ) {
   const dir = String(side || '').toUpperCase();
   const regime = String(oiContext?.regime || 'NEUTRAL').toUpperCase();
@@ -1050,7 +1050,7 @@ function entryOiPolicy(
     return {
       level: strong ? 'STRONG_CONTRARY' : 'MILD_CONTRARY',
       accepted: !strong,
-      penalty: strong ? 0 : 4,
+      penalty: strong ? 0 : 2,
       regime,
       oiAbs
     };
@@ -1061,8 +1061,8 @@ function entryOiPolicy(
 
 function adaptivePullbackDistanceAtr(
   t5,
-  minAtr = 0.90,
-  maxAtr = 1.25
+  minAtr = 1.05,
+  maxAtr = 1.45
 ) {
   const price =
     finiteNumber(
@@ -1113,8 +1113,8 @@ function adaptivePullbackDistanceAtr(
 
 export function adaptivePullbackDistancePreview(
   t5,
-  minAtr = 0.90,
-  maxAtr = 1.25
+  minAtr = 1.05,
+  maxAtr = 1.45
 ) {
   return adaptivePullbackDistanceAtr(
     t5,
@@ -1301,7 +1301,7 @@ function marketRegimeStatus({
   return {
     regime,
     pullbackAllowed:
-      regime === 'TREND',
+      regime === 'TREND' || regime === 'EXPANSION',
     breakoutAllowed:
       regime === 'EXPANSION' ||
       regime === 'TREND',
@@ -1533,8 +1533,8 @@ function pullbackTriggerStatus({
   lookback = 7,
   touchAtr = 0.35,
   minBodyAtr = 0.12,
-  maxDistanceAtrMin = 0.90,
-  maxDistanceAtrMax = 1.25
+  maxDistanceAtrMin = 1.05,
+  maxDistanceAtrMax = 1.45
 }) {
   const atrValue =
     Math.max(
@@ -2463,8 +2463,8 @@ export function balancedEntryPreview({
   contextualPriceMinPct = 0.03,
   momentumMinConfirmations = 2,
   pullbackMinVolumeRatio = 0.55,
-  pullbackMaxDistanceAtrMin = 0.90,
-  pullbackMaxDistanceAtrMax = 1.25,
+  pullbackMaxDistanceAtrMin = 1.05,
+  pullbackMaxDistanceAtrMax = 1.45,
   breakoutMinScore = 82,
   breakoutMinVolumeRatio = 1.25,
   breakoutMinDirectionEdge = 10,
@@ -3275,8 +3275,8 @@ export async function scanMarket({
   requireContextualOi = true,
   pullbackLookback = 7,
   pullbackTouchAtr = 0.35,
-  pullbackMaxDistanceAtrMin = 0.90,
-  pullbackMaxDistanceAtrMax = 1.25,
+  pullbackMaxDistanceAtrMin = 1.05,
+  pullbackMaxDistanceAtrMax = 1.45,
   triggerMinBodyAtr = 0.12,
   contextualOiMinPct = 0.05,
   contextualPriceMinPct = 0.03,
