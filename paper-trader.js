@@ -64,48 +64,48 @@ export function paperConfig() {
     // FAST ENTRY: 4H e OI levemente contrário reduzem score,
     // mas não cancelam sozinhos. OI fortemente contrário continua bloqueando.
     fast4hScorePenalty:
-      numEnv('PAPER_FAST_4H_SCORE_PENALTY', 2, 0, 20),
+      Math.min(2, numEnv('PAPER_FAST_4H_SCORE_PENALTY', 2, 0, 20)),
 
     fastMildOiScorePenalty:
-      numEnv('PAPER_FAST_MILD_OI_SCORE_PENALTY', 2, 0, 20),
+      Math.min(2, numEnv('PAPER_FAST_MILD_OI_SCORE_PENALTY', 2, 0, 20)),
 
     fastStrongOiContraryPct:
-      numEnv('PAPER_FAST_STRONG_OI_CONTRARY_PCT', 0.55, 0.05, 5),
+      Math.max(0.55, numEnv('PAPER_FAST_STRONG_OI_CONTRARY_PCT', 0.55, 0.05, 5)),
 
-    // O FAST ENTRY usa um segundo conjunto de limites para evitar que
-    // ENVs antigas mais rígidas da V1.9.x mantenham o bot parado.
+    // O FAST ENTRY usa limites calibrados e clampa valores legados do Render
+    // para evitar falsos bloqueios como CRV (1.17x < 1.40x) e ARB (1.15x < 1.15x).
     activePullbackMinScore:
-      numEnv('PAPER_ACTIVE_PULLBACK_MIN_SCORE', 80, 68, 100),
+      Math.min(80, numEnv('PAPER_ACTIVE_PULLBACK_MIN_SCORE', 80, 68, 100)),
 
     activePullbackMinAi:
-      numEnv('PAPER_ACTIVE_PULLBACK_MIN_AI', 76, 0, 100),
+      Math.min(76, numEnv('PAPER_ACTIVE_PULLBACK_MIN_AI', 76, 0, 100)),
 
     activePullbackMaxChaseAtr:
-      numEnv('PAPER_ACTIVE_PULLBACK_MAX_CHASE_ATR', 0.85, 0.1, 2),
+      Math.max(1.25, numEnv('PAPER_ACTIVE_PULLBACK_MAX_CHASE_ATR', 1.25, 0.1, 2.5)),
 
     activePullbackMinConfirmVolume:
-      numEnv('PAPER_ACTIVE_PULLBACK_MIN_CONFIRM_VOLUME', 0.60, 0.2, 5),
+      Math.min(0.55, numEnv('PAPER_ACTIVE_PULLBACK_MIN_CONFIRM_VOLUME', 0.55, 0.2, 5)),
 
     activePullbackMinTriggerQuality:
-      intEnv('PAPER_ACTIVE_PULLBACK_MIN_TRIGGER_QUALITY', 3, 1, 5),
+      Math.min(3, intEnv('PAPER_ACTIVE_PULLBACK_MIN_TRIGGER_QUALITY', 3, 1, 5)),
 
     activeBreakoutMinScore:
-      numEnv('PAPER_ACTIVE_BREAKOUT_MIN_SCORE', 84, 68, 100),
+      Math.min(84, numEnv('PAPER_ACTIVE_BREAKOUT_MIN_SCORE', 84, 68, 100)),
 
     activeBreakoutMinAi:
-      numEnv('PAPER_ACTIVE_BREAKOUT_MIN_AI', 78, 0, 100),
+      Math.min(78, numEnv('PAPER_ACTIVE_BREAKOUT_MIN_AI', 78, 0, 100)),
 
     activeBreakoutMinVolume:
-      numEnv('PAPER_ACTIVE_BREAKOUT_MIN_VOLUME', 1.05, 0.2, 5),
+      Math.min(1.00, numEnv('PAPER_ACTIVE_BREAKOUT_MIN_VOLUME', 1.00, 0.2, 5)),
 
     activeBreakoutMinEdge:
-      numEnv('PAPER_ACTIVE_BREAKOUT_MIN_EDGE', 8, 0, 50),
+      Math.min(8, numEnv('PAPER_ACTIVE_BREAKOUT_MIN_EDGE', 8, 0, 50)),
 
     activeBreakoutMaxBodyAtr:
-      numEnv('PAPER_ACTIVE_BREAKOUT_MAX_BODY_ATR', 1.35, 0.2, 5),
+      Math.max(1.40, numEnv('PAPER_ACTIVE_BREAKOUT_MAX_BODY_ATR', 1.40, 0.2, 5)),
 
     activeBreakoutMaxDistanceAtr:
-      numEnv('PAPER_ACTIVE_BREAKOUT_MAX_DISTANCE_ATR', 1.65, 0.2, 5),
+      Math.max(1.70, numEnv('PAPER_ACTIVE_BREAKOUT_MAX_DISTANCE_ATR', 1.70, 0.2, 5)),
 
     // TREND BOOSTED: permite breakout em TREND apenas quando a força é
     // muito superior ao normal e o preço ainda não está esticado.
@@ -114,13 +114,13 @@ export function paperConfig() {
         .toLowerCase() !== 'false',
 
     activeTrendBreakoutMinVolume:
-      numEnv('PAPER_ACTIVE_TREND_BREAKOUT_MIN_VOLUME', 1.80, 0.5, 10),
+      Math.min(1.25, numEnv('PAPER_ACTIVE_TREND_BREAKOUT_MIN_VOLUME', 1.25, 0.5, 10)),
 
     activeTrendBreakoutMaxBodyAtr:
-      numEnv('PAPER_ACTIVE_TREND_BREAKOUT_MAX_BODY_ATR', 1.00, 0.2, 3),
+      Math.max(1.35, numEnv('PAPER_ACTIVE_TREND_BREAKOUT_MAX_BODY_ATR', 1.35, 0.2, 3)),
 
     activeTrendBreakoutMaxDistanceAtr:
-      numEnv('PAPER_ACTIVE_TREND_BREAKOUT_MAX_DISTANCE_ATR', 1.10, 0.2, 3),
+      Math.max(1.55, numEnv('PAPER_ACTIVE_TREND_BREAKOUT_MAX_DISTANCE_ATR', 1.55, 0.2, 3)),
 
     // V1.11.1 FAST ENTRY
     quickScalpEnabled:
@@ -149,36 +149,34 @@ export function paperConfig() {
       intEnv('PAPER_QUICK_SCALP_LEVERAGE', 5, 1, 50),
 
     // Alvo LÍQUIDO sobre o notional, já considerando fee + slippage.
-    // 0.20% de $200 = +$0.40 líquido.
     quickScalpTargetNetPct:
-      numEnv('PAPER_QUICK_SCALP_TARGET_NET_PCT', 1.10, 0.01, 5),
+      numEnv('PAPER_QUICK_SCALP_TARGET_NET_PCT', 0.85, 0.01, 5),
 
-    // 0.35% de $200 = -$0.70 líquido.
     quickScalpStopNetPct:
-      numEnv('PAPER_QUICK_SCALP_STOP_NET_PCT', 0.75, 0.05, 10),
+      numEnv('PAPER_QUICK_SCALP_STOP_NET_PCT', 0.65, 0.05, 10),
 
     quickScalpMaxMinutes:
-      numEnv('PAPER_QUICK_SCALP_MAX_MINUTES', 35, 5, 240),
+      Math.max(90, numEnv('PAPER_QUICK_SCALP_MAX_MINUTES', 90, 5, 240)),
 
-    // Apenas 1 scalp 10x por vez por padrão.
+    // Permite até 2 posições simultâneas por padrão.
     quickScalpMaxOpen:
-      intEnv('PAPER_QUICK_SCALP_MAX_OPEN', 1, 1, 10),
+      Math.max(2, intEnv('PAPER_QUICK_SCALP_MAX_OPEN', 2, 1, 10)),
 
     // PULLBACK ELITE QUICK
     quickPullbackMinScore:
-      numEnv('PAPER_QUICK_PULLBACK_MIN_SCORE', 80, 68, 100),
+      Math.min(80, numEnv('PAPER_QUICK_PULLBACK_MIN_SCORE', 80, 68, 100)),
 
     quickPullbackMinAi:
-      numEnv('PAPER_QUICK_PULLBACK_MIN_AI', 76, 0, 100),
+      Math.min(76, numEnv('PAPER_QUICK_PULLBACK_MIN_AI', 76, 0, 100)),
 
     quickPullbackMaxChaseAtr:
-      numEnv('PAPER_QUICK_PULLBACK_MAX_CHASE_ATR', 0.85, 0.1, 2),
+      Math.max(1.25, numEnv('PAPER_QUICK_PULLBACK_MAX_CHASE_ATR', 1.25, 0.1, 2.5)),
 
     quickPullbackMinConfirmVolume:
-      numEnv('PAPER_QUICK_PULLBACK_MIN_CONFIRM_VOLUME', 0.60, 0.2, 5),
+      Math.min(0.55, numEnv('PAPER_QUICK_PULLBACK_MIN_CONFIRM_VOLUME', 0.55, 0.2, 5)),
 
     quickPullbackMinTriggerQuality:
-      intEnv('PAPER_QUICK_PULLBACK_MIN_TRIGGER_QUALITY', 3, 1, 5),
+      Math.min(3, intEnv('PAPER_QUICK_PULLBACK_MIN_TRIGGER_QUALITY', 3, 1, 5)),
 
     // V1.9.5: 2 de 3 confirmações de momentum já bastam.
     // Ex.: Volume + OI, Volume + MACD, ou OI + MACD.
@@ -187,22 +185,22 @@ export function paperConfig() {
 
     // BREAKOUT ELITE QUICK
     quickBreakoutMinScore:
-      numEnv('PAPER_QUICK_BREAKOUT_MIN_SCORE', 84, 68, 100),
+      Math.min(84, numEnv('PAPER_QUICK_BREAKOUT_MIN_SCORE', 84, 68, 100)),
 
     quickBreakoutMinAi:
-      numEnv('PAPER_QUICK_BREAKOUT_MIN_AI', 78, 0, 100),
+      Math.min(78, numEnv('PAPER_QUICK_BREAKOUT_MIN_AI', 78, 0, 100)),
 
     quickBreakoutMinVolume:
-      numEnv('PAPER_QUICK_BREAKOUT_MIN_VOLUME', 1.05, 0.2, 5),
+      Math.min(1.00, numEnv('PAPER_QUICK_BREAKOUT_MIN_VOLUME', 1.00, 0.2, 5)),
 
     quickBreakoutMinEdge:
-      numEnv('PAPER_QUICK_BREAKOUT_MIN_EDGE', 10, 0, 50),
+      Math.min(8, numEnv('PAPER_QUICK_BREAKOUT_MIN_EDGE', 8, 0, 50)),
 
     quickBreakoutMaxBodyAtr:
-      numEnv('PAPER_QUICK_BREAKOUT_MAX_BODY_ATR', 1.35, 0.2, 5),
+      Math.max(1.40, numEnv('PAPER_QUICK_BREAKOUT_MAX_BODY_ATR', 1.40, 0.2, 5)),
 
     quickBreakoutMaxDistanceAtr:
-      numEnv('PAPER_QUICK_BREAKOUT_MAX_DISTANCE_ATR', 1.65, 0.2, 5),
+      Math.max(1.70, numEnv('PAPER_QUICK_BREAKOUT_MAX_DISTANCE_ATR', 1.70, 0.2, 5)),
 
     // Guard próprio do Quick. Não usa o Net R/R do ladder Runner/HA.
     quickMinRewardRisk:
@@ -231,16 +229,16 @@ export function paperConfig() {
       numEnv('PAPER_MIN_NOTIONAL_USDC', 10, 1, 10000),
 
     minAiConfidence:
-      numEnv('PAPER_MIN_AI_CONFIDENCE', 76, 0, 100),
+      Math.min(76, numEnv('PAPER_MIN_AI_CONFIDENCE', 76, 0, 100)),
 
     minScore:
-      numEnv('PAPER_MIN_SCORE', 80, 0, 100),
+      Math.min(80, numEnv('PAPER_MIN_SCORE', 80, 0, 100)),
 
     breakoutMinAiConfidence:
-      numEnv('PAPER_BREAKOUT_MIN_AI_CONFIDENCE', 78, 0, 100),
+      Math.min(78, numEnv('PAPER_BREAKOUT_MIN_AI_CONFIDENCE', 78, 0, 100)),
 
     breakoutMinScore:
-      numEnv('PAPER_BREAKOUT_MIN_SCORE', 84, 0, 100),
+      Math.min(84, numEnv('PAPER_BREAKOUT_MIN_SCORE', 84, 0, 100)),
 
     // V1.9.1 SMART ARMED CONFIRM
     strategyProfile:
@@ -255,28 +253,28 @@ export function paperConfig() {
       numEnv('PAPER_HIGH_ACCURACY_RISK_PCT', 0.35, 0.1, 2),
 
     highAccuracyPullbackMinScore:
-      numEnv('PAPER_HIGH_ACCURACY_PULLBACK_MIN_SCORE', 80, 68, 100),
+      Math.min(80, numEnv('PAPER_HIGH_ACCURACY_PULLBACK_MIN_SCORE', 80, 68, 100)),
 
     highAccuracyPullbackMinAi:
-      numEnv('PAPER_HIGH_ACCURACY_PULLBACK_MIN_AI', 76, 0, 100),
+      Math.min(76, numEnv('PAPER_HIGH_ACCURACY_PULLBACK_MIN_AI', 76, 0, 100)),
 
     highAccuracyBreakoutMinScore:
-      numEnv('PAPER_HIGH_ACCURACY_BREAKOUT_MIN_SCORE', 84, 68, 100),
+      Math.min(84, numEnv('PAPER_HIGH_ACCURACY_BREAKOUT_MIN_SCORE', 84, 68, 100)),
 
     highAccuracyBreakoutMinAi:
-      numEnv('PAPER_HIGH_ACCURACY_BREAKOUT_MIN_AI', 78, 0, 100),
+      Math.min(78, numEnv('PAPER_HIGH_ACCURACY_BREAKOUT_MIN_AI', 78, 0, 100)),
 
     highAccuracyPullbackMinVolume:
-      numEnv('PAPER_HIGH_ACCURACY_PULLBACK_MIN_VOLUME', 0.65, 0.2, 5),
+      Math.min(0.55, numEnv('PAPER_HIGH_ACCURACY_PULLBACK_MIN_VOLUME', 0.55, 0.2, 5)),
 
     highAccuracyBreakoutMinVolume:
-      numEnv('PAPER_HIGH_ACCURACY_BREAKOUT_MIN_VOLUME', 1.00, 0.2, 5),
+      Math.min(1.00, numEnv('PAPER_HIGH_ACCURACY_BREAKOUT_MIN_VOLUME', 1.00, 0.2, 5)),
 
     highAccuracyPullbackMinEdge:
-      numEnv('PAPER_HIGH_ACCURACY_PULLBACK_MIN_EDGE', 8, 0, 50),
+      numEnv('PAPER_HIGH_ACCURACY_PULLBACK_MIN_EDGE', 6, 0, 50),
 
     highAccuracyBreakoutMinEdge:
-      numEnv('PAPER_HIGH_ACCURACY_BREAKOUT_MIN_EDGE', 10, 0, 50),
+      numEnv('PAPER_HIGH_ACCURACY_BREAKOUT_MIN_EDGE', 8, 0, 50),
 
     // Mantém o perfil HIGH_ACCURACY alinhado ao scanner/Quick:
     // 2 de 3 confirmações já qualificam momentum.
@@ -284,13 +282,13 @@ export function paperConfig() {
       intEnv('PAPER_HIGH_ACCURACY_MIN_MOMENTUM_CONFIRMATIONS', 2, 1, 3),
 
     highAccuracyTp1R:
-      numEnv('PAPER_HIGH_ACCURACY_TP1_R', 0.75, 0.2, 3),
+      Math.min(0.55, numEnv('PAPER_HIGH_ACCURACY_TP1_R', 0.55, 0.2, 3)),
 
     highAccuracyTp2R:
-      numEnv('PAPER_HIGH_ACCURACY_TP2_R', 1.10, 0.3, 4),
+      Math.min(0.95, numEnv('PAPER_HIGH_ACCURACY_TP2_R', 0.95, 0.3, 4)),
 
     highAccuracyTp3R:
-      numEnv('PAPER_HIGH_ACCURACY_TP3_R', 1.60, 0.5, 6),
+      Math.min(1.45, numEnv('PAPER_HIGH_ACCURACY_TP3_R', 1.45, 0.5, 6)),
 
     highAccuracyTp1ClosePct:
       numEnv('PAPER_HIGH_ACCURACY_TP1_CLOSE_PCT', 50, 5, 90),
@@ -299,7 +297,7 @@ export function paperConfig() {
       numEnv('PAPER_HIGH_ACCURACY_TP2_CLOSE_PCT', 35, 5, 90),
 
     highAccuracyMinNetRR:
-      numEnv('PAPER_HIGH_ACCURACY_MIN_NET_RR', 0.70, 0.2, 3),
+      numEnv('PAPER_HIGH_ACCURACY_MIN_NET_RR', 0.65, 0.2, 3),
 
     feeRate:
       numEnv('PAPER_FEE_RATE', 0.00045, 0, 0.01),
@@ -369,10 +367,10 @@ export function paperConfig() {
       numEnv('PAPER_LOSS_BRAKE_MINUTES', 30, 10, 240),
 
     lossBrakeScoreBoost:
-      numEnv('PAPER_LOSS_BRAKE_SCORE_BOOST', 4, 0, 30),
+      Math.min(2, numEnv('PAPER_LOSS_BRAKE_SCORE_BOOST', 2, 0, 30)),
 
     lossBrakeAiBoost:
-      numEnv('PAPER_LOSS_BRAKE_AI_BOOST', 3, 0, 30),
+      Math.min(2, numEnv('PAPER_LOSS_BRAKE_AI_BOOST', 2, 0, 30)),
 
     // V1.7.6 PERFORMANCE GUARD
     performanceGuardEnabled:
@@ -418,10 +416,10 @@ export function paperConfig() {
       numEnv('PAPER_PERFORMANCE_QUALITY_MIN_PAYOFF', 0.70, 0, 5),
 
     performanceQualityScoreBoost:
-      numEnv('PAPER_PERFORMANCE_QUALITY_SCORE_BOOST', 5, 0, 30),
+      Math.min(2, numEnv('PAPER_PERFORMANCE_QUALITY_SCORE_BOOST', 2, 0, 30)),
 
     performanceQualityAiBoost:
-      numEnv('PAPER_PERFORMANCE_QUALITY_AI_BOOST', 4, 0, 30),
+      Math.min(2, numEnv('PAPER_PERFORMANCE_QUALITY_AI_BOOST', 2, 0, 30)),
 
     // V1.7.9 ADAPTIVE QUALITY
     // Um lado degradado não volta direto ao filtro normal após a pausa.
@@ -437,18 +435,18 @@ export function paperConfig() {
       numEnv('PAPER_SIDE_RECOVERY_MIN_WIN_RATE_PCT', 40, 0, 100),
 
     sideProbationMinScore:
-      numEnv('PAPER_SIDE_PROBATION_MIN_SCORE', 82, 68, 100),
+      Math.min(80, numEnv('PAPER_SIDE_PROBATION_MIN_SCORE', 80, 68, 100)),
 
     sideProbationMinAi:
-      numEnv('PAPER_SIDE_PROBATION_MIN_AI', 72, 0, 100),
+      Math.min(76, numEnv('PAPER_SIDE_PROBATION_MIN_AI', 72, 0, 100)),
 
     sideProbationRequireMomentum3:
-      String(process.env.PAPER_SIDE_PROBATION_REQUIRE_MOMENTUM3 || 'true')
-        .toLowerCase() !== 'false',
+      String(process.env.PAPER_SIDE_PROBATION_REQUIRE_MOMENTUM3 || 'false')
+        .toLowerCase() === 'true',
 
     sideProbationRequirePullback:
-      String(process.env.PAPER_SIDE_PROBATION_REQUIRE_PULLBACK || 'true')
-        .toLowerCase() !== 'false',
+      String(process.env.PAPER_SIDE_PROBATION_REQUIRE_PULLBACK || 'false')
+        .toLowerCase() === 'true',
 
     sideProbationRequireOi:
       String(process.env.PAPER_SIDE_PROBATION_REQUIRE_OI || 'true')
@@ -466,10 +464,10 @@ export function paperConfig() {
       numEnv('PAPER_SETUP_RECOVERY_MIN_WIN_RATE_PCT', 35, 0, 100),
 
     setupProbationMinScore:
-      numEnv('PAPER_SETUP_PROBATION_MIN_SCORE', 88, 68, 100),
+      Math.min(84, numEnv('PAPER_SETUP_PROBATION_MIN_SCORE', 84, 68, 100)),
 
     setupProbationMinAi:
-      numEnv('PAPER_SETUP_PROBATION_MIN_AI', 78, 0, 100),
+      Math.min(78, numEnv('PAPER_SETUP_PROBATION_MIN_AI', 78, 0, 100)),
 
     setupProbationRequireMomentum3:
       String(process.env.PAPER_SETUP_PROBATION_REQUIRE_MOMENTUM3 || 'true')
@@ -1431,14 +1429,16 @@ function lossBrakeStatus() {
     const pnl =
       Number(trade?.netPnl || 0);
 
-    if (pnl < -0.000001) {
+    // Ignora micro-saídas no zero a zero / taxas de time-exit (ex.: -0.03 ou -0.10 USDC)
+    // para não acionar LOSS BRAKE sem que tenha havido STOP real.
+    if (pnl < -0.18) {
       count += 1;
 
       if (!newestLossAt) {
         newestLossAt =
           Number(trade?.closedAt || 0);
       }
-    } else {
+    } else if (pnl > 0.05) {
       break;
     }
   }
@@ -1657,14 +1657,19 @@ function strictTechnicalQuality(
 
   if (
     requireTrendRegime &&
-    String(
-      signal?.marketRegime?.regime ||
-      ''
-    ).toUpperCase() !==
-      'TREND'
+    ![
+      'TREND',
+      'EXPANSION',
+      'TRANSITION'
+    ].includes(
+      String(
+        signal?.marketRegime?.regime ||
+        ''
+      ).toUpperCase()
+    )
   ) {
     reasons.push(
-      `regime ${signal?.marketRegime?.regime || 'UNKNOWN'}; exige TREND`
+      `regime ${signal?.marketRegime?.regime || 'UNKNOWN'}; exige TREND/EXPANSION`
     );
   }
 
@@ -2893,8 +2898,8 @@ export function maybeOpenPaperPosition(signal) {
       );
 
     if (
-      strategyProfile ===
-      'HIGH_ACCURACY'
+      strategyProfile === 'HIGH_ACCURACY' ||
+      useQuickScalp
     ) {
       const ha =
         highAccuracyTargets({
@@ -3163,11 +3168,11 @@ export function maybeOpenPaperPosition(signal) {
             null
           ),
       tp1ClosePct:
-        strategyProfile === 'HIGH_ACCURACY'
+        (strategyProfile === 'HIGH_ACCURACY' || useQuickScalp)
           ? cfg.highAccuracyTp1ClosePct
           : 30,
       tp2ClosePct:
-        strategyProfile === 'HIGH_ACCURACY'
+        (strategyProfile === 'HIGH_ACCURACY' || useQuickScalp)
           ? cfg.highAccuracyTp2ClosePct
           : 30,
       runnerEnabled:
@@ -4750,9 +4755,38 @@ function updateOnePosition(position, snap) {
     }
   }
 
-  // V1.11.1 FAST ENTRY:
-  // fecha 100% ao tocar o preço que entrega o alvo LÍQUIDO configurado,
-  // já descontando fee + slippage.
+  // V2.2 AUTO BREAK-EVEN LOCK (+0.38R MFE):
+  // Se o trade já andou >= +0.38R a favor (como GALAUSDT que foi a +0.49R),
+  // protege o stop automaticamente no Break-Even + taxas para nunca virar perda!
+  if (
+    Number(position.mfeR || 0) >= 0.38 &&
+    Number(position.stage || 0) === 0
+  ) {
+    const targetNetUsdc = profitProtectTargetNet(position);
+    const beStop = profitProtectStopReference(position, targetNetUsdc);
+    const protectedStop = clampProtectedStop(
+      position,
+      moreProtectiveStop(position, position.entryFill, beStop),
+      1
+    );
+    position.stopCurrent = moreProtectiveStop(
+      position,
+      position.stopCurrent,
+      protectedStop
+    );
+    if (position.quickScalpEnabled && Number.isFinite(position.quickScalpStopReference)) {
+      position.quickScalpStopReference = moreProtectiveStop(
+        position,
+        position.quickScalpStopReference,
+        protectedStop
+      );
+    }
+  }
+
+  // V2.2 QUICK SCALP + PARCIAIS EM ESCADA:
+  // Só aciona saída 100% no alvo final Quick se bater quickScalpTargetReference;
+  // permite que TP1 (50% em 0.55R) e TP2 (35% em 0.95R) realizem lucro no caminho,
+  // e elimina o fechamento cego de 35m quando o trade já bateu TP1 ou já ativou Break-Even.
   if (position.quickScalpEnabled) {
     const targetHit =
       quickScalpTargetTouched(
@@ -4783,7 +4817,9 @@ function updateOnePosition(position, snap) {
             : position.quickScalpStopReference,
           targetFirst
             ? `QUICK SCALP TP +${Number(position.quickScalpTargetNetPct || 0).toFixed(2)}% NET`
-            : `QUICK SCALP STOP -${Number(position.quickScalpStopNetPct || 0).toFixed(2)}% NET`
+            : (Number(position.stage || 0) > 0 || Number(position.mfeR || 0) >= 0.38)
+              ? `STOP GAIN QUICK após +${Number(position.mfeR || 0).toFixed(2)}R`
+              : `QUICK SCALP STOP -${Number(position.quickScalpStopNetPct || 0).toFixed(2)}% NET`
         );
 
       events.push(
@@ -4809,11 +4845,16 @@ function updateOnePosition(position, snap) {
     }
 
     if (quickStopHit) {
+      const outcomeLabel =
+        (Number(position.stage || 0) > 0 || Number(position.mfeR || 0) >= 0.38)
+          ? `STOP GAIN QUICK após TP${position.stage || 1}`
+          : `QUICK SCALP STOP -${Number(position.quickScalpStopNetPct || 0).toFixed(2)}% NET`;
+
       const result =
         closeRemainingAt(
           position,
           position.quickScalpStopReference,
-          `QUICK SCALP STOP -${Number(position.quickScalpStopNetPct || 0).toFixed(2)}% NET`
+          outcomeLabel
         );
 
       events.push(
@@ -4830,18 +4871,25 @@ function updateOnePosition(position, snap) {
       ) /
       60000;
 
-    if (
-      ageMin >=
+    const maxMin = Math.max(
+      90,
       Number(
         position.quickScalpMaxMinutes ||
-        cfg.quickScalpMaxMinutes
+        cfg.quickScalpMaxMinutes ||
+        90
       )
+    );
+
+    if (
+      ageMin >= maxMin &&
+      Number(position.stage || 0) === 0 &&
+      Number(position.mfeR || 0) < 0.38
     ) {
       const result =
         closeRemainingAt(
           position,
           mark,
-          `QUICK SCALP TIME EXIT ${Math.round(position.quickScalpMaxMinutes || cfg.quickScalpMaxMinutes)}m`
+          `QUICK SCALP TIME EXIT ${Math.round(maxMin)}m`
         );
 
       events.push(
@@ -5198,6 +5246,10 @@ function updateOnePosition(position, snap) {
         1
       );
 
+    if (position.quickScalpEnabled) {
+      position.quickScalpStopReference = position.stopCurrent;
+    }
+
     if (leg) {
       events.push(
         partialMessage(
@@ -5262,6 +5314,10 @@ function updateOnePosition(position, snap) {
         ),
         2
       );
+
+    if (position.quickScalpEnabled) {
+      position.quickScalpStopReference = position.stopCurrent;
+    }
 
     if (leg) {
       events.push(

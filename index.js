@@ -464,35 +464,41 @@ const cfg = {
 
   confirmedEntryMaxWaitBars:
     Math.max(
-      1,
+      2,
       Math.min(
-        3,
-        Number(process.env.CONFIRMED_ENTRY_MAX_WAIT_BARS || 2)
+        4,
+        Number(process.env.CONFIRMED_ENTRY_MAX_WAIT_BARS || 3)
       )
     ),
 
   confirmedEntryMinVolumeRatio:
-    Math.max(
-      0.30,
-      Number(process.env.CONFIRMED_ENTRY_MIN_VOLUME_RATIO || 0.55)
+    Math.min(
+      0.35,
+      Math.max(
+        0.20,
+        Number(process.env.CONFIRMED_ENTRY_MIN_VOLUME_RATIO || 0.35)
+      )
     ),
 
   confirmedEntryVolumeResumeMultiplier:
-    Math.max(
-      0.80,
-      Number(process.env.CONFIRMED_ENTRY_VOLUME_RESUME_MULTIPLIER || 0.60)
+    Math.min(
+      0.45,
+      Math.max(
+        0.30,
+        Number(process.env.CONFIRMED_ENTRY_VOLUME_RESUME_MULTIPLIER || 0.45)
+      )
     ),
 
   confirmedEntryMaxChaseAtr:
     Math.max(
-      0.30,
-      Number(process.env.CONFIRMED_ENTRY_MAX_CHASE_ATR || 0.90)
+      1.45,
+      Number(process.env.CONFIRMED_ENTRY_MAX_CHASE_ATR || 1.45)
     ),
 
   confirmedEntryMaxOppositeExcursionAtr:
     Math.max(
-      0.20,
-      Number(process.env.CONFIRMED_ENTRY_MAX_OPPOSITE_EXCURSION_ATR || 0.55)
+      0.85,
+      Number(process.env.CONFIRMED_ENTRY_MAX_OPPOSITE_EXCURSION_ATR || 0.85)
     ),
 
   confirmedEntryNotifyInvalidated:
@@ -523,7 +529,7 @@ const cfg = {
 
   confirmedEntryStrongOiContraryPct:
     Math.max(
-      0.05,
+      0.55,
       Number(process.env.CONFIRMED_ENTRY_STRONG_OI_CONTRARY_PCT || 0.55)
     )
 };
@@ -4238,8 +4244,14 @@ async function doScan({
             }
           );
 
+          const silentBlock =
+            String(paperGate.reason || '').includes('já existe posição aberta') ||
+            String(paperGate.reason || '').includes('já foi processado') ||
+            String(paperGate.reason || '').includes('cooldown');
+
           if (
-            paperConfig().notifyBlockedSignals
+            paperConfig().notifyBlockedSignals &&
+            !silentBlock
           ) {
             await notify(
               paperBlockFeedback(
@@ -4395,9 +4407,15 @@ async function doScan({
             `${String(s.symbol || '').toUpperCase()}:${String(s.side || '').toUpperCase()}`
           );
 
+        const silentDirectBlock =
+          String(paperBlockReason || '').includes('já existe posição aberta') ||
+          String(paperBlockReason || '').includes('já foi processado') ||
+          String(paperBlockReason || '').includes('cooldown');
+
         if (
           paperBlockReason &&
-          paperConfig().notifyBlockedSignals
+          paperConfig().notifyBlockedSignals &&
+          !silentDirectBlock
         ) {
           await sendMessage(
             cfg.token,

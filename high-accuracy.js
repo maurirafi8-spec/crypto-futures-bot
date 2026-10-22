@@ -84,7 +84,7 @@ export function highAccuracyAssessment(
     pullbackMinAi = 76,
     breakoutMinScore = 84,
     breakoutMinAi = 78,
-    pullbackMinVolume = 0.65,
+    pullbackMinVolume = 0.55,
     breakoutMinVolume = 1.00,
     pullbackMinEdge = 6,
     breakoutMinEdge = 8,
@@ -99,6 +99,16 @@ export function highAccuracyAssessment(
   if (!signal) {
     return { eligible: false, setup: 'UNKNOWN', reasons: ['sinal ausente'] };
   }
+
+  pullbackMinScore = Math.min(80, num(pullbackMinScore, 80));
+  pullbackMinAi = Math.min(76, num(pullbackMinAi, 76));
+  breakoutMinScore = Math.min(84, num(breakoutMinScore, 84));
+  breakoutMinAi = Math.min(78, num(breakoutMinAi, 78));
+  pullbackMinVolume = Math.min(0.55, num(pullbackMinVolume, 0.55));
+  breakoutMinVolume = Math.min(1.00, num(breakoutMinVolume, 1.00));
+  unaligned4hScorePenalty = Math.min(2, num(unaligned4hScorePenalty, 2));
+  mildOiScorePenalty = Math.min(2, num(mildOiScorePenalty, 2));
+  strongOiContraryPct = Math.max(0.55, num(strongOiContraryPct, 0.55));
 
   const setup = upper(signal.entryMode || 'PULLBACK');
   const side = upper(signal.side);
@@ -118,7 +128,8 @@ export function highAccuracyAssessment(
   const ai = num(signal?.ai?.confidence);
   const volume = Math.max(
     num(signal?.t5?.volumeRatio),
-    num(signal?.t15?.volumeRatio)
+    num(signal?.t15?.volumeRatio),
+    num(signal?.confirmedEntry?.confirmationVolumeRatio)
   );
   const edge = num(signal.directionEdge);
   const momentumCount = num(signal?.momentum?.confirmationCount);
@@ -188,7 +199,7 @@ export function highAccuracyAssessment(
   }
 
   if (isPullback) {
-    if (!['TREND', 'EXPANSION'].includes(regime)) {
+    if (!['TREND', 'EXPANSION', 'TRANSITION'].includes(regime)) {
       reasons.push(`Pullback HA exige TREND/EXPANSION; atual ${regime || 'UNKNOWN'}`);
     }
     if (!strongTrigger) reasons.push('trigger forte não confirmado');
@@ -198,8 +209,8 @@ export function highAccuracyAssessment(
   }
 
   if (isBreakout) {
-    if (breakoutExpansionOnly && regime !== 'EXPANSION') {
-      reasons.push(`Breakout HA exige EXPANSION; atual ${regime || 'UNKNOWN'}`);
+    if (breakoutExpansionOnly && !['EXPANSION', 'TREND'].includes(regime)) {
+      reasons.push(`Breakout HA exige EXPANSION/TREND; atual ${regime || 'UNKNOWN'}`);
     }
     if (signal?.breakout?.qualified === false) {
       reasons.push('Breakout Strong não qualificado');
@@ -241,9 +252,9 @@ export function highAccuracyTargets({
   side,
   entry,
   stop,
-  tp1R = 0.75,
-  tp2R = 1.10,
-  tp3R = 1.60
+  tp1R = 0.55,
+  tp2R = 0.95,
+  tp3R = 1.45
 } = {}) {
   const e = num(entry, NaN);
   const s = num(stop, NaN);

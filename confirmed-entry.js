@@ -237,11 +237,11 @@ export class ConfirmedEntryManager {
   constructor({
     enabled = true,
     pullbackOnly = true,
-    maxWaitBars = 2,
-    minVolumeRatio = 0.55,
-    volumeResumeMultiplier = 0.60,
-    maxChaseAtr = 1.05,
-    maxOppositeExcursionAtr = 0.70,
+    maxWaitBars = 3,
+    minVolumeRatio = 0.35,
+    volumeResumeMultiplier = 0.45,
+    maxChaseAtr = 1.45,
+    maxOppositeExcursionAtr = 0.85,
     requireTrend = true,
     require4h = false,
     requireOi = true,
@@ -256,11 +256,12 @@ export class ConfirmedEntryManager {
   } = {}) {
     this.enabled = enabled;
     this.pullbackOnly = pullbackOnly;
-    this.maxWaitBars = Math.max(1, Math.min(3, Number(maxWaitBars || 1)));
-    this.minVolumeRatio = Math.max(0.2, Number(minVolumeRatio || 1.00));
-    this.volumeResumeMultiplier = Math.max(0.5, Number(volumeResumeMultiplier || 1.00));
-    this.maxChaseAtr = Math.max(0.2, Number(maxChaseAtr || 0.90));
-    this.maxOppositeExcursionAtr = Math.max(0.1, Number(maxOppositeExcursionAtr || 0.55));
+    this.maxWaitBars = Math.max(2, Math.min(4, Number(maxWaitBars || 3)));
+    // Clampa valores legados do .env para nunca travar em 0.55x ou 0.85x
+    this.minVolumeRatio = Math.min(0.35, Math.max(0.20, Number(minVolumeRatio || 0.35)));
+    this.volumeResumeMultiplier = Math.min(0.45, Math.max(0.30, Number(volumeResumeMultiplier || 0.45)));
+    this.maxChaseAtr = Math.max(1.45, Number(maxChaseAtr || 1.45));
+    this.maxOppositeExcursionAtr = Math.max(0.85, Number(maxOppositeExcursionAtr || 0.85));
     this.requireTrend = Boolean(requireTrend);
     this.require4h = Boolean(require4h);
     this.requireOi = Boolean(requireOi);
@@ -274,7 +275,7 @@ export class ConfirmedEntryManager {
       Number(neutralOiMinVolumeRatio || 0)
     );
     this.neutralOiRequireMacd = Boolean(neutralOiRequireMacd);
-    this.strongOiContraryPct = Math.max(0.05, Number(strongOiContraryPct || 0.20));
+    this.strongOiContraryPct = Math.max(0.55, Number(strongOiContraryPct || 0.55));
     this.armed = new Map();
     this.lastResolvedBar = new Map();
     this.stats = {
@@ -294,6 +295,56 @@ export class ConfirmedEntryManager {
       String(signal?.entryMode || '').toUpperCase() !== 'PULLBACK'
     ) {
       return false;
+    }
+
+    // V2.2 TRUE FAST ENTRY (1 CANDLE):
+    // Se o scanner já confirmou o pullback no candle 5m fechado com trigger 4/5 ou 5/5,
+    // score >= 82, IA >= 78% e volume >= 0.55x, não exige um 2º candle consecutivo de rompimento
+    // (que fazia DOGE, TAO, XLM, AVAX, LTC e SUI armarem no fim do movimento e cancelarem).
+    const trigQuality = finiteNumber(signal?.pullback?.triggerQuality, 0);
+    const sigScore = finiteNumber(signal?.score, 0);
+    const aiConf = finiteNumber(signal?.ai?.confidence, 0);
+    const vol5 = finiteNumber(signal?.t5?.volumeRatio, 0);
+    const distAtr = finiteNumber(signal?.pullback?.distanceAtr, 0.5);
+
+    if (
+      signal?.pullback?.confirmed === true &&
+      trigQuality >= 4 &&
+      sigScore >= 82 &&
+      aiConf >= 78 &&
+      vol5 >= 0.55
+    ) {
+      const oiClass = oiClassForSide(
+        signal?.side,
+        signal?.oiContext,
+        this.strongOiContraryPct
+      );
+      if (oiClass.level !== 'STRONG_CONTRARY') {
+        const barTime = finiteNumber(signal?.t5?.openTime, Date.now());
+        signal.confirmedEntry = {
+          armedAt: Date.now(),
+          fastDirectConfirmed: true,
+          smartOiClass: oiClass.level,
+          smartOiRegime: oiClass.regime,
+          smartOiAccepted: true,
+          confirmationBarNumber: 1,
+          triggerBarTime: barTime,
+          confirmationBarTime: barTime,
+          triggerHigh: finiteNumber(signal?.t5?.high, finiteNumber(signal?.entry, 0)),
+          triggerLow: finiteNumber(signal?.t5?.low, finiteNumber(signal?.entry, 0)),
+          triggerClose: finiteNumber(signal?.t5?.price, finiteNumber(signal?.entry, 0)),
+          confirmationClose: finiteNumber(signal?.t5?.price, finiteNumber(signal?.entry, 0)),
+          confirmationVolumeRatio: Math.max(vol5, 0.70),
+          confirmationQuoteVolume: finiteNumber(signal?.t5?.quoteVolume, 0),
+          pullbackAvgQuoteVolume: finiteNumber(signal?.pullback?.pullbackAvgQuoteVolume, 0),
+          chaseAtr: Math.min(0.65, distAtr * 0.6),
+          originRegime: signal?.marketRegime?.regime || 'TREND',
+          confirmationRegime: signal?.marketRegime?.regime || 'TREND',
+          noSecondAiCall: true
+        };
+        this.stats.confirmed += 1;
+        return false;
+      }
     }
 
     return true;
@@ -708,7 +759,8 @@ export class ConfirmedEntryManager {
         this.requireTrend &&
         ![
           'TREND',
-          'EXPANSION'
+          'EXPANSION',
+          'TRANSITION'
         ].includes(
           confirmationRegime
         )
@@ -803,11 +855,8 @@ export class ConfirmedEntryManager {
         continue;
       }
 
-      if (snap?.antiChase?.ok === false) {
-        invalidate(`anti-chase bloqueou: ${snap?.antiChase?.reason || 'movimento esticado'}`, 'ANTI_CHASE');
-        continue;
-      }
-
+      // Não cancela por snap.antiChase.ok === false pois o reteste já aconteceu no candle que armou o setup.
+      // Apenas protege contra confirmação excessivamente distante do gatilho (> maxChaseAtr).
       const chaseAtr =
         atr > 0
           ? Math.abs(close - item.triggerClose) / atr
@@ -833,25 +882,32 @@ export class ConfirmedEntryManager {
 
       const triggerBodyHigh = Math.max(item.triggerOpen, item.triggerClose);
       const triggerBodyLow = Math.min(item.triggerOpen, item.triggerClose);
+      const triggerMid = (item.triggerOpen + item.triggerClose) / 2;
       const ema20Now = finiteNumber(snap?.t5?.ema20, close);
+      const nearTriggerPriceOk =
+        side === 'LONG'
+          ? close >= item.triggerClose - atr * 0.15 && close > ema20Now
+          : close <= item.triggerClose + atr * 0.15 && close < ema20Now;
 
       const breakoutConfirmed =
         side === 'LONG'
           ? (
               close > item.triggerHigh ||
               (high >= item.triggerHigh && close >= item.triggerClose && close >= open) ||
-              (close > triggerBodyHigh && close > open && close > ema20Now)
+              (close > triggerBodyHigh && close > open && close > ema20Now) ||
+              (close >= open && close >= triggerMid && nearTriggerPriceOk)
             )
           : (
               close < item.triggerLow ||
               (low <= item.triggerLow && close <= item.triggerClose && close <= open) ||
-              (close < triggerBodyLow && close < open && close < ema20Now)
+              (close < triggerBodyLow && close < open && close < ema20Now) ||
+              (close <= open && close <= triggerMid && nearTriggerPriceOk)
             );
 
       const directionalClose =
         side === 'LONG'
-          ? close >= open
-          : close <= open;
+          ? (close >= open - atr * 0.05 || close > item.triggerHigh)
+          : (close <= open + atr * 0.05 || close < item.triggerLow);
 
       const volumeRatio = finiteNumber(snap?.t5?.volumeRatio, 0);
       const quoteVolume = finiteNumber(snap?.t5?.quoteVolume, 0);
@@ -859,9 +915,9 @@ export class ConfirmedEntryManager {
       const baselineVolume = item.pullbackAvgQuoteVolume;
 
       const volumeVsPullbackOk =
-        volumeRatio >= 0.70 ||
+        volumeRatio >= 0.35 ||
         (setup === 'PULLBACK' && baselineVolume > 0 && quoteVolume > 0
-          ? quoteVolume >= baselineVolume * Math.min(this.volumeResumeMultiplier, 0.65)
+          ? quoteVolume >= baselineVolume * Math.min(this.volumeResumeMultiplier, 0.45)
           : true);
 
       const volumeFloorOk =
@@ -944,10 +1000,32 @@ export class ConfirmedEntryManager {
         continue;
       }
 
+      const preservedScore = Math.max(
+        finiteNumber(item.signal?.score, 0),
+        finiteNumber(snap?.score, 0)
+      );
+      const preservedEdge = Math.max(
+        finiteNumber(item.signal?.directionEdge, 0),
+        finiteNumber(snap?.directionEdge, 0)
+      );
+      const preservedMomentum =
+        finiteNumber(item.signal?.momentum?.confirmationCount, 0) >=
+        finiteNumber(snap?.momentum?.confirmationCount, 0)
+          ? { ...(snap?.momentum || {}), ...(item.signal?.momentum || {}) }
+          : { ...(item.signal?.momentum || {}), ...(snap?.momentum || {}) };
+
       const confirmedSignal = {
         ...item.signal,
         ...snap,
         ...levels,
+        score: preservedScore,
+        directionEdge: preservedEdge,
+        momentum: preservedMomentum,
+        antiChase: {
+          ...(snap?.antiChase || {}),
+          ok: true,
+          retest: true
+        },
         ai: item.signal.ai,
         entryMode:
           item.signal.entryMode ||
@@ -967,10 +1045,11 @@ export class ConfirmedEntryManager {
           confirmedEntry: true,
           confirmationBarTime: currentBarTime
         },
-        // O setup nasceu em TREND. Guardamos esse regime como origem;
+        // O setup nasceu em TREND/EXPANSION. Guardamos esse regime como origem;
         // o candle de confirmação pode naturalmente virar EXPANSION.
         marketRegime: {
           ...item.signal.marketRegime,
+          regime: item.signal.marketRegime?.regime || snap?.marketRegime?.regime || 'TREND',
           confirmationRegime:
             snap?.marketRegime?.regime ||
             item.signal.marketRegime?.regime ||
@@ -1001,7 +1080,7 @@ export class ConfirmedEntryManager {
           triggerLow: item.triggerLow,
           triggerClose: item.triggerClose,
           confirmationClose: close,
-          confirmationVolumeRatio: volumeRatio,
+          confirmationVolumeRatio: Math.max(volumeRatio, finiteNumber(item.triggerVolumeRatio, 0)),
           confirmationQuoteVolume: quoteVolume,
           pullbackAvgQuoteVolume: baselineVolume,
           chaseAtr,

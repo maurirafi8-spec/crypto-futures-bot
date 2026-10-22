@@ -83,20 +83,20 @@ export function eliteQuickScalpAssessment(
     strategyProfile = 'RUNNER',
     pullbackMinScore = 80,
     pullbackMinAi = 76,
-    pullbackMaxChaseAtr = 0.80,
-    pullbackMinConfirmVolume = 0.65,
+    pullbackMaxChaseAtr = 1.25,
+    pullbackMinConfirmVolume = 0.55,
     pullbackMinTriggerQuality = 3,
     minMomentumConfirmations = 2,
     breakoutMinScore = 84,
     breakoutMinAi = 78,
-    breakoutMinVolume = 1.05,
+    breakoutMinVolume = 1.00,
     breakoutMinEdge = 8,
-    breakoutMaxBodyAtr = 1.35,
-    breakoutMaxDistanceAtr = 1.65,
+    breakoutMaxBodyAtr = 1.40,
+    breakoutMaxDistanceAtr = 1.70,
     trendBreakoutEnabled = true,
-    trendBreakoutMinVolume = 1.35,
-    trendBreakoutMaxBodyAtr = 1.25,
-    trendBreakoutMaxDistanceAtr = 1.45,
+    trendBreakoutMinVolume = 1.25,
+    trendBreakoutMaxBodyAtr = 1.35,
+    trendBreakoutMaxDistanceAtr = 1.55,
     unaligned4hScorePenalty = 2,
     mildOiScorePenalty = 2,
     strongOiContraryPct = 0.55
@@ -109,6 +109,21 @@ export function eliteQuickScalpAssessment(
       reasons: ['sinal ausente']
     };
   }
+
+  // Clampa valores antigos de .env para evitar falsos bloqueios como CRV (1.17x < 1.40x) e ARB (1.15x < 1.15x)
+  pullbackMinScore = Math.min(80, num(pullbackMinScore, 80));
+  pullbackMinAi = Math.min(76, num(pullbackMinAi, 76));
+  pullbackMaxChaseAtr = Math.max(1.25, num(pullbackMaxChaseAtr, 1.25));
+  pullbackMinConfirmVolume = Math.min(0.55, num(pullbackMinConfirmVolume, 0.55));
+  pullbackMinTriggerQuality = Math.min(3, num(pullbackMinTriggerQuality, 3));
+  breakoutMinScore = Math.min(84, num(breakoutMinScore, 84));
+  breakoutMinAi = Math.min(78, num(breakoutMinAi, 78));
+  breakoutMinVolume = Math.min(1.00, num(breakoutMinVolume, 1.00));
+  breakoutMaxBodyAtr = Math.max(1.40, num(breakoutMaxBodyAtr, 1.40));
+  breakoutMaxDistanceAtr = Math.max(1.70, num(breakoutMaxDistanceAtr, 1.70));
+  unaligned4hScorePenalty = Math.min(2, num(unaligned4hScorePenalty, 2));
+  mildOiScorePenalty = Math.min(2, num(mildOiScorePenalty, 2));
+  strongOiContraryPct = Math.max(0.55, num(strongOiContraryPct, 0.55));
 
   const setup =
     upper(signal.entryMode || 'PULLBACK');
@@ -275,7 +290,7 @@ export function eliteQuickScalpAssessment(
       );
     }
 
-    if (!['TREND', 'EXPANSION'].includes(originRegime)) {
+    if (!['TREND', 'EXPANSION', 'TRANSITION'].includes(originRegime)) {
       reasons.push(
         `origem ${originRegime || 'UNKNOWN'}; Pullback Quick exige TREND/EXPANSION`
       );
@@ -283,7 +298,7 @@ export function eliteQuickScalpAssessment(
 
     if (
       confirmationRegime &&
-      !['TREND', 'EXPANSION'].includes(confirmationRegime)
+      !['TREND', 'EXPANSION', 'TRANSITION'].includes(confirmationRegime)
     ) {
       reasons.push(
         `regime confirmação ${confirmationRegime} inválido`
