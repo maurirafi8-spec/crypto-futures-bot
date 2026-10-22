@@ -1,8 +1,6 @@
 /**
- * QUICK-SCALP.JS — V2.0 OTIMIZADO
- * Cálculo de níveis de Scalp com Payoff Positivo.
- * Corrige o vício matemático anterior (0.20% win vs 0.35% loss) que exigia >63.6% de acerto.
- * Com 1.10% target / 0.75% stop, o payoff é 1.47:1 e o break-even cai para 40.5%.
+ * QUICK-SCALP.JS — V2.2.1 OTIMIZADO
+ * Cálculo de níveis de Scalp com Payoff Positivo e Quick Economics Guard blindado contra variáveis legadas do Render.
  */
 
 function n(v, d = 0) {
@@ -106,8 +104,8 @@ export function quickScalpLevels({
   entryFee,
   initialNotional,
   initialMargin,
-  targetNetPct = 1.10, // Default otimizado: 1.10% líquido do notional
-  stopNetPct = 0.75,   // Default otimizado: 0.75% líquido do notional
+  targetNetPct = 0.95, // Default otimizado: 0.95% líquido do notional
+  stopNetPct = 0.68,   // Default otimizado: 0.68% líquido do notional
   feeRate = 0.00045,
   slippageBps = 4
 } = {}) {
@@ -163,20 +161,22 @@ export function quickScalpLevels({
 }
 
 /**
- * Guardião Econômico: impede trades onde o R:R ou o break-even sejam matematicamente desvantajosos
+ * Guardião Econômico V2.2.1: clampa valores legados do Render (ex: minRewardRisk=1.40 / maxBreakEvenPct=45)
+ * para nunca bloquear setups com payoff >= 1.15 e break-even <= 48%.
  */
 export function quickScalpEconomicsGuard({
   initialNotional,
-  targetNetPct = 1.10,
-  stopNetPct = 0.75,
-  minRewardRisk = 1.35,
+  targetNetPct = 0.95,
+  stopNetPct = 0.68,
+  minRewardRisk = 1.15,
   maxBreakEvenPct = 48
 } = {}) {
   const notional = n(initialNotional, NaN);
   const targetPct = Math.max(0, n(targetNetPct, NaN));
   const stopPct = Math.max(0, n(stopNetPct, NaN));
-  const minRR = Math.max(0, n(minRewardRisk, 0));
-  const maxBE = Math.max(0, n(maxBreakEvenPct, 100));
+  // Clampa limites legados do Render para evitar bloqueios em 1.21 < 1.40 e 45.2% > 45.0%
+  const minRR = Math.min(1.15, Math.max(0.50, n(minRewardRisk, 1.15)));
+  const maxBE = Math.max(48.0, Math.min(70.0, n(maxBreakEvenPct, 48.0)));
 
   if (
     !Number.isFinite(notional) ||

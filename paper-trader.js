@@ -150,10 +150,10 @@ export function paperConfig() {
 
     // Alvo LÍQUIDO sobre o notional, já considerando fee + slippage.
     quickScalpTargetNetPct:
-      numEnv('PAPER_QUICK_SCALP_TARGET_NET_PCT', 0.85, 0.01, 5),
+      Math.max(0.95, numEnv('PAPER_QUICK_SCALP_TARGET_NET_PCT', 0.95, 0.01, 5)),
 
     quickScalpStopNetPct:
-      numEnv('PAPER_QUICK_SCALP_STOP_NET_PCT', 0.65, 0.05, 10),
+      Math.min(0.68, numEnv('PAPER_QUICK_SCALP_STOP_NET_PCT', 0.68, 0.05, 10)),
 
     quickScalpMaxMinutes:
       Math.max(90, numEnv('PAPER_QUICK_SCALP_MAX_MINUTES', 90, 5, 240)),
@@ -202,12 +202,12 @@ export function paperConfig() {
     quickBreakoutMaxDistanceAtr:
       Math.max(1.70, numEnv('PAPER_QUICK_BREAKOUT_MAX_DISTANCE_ATR', 1.70, 0.2, 5)),
 
-    // Guard próprio do Quick. Não usa o Net R/R do ladder Runner/HA.
+    // Guard próprio do Quick. Clampa valores legados do Render (1.40 / 45%) para nunca bloquear sinais V2.2.
     quickMinRewardRisk:
-      numEnv('PAPER_QUICK_MIN_REWARD_RISK', 0.50, 0.1, 5),
+      Math.min(1.15, numEnv('PAPER_QUICK_MIN_REWARD_RISK', 1.15, 0.1, 5)),
 
     quickMaxBreakEvenPct:
-      numEnv('PAPER_QUICK_MAX_BREAK_EVEN_PCT', 70, 1, 99),
+      Math.max(48, numEnv('PAPER_QUICK_MAX_BREAK_EVEN_PCT', 48, 1, 99)),
 
     maxMarginPct:
       numEnv('PAPER_MAX_MARGIN_PCT', 15, 1, 100),
