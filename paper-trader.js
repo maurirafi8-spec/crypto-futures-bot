@@ -219,7 +219,7 @@ export function paperConfig() {
       intEnv('PAPER_TARGET_TRADES_MIN', 4, 1, 100),
 
     maxTradesPerDay:
-      intEnv('PAPER_MAX_TRADES_PER_DAY', 10, 1, 100),
+      Math.max(999, intEnv('PAPER_MAX_TRADES_PER_DAY', 999, 1, 10000)),
 
     onePositionPerSymbol:
       String(process.env.PAPER_ONE_POSITION_PER_SYMBOL || 'true')
@@ -305,8 +305,9 @@ export function paperConfig() {
     slippageBps:
       numEnv('PAPER_SLIPPAGE_BPS', 5, 0, 500),
 
+    // Limite diário de perda desativado (0 = sem limite, bot 100% livre para teste)
     dailyLossLimitPct:
-      numEnv('PAPER_DAILY_LOSS_LIMIT_PCT', 3, 0.1, 50),
+      0,
 
     cooldownMin:
       numEnv('PAPER_COOLDOWN_MINUTES', 12, 0, 1440),
@@ -357,8 +358,7 @@ export function paperConfig() {
       intEnv('PAPER_SCALP_STALE_CONSECUTIVE_CHECKS', 2, 1, 6),
 
     lossBrakeEnabled:
-      String(process.env.PAPER_LOSS_BRAKE_ENABLED || 'true')
-        .toLowerCase() !== 'false',
+      false,
 
     lossBrakeConsecutive:
       intEnv('PAPER_LOSS_BRAKE_CONSECUTIVE', 2, 2, 10),
@@ -367,15 +367,14 @@ export function paperConfig() {
       numEnv('PAPER_LOSS_BRAKE_MINUTES', 30, 10, 240),
 
     lossBrakeScoreBoost:
-      Math.min(2, numEnv('PAPER_LOSS_BRAKE_SCORE_BOOST', 2, 0, 30)),
+      0,
 
     lossBrakeAiBoost:
-      Math.min(2, numEnv('PAPER_LOSS_BRAKE_AI_BOOST', 2, 0, 30)),
+      0,
 
-    // V1.7.6 PERFORMANCE GUARD
+    // V1.7.6 PERFORMANCE GUARD (desativado para deixar o bot livre para teste)
     performanceGuardEnabled:
-      String(process.env.PAPER_PERFORMANCE_GUARD_ENABLED || 'true')
-        .toLowerCase() !== 'false',
+      false,
 
     performanceLookback:
       intEnv('PAPER_PERFORMANCE_LOOKBACK', 6, 4, 30),
@@ -396,12 +395,10 @@ export function paperConfig() {
       numEnv('PAPER_PERFORMANCE_PAUSE_MINUTES', 90, 15, 720),
 
     setupGuardEnabled:
-      String(process.env.PAPER_SETUP_GUARD_ENABLED || 'true')
-        .toLowerCase() !== 'false',
+      false,
 
     performanceQualityEnabled:
-      String(process.env.PAPER_PERFORMANCE_QUALITY_ENABLED || 'true')
-        .toLowerCase() !== 'false',
+      false,
 
     performanceQualityLookback:
       intEnv('PAPER_PERFORMANCE_QUALITY_LOOKBACK', 10, 6, 30),
@@ -416,17 +413,14 @@ export function paperConfig() {
       numEnv('PAPER_PERFORMANCE_QUALITY_MIN_PAYOFF', 0.70, 0, 5),
 
     performanceQualityScoreBoost:
-      Math.min(2, numEnv('PAPER_PERFORMANCE_QUALITY_SCORE_BOOST', 2, 0, 30)),
+      0,
 
     performanceQualityAiBoost:
-      Math.min(2, numEnv('PAPER_PERFORMANCE_QUALITY_AI_BOOST', 2, 0, 30)),
+      0,
 
-    // V1.7.9 ADAPTIVE QUALITY
-    // Um lado degradado não volta direto ao filtro normal após a pausa.
-    // Ele entra em PROBATION até a janela recente recuperar PF + win rate.
+    // V1.7.9 ADAPTIVE QUALITY (desativado para testes sem travas de probation)
     sideProbationEnabled:
-      String(process.env.PAPER_SIDE_PROBATION_ENABLED || 'true')
-        .toLowerCase() !== 'false',
+      false,
 
     sideRecoveryMinProfitFactor:
       numEnv('PAPER_SIDE_RECOVERY_MIN_PF', 0.80, 0, 5),
@@ -441,21 +435,17 @@ export function paperConfig() {
       Math.min(76, numEnv('PAPER_SIDE_PROBATION_MIN_AI', 72, 0, 100)),
 
     sideProbationRequireMomentum3:
-      String(process.env.PAPER_SIDE_PROBATION_REQUIRE_MOMENTUM3 || 'false')
-        .toLowerCase() === 'true',
+      false,
 
     sideProbationRequirePullback:
-      String(process.env.PAPER_SIDE_PROBATION_REQUIRE_PULLBACK || 'false')
-        .toLowerCase() === 'true',
+      false,
 
     sideProbationRequireOi:
-      String(process.env.PAPER_SIDE_PROBATION_REQUIRE_OI || 'true')
-        .toLowerCase() !== 'false',
+      false,
 
-    // V1.8.0 SETUP HEALTH
+    // V1.8.0 SETUP HEALTH (desativado para testes sem travas de probation)
     setupProbationEnabled:
-      String(process.env.PAPER_SETUP_PROBATION_ENABLED || 'true')
-        .toLowerCase() !== 'false',
+      false,
 
     setupRecoveryMinProfitFactor:
       numEnv('PAPER_SETUP_RECOVERY_MIN_PF', 0.80, 0, 5),
@@ -464,14 +454,13 @@ export function paperConfig() {
       numEnv('PAPER_SETUP_RECOVERY_MIN_WIN_RATE_PCT', 35, 0, 100),
 
     setupProbationMinScore:
-      Math.min(84, numEnv('PAPER_SETUP_PROBATION_MIN_SCORE', 84, 68, 100)),
+      Math.min(80, numEnv('PAPER_SETUP_PROBATION_MIN_SCORE', 80, 68, 100)),
 
     setupProbationMinAi:
-      Math.min(78, numEnv('PAPER_SETUP_PROBATION_MIN_AI', 78, 0, 100)),
+      Math.min(76, numEnv('PAPER_SETUP_PROBATION_MIN_AI', 76, 0, 100)),
 
     setupProbationRequireMomentum3:
-      String(process.env.PAPER_SETUP_PROBATION_REQUIRE_MOMENTUM3 || 'true')
-        .toLowerCase() !== 'false',
+      false,
 
     setupProbationRequireOi:
       String(process.env.PAPER_SETUP_PROBATION_REQUIRE_OI || 'true')
@@ -829,11 +818,14 @@ function signalKey(signal) {
 function isDailyLossLocked() {
   ensureDay();
 
+  const pct = Number(paperConfig().dailyLossLimitPct || 0);
+  if (pct <= 0) return false;
+
   const limit =
     Math.max(
       0,
       Number(state.day.startBalance || 0) *
-      paperConfig().dailyLossLimitPct / 100
+      pct / 100
     );
 
   return (
@@ -4755,35 +4747,10 @@ function updateOnePosition(position, snap) {
     }
   }
 
-  // V2.2 AUTO BREAK-EVEN LOCK (+0.38R MFE):
-  // Se o trade já andou >= +0.38R a favor (como GALAUSDT que foi a +0.49R),
-  // protege o stop automaticamente no Break-Even + taxas para nunca virar perda!
-  if (
-    Number(position.mfeR || 0) >= 0.38 &&
-    Number(position.stage || 0) === 0
-  ) {
-    const targetNetUsdc = profitProtectTargetNet(position);
-    const beStop = profitProtectStopReference(position, targetNetUsdc);
-    const protectedStop = clampProtectedStop(
-      position,
-      moreProtectiveStop(position, position.entryFill, beStop),
-      1
-    );
-    position.stopCurrent = moreProtectiveStop(
-      position,
-      position.stopCurrent,
-      protectedStop
-    );
-    if (position.quickScalpEnabled && Number.isFinite(position.quickScalpStopReference)) {
-      position.quickScalpStopReference = moreProtectiveStop(
-        position,
-        position.quickScalpStopReference,
-        protectedStop
-      );
-    }
-  }
-
   // V2.2 QUICK SCALP + PARCIAIS EM ESCADA:
+  // Se o candle tocou TP1/TP2 sem estopar no stop inicial, deixa a escada realizar TP1 (50%) / TP2 (35%) primeiro.
+  // O Auto Break-Even Lock (+0.45R) só arma o stop no final do candle para valer a partir do PRÓXIMO candle 5m,
+  // evitando estopar retroativamente no pavio de abertura do mesmo candle (bug APTUSDT/ARBUSDT +0.04 USDC).
   // Só aciona saída 100% no alvo final Quick se bater quickScalpTargetReference;
   // permite que TP1 (50% em 0.55R) e TP2 (35% em 0.95R) realizem lucro no caminho,
   // e elimina o fechamento cego de 35m quando o trade já bateu TP1 ou já ativou Break-Even.
@@ -4844,11 +4811,15 @@ function updateOnePosition(position, snap) {
       return events;
     }
 
-    if (quickStopHit) {
+    const tp1TouchedNow = Number(position.stage || 0) < 1 && hitLevel(position, high, low, position.tp1);
+    const letTp1RunFirst = tp1TouchedNow && (!quickStopHit || moderateTargetFirst(position, fastTf, position.tp1));
+    if (quickStopHit && !letTp1RunFirst) {
       const outcomeLabel =
-        (Number(position.stage || 0) > 0 || Number(position.mfeR || 0) >= 0.38)
-          ? `STOP GAIN QUICK após TP${position.stage || 1}`
-          : `QUICK SCALP STOP -${Number(position.quickScalpStopNetPct || 0).toFixed(2)}% NET`;
+        Number(position.stage || 0) > 0
+          ? `STOP GAIN QUICK após TP${position.stage}`
+          : position.beLocked
+            ? `STOP GAIN BE (+${Number(position.mfeR || 0).toFixed(2)}R MFE)`
+            : `QUICK SCALP STOP -${Number(position.quickScalpStopNetPct || 0).toFixed(2)}% NET`;
 
       const result =
         closeRemainingAt(
@@ -5548,6 +5519,33 @@ function updateOnePosition(position, snap) {
     updateDrawdown();
     saveState();
     return events;
+  }
+
+  // V2.2 AUTO BREAK-EVEN LOCK (aplicado no FIM do candle para valer a partir do PRÓXIMO candle 5m):
+  if (
+    Number(position.mfeR || 0) >= 0.45 &&
+    Number(position.stage || 0) === 0
+  ) {
+    const targetNetUsdc = profitProtectTargetNet(position);
+    const beStop = profitProtectStopReference(position, targetNetUsdc);
+    const protectedStop = clampProtectedStop(
+      position,
+      moreProtectiveStop(position, position.entryFill, beStop),
+      1
+    );
+    position.stopCurrent = moreProtectiveStop(
+      position,
+      position.stopCurrent,
+      protectedStop
+    );
+    if (position.quickScalpEnabled && Number.isFinite(position.quickScalpStopReference)) {
+      position.quickScalpStopReference = moreProtectiveStop(
+        position,
+        position.quickScalpStopReference,
+        protectedStop
+      );
+    }
+    position.beLocked = true;
   }
 
   updateDrawdown();
