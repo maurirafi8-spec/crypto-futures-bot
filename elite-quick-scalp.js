@@ -204,7 +204,7 @@ export function eliteQuickScalpAssessment(
     Math.max(0, rawScore - scorePenalty4h - scorePenaltyOi);
 
   const exhaustionOk =
-    signal?.trendExhaustion?.ok !== false;
+    signal?.trendExhaustion?.ok !== false || rawScore >= 84;
 
   const antiChaseOk =
     signal?.antiChase?.ok !== false;

@@ -137,7 +137,7 @@ export function highAccuracyAssessment(
     signal?.btcRegime?.ok !== false &&
     !bool(signal?.btcRegime?.strongOpposite);
   const antiChaseOk = signal?.antiChase?.ok !== false;
-  const exhaustionOk = signal?.trendExhaustion?.ok !== false;
+  const exhaustionOk = signal?.trendExhaustion?.ok !== false || rawScore >= 84;
   const aligned4h = bool(
     signal?.trendExhaustion?.aligned4h,
     upper(signal?.structure4h) === side

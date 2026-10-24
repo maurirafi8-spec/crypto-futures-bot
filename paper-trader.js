@@ -143,7 +143,7 @@ export function paperConfig() {
         .toLowerCase() === 'true',
 
     quickScalpMarginUsdc:
-      numEnv('PAPER_QUICK_SCALP_MARGIN_USDC', 15, 1, 100000),
+      Math.min(12, numEnv('PAPER_QUICK_SCALP_MARGIN_USDC', 12, 1, 100000)),
 
     quickScalpLeverage:
       intEnv('PAPER_QUICK_SCALP_LEVERAGE', 5, 1, 50),
@@ -160,7 +160,7 @@ export function paperConfig() {
 
     // Permite até 2 posições simultâneas por padrão.
     quickScalpMaxOpen:
-      Math.max(2, intEnv('PAPER_QUICK_SCALP_MAX_OPEN', 2, 1, 10)),
+      Math.max(4, intEnv('PAPER_QUICK_SCALP_MAX_OPEN', 4, 1, 10)),
 
     // PULLBACK ELITE QUICK
     quickPullbackMinScore:
@@ -213,7 +213,7 @@ export function paperConfig() {
       numEnv('PAPER_MAX_MARGIN_PCT', 15, 1, 100),
 
     maxOpenPositions:
-      intEnv('PAPER_MAX_OPEN_POSITIONS', 4, 1, 20),
+      Math.max(4, intEnv('PAPER_MAX_OPEN_POSITIONS', 4, 1, 20)),
 
     targetTradesPerDayMin:
       intEnv('PAPER_TARGET_TRADES_MIN', 4, 1, 100),
@@ -2857,7 +2857,7 @@ export function maybeOpenPaperPosition(signal) {
       return {
         opened: false,
         reason:
-          `ELITE QUICK: limite ${cfg.quickScalpMaxOpen} posição(ões) 10x simultânea(s)`
+          `ELITE QUICK: limite ${cfg.quickScalpMaxOpen} posição(ões) ${cfg.quickScalpLeverage}x simultânea(s)`
       };
     }
   }
@@ -3057,8 +3057,9 @@ export function maybeOpenPaperPosition(signal) {
     let margin;
 
     if (useQuickScalp) {
+      const maxSafeMargin = Math.max(5, Math.floor((availableBalance() - 0.25) * 100) / 100);
       margin =
-        cfg.quickScalpMarginUsdc;
+        Math.min(cfg.quickScalpMarginUsdc, maxSafeMargin);
 
       notional =
         margin *
@@ -3481,6 +3482,21 @@ export function maybeOpenPaperPosition(signal) {
 
       position.quickScalpStopRoiMarginPct =
         quick.stopRoiMarginPct;
+
+      // V2.3 PAYOFF REAL QUICK SCALP:
+      // Unifica o stop inicial e a escada TP1/TP2/TP3 com o alvo líquido do Quick Scalp,
+      // evitando que stops curtos (0.35% ATR_MIN) gerem TP1 de +0.04 USDC ou TP3 cheio de +0.14 USDC (POLUSDT)
+      // ou estopem por ruído antes do Quick Stop (SUIUSDT/DOGEUSDT).
+      const quickTargetDist = Math.abs(quick.targetReference - position.entryFill);
+      const dirSign = position.side === 'SHORT' ? -1 : 1;
+      position.stopInitial = quick.stopReference;
+      position.stopCurrent = quick.stopReference;
+      position.tp1 = position.entryFill + dirSign * quickTargetDist * 0.55;
+      position.tp2 = position.entryFill + dirSign * quickTargetDist * 0.80;
+      position.tp3 = quick.targetReference;
+      position.tp1ClosePct = 40;
+      position.tp2ClosePct = 30;
+      position.tp3ClosePct = 30;
     }
 
     state.openPositions.push(position);
@@ -4851,16 +4867,18 @@ function updateOnePosition(position, snap) {
       )
     );
 
-    if (
+    const currentGross = directionSign(position.side) * (mark - position.entryFill) * position.remainingQty;
+    const structure15StillAligned = String(snap?.structure15m || snap?.t15?.trend || position.side).toUpperCase() === position.side;
+    const shouldTimeExit =
       ageMin >= maxMin &&
       Number(position.stage || 0) === 0 &&
-      Number(position.mfeR || 0) < 0.38
-    ) {
+      (currentGross >= position.entryFee * 1.5 || !structure15StillAligned || ageMin >= maxMin * 2);
+    if (shouldTimeExit) {
       const result =
         closeRemainingAt(
           position,
           mark,
-          `QUICK SCALP TIME EXIT ${Math.round(maxMin)}m`
+          `QUICK SCALP TIME EXIT ${Math.round(ageMin)}m`
         );
 
       events.push(
@@ -5523,7 +5541,7 @@ function updateOnePosition(position, snap) {
 
   // V2.2 AUTO BREAK-EVEN LOCK (aplicado no FIM do candle para valer a partir do PRÓXIMO candle 5m):
   if (
-    Number(position.mfeR || 0) >= 0.45 &&
+    Number(position.mfeR || 0) >= 0.80 &&
     Number(position.stage || 0) === 0
   ) {
     const targetNetUsdc = profitProtectTargetNet(position);

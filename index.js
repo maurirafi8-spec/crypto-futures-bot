@@ -464,10 +464,10 @@ const cfg = {
 
   confirmedEntryMaxWaitBars:
     Math.max(
-      2,
+      4,
       Math.min(
-        4,
-        Number(process.env.CONFIRMED_ENTRY_MAX_WAIT_BARS || 3)
+        6,
+        Number(process.env.CONFIRMED_ENTRY_MAX_WAIT_BARS || 4)
       )
     ),
 

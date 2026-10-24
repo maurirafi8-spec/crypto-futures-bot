@@ -256,7 +256,7 @@ export class ConfirmedEntryManager {
   } = {}) {
     this.enabled = enabled;
     this.pullbackOnly = pullbackOnly;
-    this.maxWaitBars = Math.max(2, Math.min(4, Number(maxWaitBars || 3)));
+    this.maxWaitBars = Math.max(4, Math.min(6, Number(maxWaitBars || 4)));
     // Clampa valores legados do .env para nunca travar em 0.55x ou 0.85x
     this.minVolumeRatio = Math.min(0.35, Math.max(0.20, Number(minVolumeRatio || 0.35)));
     this.volumeResumeMultiplier = Math.min(0.45, Math.max(0.30, Number(volumeResumeMultiplier || 0.45)));
@@ -309,10 +309,10 @@ export class ConfirmedEntryManager {
 
     if (
       signal?.pullback?.confirmed === true &&
-      trigQuality >= 4 &&
-      sigScore >= 82 &&
-      aiConf >= 78 &&
-      vol5 >= 0.55
+      trigQuality >= 3 &&
+      sigScore >= 80 &&
+      aiConf >= 76 &&
+      vol5 >= 0.45
     ) {
       const oiClass = oiClassForSide(
         signal?.side,
@@ -532,7 +532,7 @@ export class ConfirmedEntryManager {
       expectedConfirmationBarTime:
         triggerBarTime + M5_MS,
       expiresAfterBarTime:
-        triggerBarTime + M5_MS * this.maxWaitBars,
+        triggerBarTime + M5_MS * (this.maxWaitBars + 1),
       triggerOpen,
       triggerHigh,
       triggerLow,
@@ -779,7 +779,8 @@ export class ConfirmedEntryManager {
 
       if (
         this.requireExhaustionOk &&
-        snap?.trendExhaustion?.ok === false
+        snap?.trendExhaustion?.ok === false &&
+        finiteNumber(item.score, 0) < 84
       ) {
         invalidate(`Trend Exhaustion Guard: ${snap?.trendExhaustion?.reason || 'tendência esticada'}`, 'EXHAUSTION');
         continue;
