@@ -67,9 +67,9 @@ function oiClassForSide(
       regime === 'SHORT_BUILDUP' ||
       regime === 'LONG_UNWIND'
     ) {
-      const strong = oiPct >= strongContraryPct;
+      const strong = true;
       return {
-        level: strong ? 'STRONG_CONTRARY' : 'MILD_CONTRARY',
+        level: 'STRONG_CONTRARY',
         regime,
         oiPct,
         reason: strong
@@ -93,9 +93,9 @@ function oiClassForSide(
       regime === 'LONG_BUILDUP' ||
       regime === 'SHORT_COVERING'
     ) {
-      const strong = oiPct >= strongContraryPct;
+      const strong = true;
       return {
-        level: strong ? 'STRONG_CONTRARY' : 'MILD_CONTRARY',
+        level: 'STRONG_CONTRARY',
         regime,
         oiPct,
         reason: strong
@@ -301,25 +301,38 @@ export class ConfirmedEntryManager {
     // Se o scanner já confirmou o pullback no candle 5m fechado com trigger 4/5 ou 5/5,
     // score >= 82, IA >= 78% e volume >= 0.55x, não exige um 2º candle consecutivo de rompimento
     // (que fazia DOGE, TAO, XLM, AVAX, LTC e SUI armarem no fim do movimento e cancelarem).
+    const side = String(signal?.side || "").toUpperCase();
     const trigQuality = finiteNumber(signal?.pullback?.triggerQuality, 0);
     const sigScore = finiteNumber(signal?.score, 0);
     const aiConf = finiteNumber(signal?.ai?.confidence, 0);
     const vol5 = finiteNumber(signal?.t5?.volumeRatio, 0);
     const distAtr = finiteNumber(signal?.pullback?.distanceAtr, 0.5);
+    const bodyAtr = finiteNumber(signal?.antiChase?.bodyAtr, finiteNumber(signal?.breakout?.bodyAtr, 0.5));
+    const rsi5 = finiteNumber(signal?.t5?.rsi, 50);
+    const rsi15 = finiteNumber(signal?.t15?.rsi, 50);
+    const aligned4h = signal?.marketRegime?.aligned4h !== false && signal?.trendExhaustion?.aligned4h !== false;
+    const macdOk = signal?.momentum?.macdOk === true || (side === "LONG" ? finiteNumber(signal?.t5?.macdHist, 0) > 0 : finiteNumber(signal?.t5?.macdHist, 0) < 0);
+    const macdOrPrime = macdOk || (sigScore >= 92 && distAtr <= 0.25 && bodyAtr <= 0.85);
+    const rsiOk = side === "SHORT" ? (rsi5 >= 40 && rsi15 >= 36) : (rsi5 <= 60 && rsi15 <= 64);
+    const btcMode = String(signal?.btcRegime?.mode || signal?.btcRegime?.regime || "ALIGNED").toUpperCase();
 
     if (
       signal?.pullback?.confirmed === true &&
       trigQuality >= 3 &&
       sigScore >= 80 &&
       aiConf >= 76 &&
-      vol5 >= 0.45
+      vol5 >= 0.52 &&
+      aligned4h &&
+      macdOrPrime &&
+      rsiOk
     ) {
       const oiClass = oiClassForSide(
         signal?.side,
         signal?.oiContext,
         this.strongOiContraryPct
       );
-      if (oiClass.level !== 'STRONG_CONTRARY') {
+      const neutralOiBtcOk = oiClass.level !== "NEUTRAL" || ["ALIGNED", "BTC_SELF"].includes(btcMode);
+      if (oiClass.level !== "STRONG_CONTRARY" && oiClass.level !== "MILD_CONTRARY" && neutralOiBtcOk) {
         const barTime = finiteNumber(signal?.t5?.openTime, Date.now());
         signal.confirmedEntry = {
           armedAt: Date.now(),

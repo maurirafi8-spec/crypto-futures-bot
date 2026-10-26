@@ -239,7 +239,7 @@ export class LiquidUniverseManager {
     });
     const top = liquid.slice(0, 10).map(base => {
       const s = this.freshStat(base);
-      return `${base} $${(s.quoteVolume / 1e6).toFixed(0)}M`;
+      return `${base} ${(s.quoteVolume / 1e6).toFixed(0)}M`;
     });
     return {
       size: ranked.length,

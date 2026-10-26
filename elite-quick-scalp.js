@@ -33,7 +33,7 @@ function oiPolicyForSide(
     }
 
     if (confirmedClass === 'MILD_CONTRARY') {
-      return { ok: true, label: 'MILD_CONTRARY', regime, oiPct };
+      return { ok: false, label: 'STRONG_CONTRARY', regime, oiPct };
     }
 
     return { ok: true, label: confirmedClass, regime, oiPct };
@@ -65,10 +65,9 @@ function oiPolicyForSide(
     (side === 'SHORT' && ['LONG_BUILDUP', 'SHORT_COVERING'].includes(regime));
 
   if (contrary) {
-    const strong = oiPct >= strongContraryPct;
     return {
-      ok: !strong,
-      label: strong ? 'STRONG_CONTRARY' : 'MILD_CONTRARY',
+      ok: false,
+      label: 'STRONG_CONTRARY',
       regime,
       oiPct
     };
@@ -241,8 +240,50 @@ export function eliteQuickScalpAssessment(
 
   if (!oi.ok) {
     reasons.push(
-      `OI fortemente contrário (${oi.regime || 'UNKNOWN'}; ${oi.oiPct.toFixed(2)}%)`
+      `OI contrário ao ${side} (${oi.regime || 'UNKNOWN'}; ${oi.oiPct.toFixed(2)}%)`
     );
+  }
+
+  if (!aligned4h) {
+    reasons.push('4H contrário (Elite Quick exige 4H alinhado)');
+  }
+
+  const rsi5 = num(signal?.t5?.rsi, 50);
+  const rsi15 = num(signal?.t15?.rsi, 50);
+  if (side === 'SHORT' && (rsi5 < 40 || rsi15 < 36)) {
+    reasons.push(`RSI exaurido para SHORT (5m ${rsi5.toFixed(1)} / 15m ${rsi15.toFixed(1)})`);
+  }
+  if (side === 'LONG' && (rsi5 > 60 || rsi15 > 64)) {
+    reasons.push(`RSI exaurido para LONG (5m ${rsi5.toFixed(1)} / 15m ${rsi15.toFixed(1)})`);
+  }
+
+  const btcMode = upper(signal?.btcRegime?.mode || signal?.btcRegime?.regime || 'ALIGNED');
+  if (oi.label === 'NEUTRAL' && !['ALIGNED', 'BTC_SELF'].includes(btcMode)) {
+    reasons.push(`OI neutro exige BTC ALIGNED (atual ${btcMode})`);
+  }
+
+  const macdOk = signal?.momentum?.macdOk === true || (side === 'LONG' ? num(signal?.t5?.macdHist, 0) > 0 : num(signal?.t5?.macdHist, 0) < 0);
+  const pullbackDistAtr = num(signal?.pullback?.distanceAtr, 0.5);
+  const candleBodyAtr = num(signal?.antiChase?.bodyAtr, breakoutBodyAtr);
+  if (setup === 'PULLBACK' && !macdOk && !(rawScore >= 92 && pullbackDistAtr <= 0.25 && candleBodyAtr <= 0.85)) {
+    reasons.push('MACD 5m não confirma o pullback');
+  }
+  if (setup === 'PULLBACK' && volume5 > 0 && volume5 < 0.52) {
+    reasons.push(`volume 5m ${volume5.toFixed(2)}x < 0.52x`);
+  }
+  if (setup === 'BREAKOUT_STRONG') {
+    if (oi.label !== 'FAVORABLE') {
+      reasons.push(`Breakout exige OI FAVORABLE (atual ${oi.regime || oi.label})`);
+    }
+    if (volume5 < 2.40) {
+      reasons.push(`Breakout exige volume explosivo >= 2.40x (atual ${volume5.toFixed(2)}x)`);
+    }
+    if (!macdOk) {
+      reasons.push('Breakout exige MACD 5m alinhado');
+    }
+    if (!['ALIGNED', 'BTC_SELF'].includes(btcMode)) {
+      reasons.push(`Breakout exige BTC ALIGNED (atual ${btcMode})`);
+    }
   }
 
   const scoreReason = minScore => {

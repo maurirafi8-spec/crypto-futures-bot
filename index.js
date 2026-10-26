@@ -1094,7 +1094,7 @@ function scanSchedulerText() {
     `⏱ <b>Scheduler 1 minuto</b>\n` +
     `Lote: ${cfg.scanBatchSize} moedas por scan\n` +
     `🌐 Universo líquido dinâmico: ${status.size}/${cfg.dynamicUniverseSize} ativos\n` +
-    `👀 Volume 24h já observado: ${status.observed} · acima de $${Math.round(cfg.minVolume / 1e6)}M: ${status.liquid}\n` +
+    `👀 Volume 24h já observado: ${status.observed} · acima de ${Math.round(cfg.minVolume / 1e6)}M: ${status.liquid}\n` +
     `🔥 Top volume observado: ${status.top.length ? status.top.join(' · ') : 'aprendendo o universo...'}\n` +
     `🔄 Ciclo esperado: ~${Math.ceil(cfg.dynamicUniverseSize / cfg.scanBatchSize)}–${Math.ceil(cfg.dynamicUniverseSize / Math.max(2, cfg.scanBatchSize - 1))} min\n` +
     `₿ BTC/ETH/SOL: revisão periódica, não ocupam slot em todo scan\n` +
@@ -2965,7 +2965,7 @@ function aiHistoryText() {
 
 function formatMillions(value) {
   if (!Number.isFinite(Number(value))) return '—';
-  return `$${(Number(value) / 1e6).toFixed(1)}M`;
+  return `${(Number(value) / 1e6).toFixed(1)}M`;
 }
 
 function pendingAIText(pending = pendingAiCandidate) {
@@ -4581,7 +4581,7 @@ async function handleMessage(msg) {
       `🤖 Confiança mínima para liberar sinal/PAPER: ${cfg.aiMinConfidence}%\n` +
       `🧠 Máx. candidatos IA por scan: ${cfg.aiMaxCandidates}\n` +
       `👀 Pré-candidato IA: ${cfg.preCandidateMinScore}–${cfg.minScore - 1}\n` +
-      `💵 Volume mínimo 24h: $${Math.round(cfg.minVolume / 1e6)}M\n` +
+      `💵 Volume mínimo 24h: ${Math.round(cfg.minVolume / 1e6)}M\n` +
       `📊 Volume base: ${cfg.minVolumeRatio.toFixed(2)}x · Pullback trigger ${cfg.pullbackMinVolumeRatio.toFixed(2)}x · Breakout ${cfg.breakoutMinVolumeRatio.toFixed(2)}x\n` +
       `🚫 Piso absoluto de volume: ${cfg.hardMinVolumeRatio.toFixed(2)}x\n` +
       `📈 OI para confirmar: +${cfg.minOiPct.toFixed(2)}%\n` +

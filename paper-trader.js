@@ -900,9 +900,12 @@ function cooldownBlocked(signal) {
     return false;
   }
 
+  const wasLoss = lastClosed && Number(lastClosed.netPnl || 0) < -0.01;
+  const effectiveCooldownMin = wasLoss ? Math.max(cfg.cooldownMin, 90) : cfg.cooldownMin;
+
   return (
     Date.now() - last <
-    cfg.cooldownMin * 60_000
+    effectiveCooldownMin * 60_000
   );
 }
 
@@ -3491,12 +3494,13 @@ export function maybeOpenPaperPosition(signal) {
       const dirSign = position.side === 'SHORT' ? -1 : 1;
       position.stopInitial = quick.stopReference;
       position.stopCurrent = quick.stopReference;
-      position.tp1 = position.entryFill + dirSign * quickTargetDist * 0.55;
-      position.tp2 = position.entryFill + dirSign * quickTargetDist * 0.80;
-      position.tp3 = quick.targetReference;
+      position.tp1 = position.entryFill + dirSign * quickTargetDist * 0.44;
+      position.tp2 = position.entryFill + dirSign * quickTargetDist * 0.65;
+      position.tp3 = position.entryFill + dirSign * quickTargetDist * 0.88;
       position.tp1ClosePct = 40;
       position.tp2ClosePct = 30;
       position.tp3ClosePct = 30;
+      position.runnerEnabled = false;
     }
 
     state.openPositions.push(position);
@@ -3831,10 +3835,11 @@ function profitProtectStopReference(
 
   let desiredExitFill;
 
+  const legMinNetUsdc = Math.max(0.025, targetNetUsdc * 0.65);
+  const tp1Dist = Math.abs(Number(position.tp1 || entry) - entry);
+  const stageLockDist = Number(position.stage || 0) >= 1 ? tp1Dist * 0.35 : 0;
+
   if (position.side === 'LONG') {
-    // target =
-    // realizedGross + (exit-entry)*qty
-    // - feesPaid - exit*qty*fee
     const numerator =
       targetNetUsdc -
       realizedGross +
@@ -3845,22 +3850,25 @@ function profitProtectStopReference(
       numerator /
       (qty * (1 - fee));
 
-    // LONG: adverseFill(ref) = ref * (1-slip)
     const ref =
       desiredExitFill /
       Math.max(1e-9, 1 - slip);
 
-    // Nunca deixa a proteção pós-TP1 pior que a própria entrada.
+    // Garante que a perna restante (60%) cubra suas próprias taxas + slippage + lucro líquido mínimo
+    const legDesiredExit =
+      (entry * qty + Number(position.entryFee || 0) + legMinNetUsdc) /
+      (qty * (1 - fee));
+    const legRef =
+      legDesiredExit /
+      Math.max(1e-9, 1 - slip);
+
     return Math.max(
-      entry,
-      ref
+      entry + stageLockDist,
+      ref,
+      legRef
     );
   }
 
-  // SHORT:
-  // target =
-  // realizedGross + (entry-exit)*qty
-  // - feesPaid - exit*qty*fee
   const numerator =
     realizedGross +
     entry * qty -
@@ -3871,15 +3879,22 @@ function profitProtectStopReference(
     numerator /
     (qty * (1 + fee));
 
-  // SHORT: adverseFill(ref) = ref * (1+slip)
   const ref =
     desiredExitFill /
     (1 + slip);
 
-  // Nunca deixa a proteção pós-TP1 pior que a própria entrada.
+  // Garante que a perna restante (60%) no SHORT cubra suas próprias taxas + slippage + lucro líquido mínimo
+  const legDesiredExit =
+    (entry * qty - Number(position.entryFee || 0) - legMinNetUsdc) /
+    (qty * (1 + fee));
+  const legRef =
+    legDesiredExit /
+    (1 + slip);
+
   return Math.min(
-    entry,
-    ref
+    entry - stageLockDist,
+    ref,
+    legRef
   );
 }
 
@@ -4902,6 +4917,7 @@ function updateOnePosition(position, snap) {
   // 2h = checkpoint Adaptive Hold; não fecha mais cegamente.
   if (
     cfg.scalpMode &&
+    !position.quickScalpEnabled &&
     position.stage === 0 &&
     Date.now() - position.openedAt >=
       cfg.scalpStaleMin * 60 * 1000
@@ -5306,6 +5322,7 @@ function updateOnePosition(position, snap) {
 
     if (position.quickScalpEnabled) {
       position.quickScalpStopReference = position.stopCurrent;
+      position.quickScalpTargetReference = position.tp3;
     }
 
     if (leg) {
@@ -5539,9 +5556,9 @@ function updateOnePosition(position, snap) {
     return events;
   }
 
-  // V2.2 AUTO BREAK-EVEN LOCK (aplicado no FIM do candle para valer a partir do PRÓXIMO candle 5m):
+  // V2.4 AUTO BREAK-EVEN LOCK EM +0.48R + STEP-LOCK PÓS-TP1 EM +1.08R:
   if (
-    Number(position.mfeR || 0) >= 0.80 &&
+    Number(position.mfeR || 0) >= 0.48 &&
     Number(position.stage || 0) === 0
   ) {
     const targetNetUsdc = profitProtectTargetNet(position);
@@ -5564,6 +5581,20 @@ function updateOnePosition(position, snap) {
       );
     }
     position.beLocked = true;
+  } else if (
+    Number(position.stage || 0) === 1 &&
+    Number(position.mfeR || 0) >= 1.08
+  ) {
+    // Se já bateu TP1 e andou >= +1.08R (quase TP2), trava o stop dos 60% restantes no preço do TP1
+    const stepStop = clampProtectedStop(position, position.tp1, 1);
+    position.stopCurrent = moreProtectiveStop(position, position.stopCurrent, stepStop);
+    if (position.quickScalpEnabled && Number.isFinite(position.quickScalpStopReference)) {
+      position.quickScalpStopReference = moreProtectiveStop(
+        position,
+        position.quickScalpStopReference,
+        stepStop
+      );
+    }
   }
 
   updateDrawdown();
