@@ -27,6 +27,18 @@ function oiPolicyForSide(
     );
   const oiPct = Math.abs(num(signal?.oiContext?.oiPct));
 
+  const earlyContrary =
+    (side === 'LONG' && ['SHORT_BUILDUP', 'LONG_UNWIND'].includes(regime)) ||
+    (side === 'SHORT' && ['LONG_BUILDUP', 'SHORT_COVERING'].includes(regime));
+  if (earlyContrary) {
+    return {
+      ok: false,
+      label: 'STRONG_CONTRARY',
+      regime,
+      oiPct
+    };
+  }
+
   if (confirmedClass) {
     if (confirmedClass === 'STRONG_CONTRARY') {
       return { ok: false, label: 'STRONG_CONTRARY', regime, oiPct };
@@ -268,15 +280,41 @@ export function eliteQuickScalpAssessment(
   if (setup === 'PULLBACK' && !macdOk && !(rawScore >= 92 && pullbackDistAtr <= 0.25 && candleBodyAtr <= 0.85)) {
     reasons.push('MACD 5m não confirma o pullback');
   }
-  if (setup === 'PULLBACK' && volume5 > 0 && volume5 < 0.52) {
-    reasons.push(`volume 5m ${volume5.toFixed(2)}x < 0.52x`);
+  const slope15 = num(signal?.marketRegime?.slope15, num(signal?.pullback?.slope15, 0.15));
+  const slope1h = num(signal?.marketRegime?.slope1h, num(signal?.pullback?.slope1h, 0.15));
+  if (setup === 'PULLBACK') {
+    if (volume5 > 0 && volume5 < 0.52) {
+      reasons.push(`volume 5m ${volume5.toFixed(2)}x < 0.52x`);
+    }
+    if (slope1h < 0.11) {
+      reasons.push(`slope1H ${slope1h.toFixed(2)} ATR < 0.11 ATR (1H sem inclinação suficiente)`);
+    }
+    const effectiveChaseAtr = signal.confirmedEntry ? chaseAtr : pullbackDistAtr * 0.6;
+    if ((pullbackDistAtr > 0.78 || effectiveChaseAtr > 0.48) && !(oi.label === 'FAVORABLE' && momentumCount >= 3 && slope1h >= 0.16)) {
+      reasons.push(`pullback esticado (EMA ${pullbackDistAtr.toFixed(2)} ATR / chase ${effectiveChaseAtr.toFixed(2)} ATR) sem OI FAVORABLE + Momentum 3/3`);
+    }
+    if (!['ALIGNED', 'BTC_SELF'].includes(btcMode)) {
+      const btcMixedEliteOk =
+        rawScore >= 85 &&
+        momentumCount >= 3 &&
+        volume5 >= 0.75 &&
+        slope15 >= 0.10 &&
+        pullbackDistAtr <= 0.35 &&
+        oi.label === 'FAVORABLE';
+      if (!btcMixedEliteOk) {
+        reasons.push(`BTC ${btcMode} exige Score >= 85, OI FAVORABLE, Momentum 3/3, vol >= 0.75x, slope15 >= 0.10 e EMA <= 0.35 ATR`);
+      }
+    }
   }
   if (setup === 'BREAKOUT_STRONG') {
     if (oi.label !== 'FAVORABLE') {
       reasons.push(`Breakout exige OI FAVORABLE (atual ${oi.regime || oi.label})`);
     }
-    if (volume5 < 2.40) {
-      reasons.push(`Breakout exige volume explosivo >= 2.40x (atual ${volume5.toFixed(2)}x)`);
+    if (volume5 < 1.75) {
+      reasons.push(`Breakout exige volume explosivo >= 1.75x (atual ${volume5.toFixed(2)}x)`);
+    }
+    if (rawScore < 90) {
+      reasons.push(`Breakout Quick exige Score >= 90 (atual ${rawScore})`);
     }
     if (!macdOk) {
       reasons.push('Breakout exige MACD 5m alinhado');

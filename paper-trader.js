@@ -3494,11 +3494,11 @@ export function maybeOpenPaperPosition(signal) {
       const dirSign = position.side === 'SHORT' ? -1 : 1;
       position.stopInitial = quick.stopReference;
       position.stopCurrent = quick.stopReference;
-      position.tp1 = position.entryFill + dirSign * quickTargetDist * 0.44;
-      position.tp2 = position.entryFill + dirSign * quickTargetDist * 0.65;
-      position.tp3 = position.entryFill + dirSign * quickTargetDist * 0.88;
-      position.tp1ClosePct = 40;
-      position.tp2ClosePct = 30;
+      position.tp1 = position.entryFill + dirSign * quickTargetDist * 0.42;
+      position.tp2 = position.entryFill + dirSign * quickTargetDist * 0.60;
+      position.tp3 = position.entryFill + dirSign * quickTargetDist * 0.82;
+      position.tp1ClosePct = 35;
+      position.tp2ClosePct = 35;
       position.tp3ClosePct = 30;
       position.runnerEnabled = false;
     }
@@ -5583,9 +5583,9 @@ function updateOnePosition(position, snap) {
     position.beLocked = true;
   } else if (
     Number(position.stage || 0) === 1 &&
-    Number(position.mfeR || 0) >= 1.08
+    Number(position.mfeR || 0) >= 1.00
   ) {
-    // Se já bateu TP1 e andou >= +1.08R (quase TP2), trava o stop dos 60% restantes no preço do TP1
+    // Se já bateu TP1 e andou >= +1.00R (quase TP2), trava o stop no preço do TP1
     const stepStop = clampProtectedStop(position, position.tp1, 1);
     position.stopCurrent = moreProtectiveStop(position, position.stopCurrent, stepStop);
     if (position.quickScalpEnabled && Number.isFinite(position.quickScalpStopReference)) {
@@ -5593,6 +5593,20 @@ function updateOnePosition(position, snap) {
         position,
         position.quickScalpStopReference,
         stepStop
+      );
+    }
+  } else if (
+    Number(position.stage || 0) === 2 &&
+    Number(position.mfeR || 0) >= 1.42
+  ) {
+    // Se já bateu TP2 e andou >= +1.42R (quase TP3), trava o stop dos 30% finais no preço do TP2
+    const stepStop2 = clampProtectedStop(position, position.tp2, 2);
+    position.stopCurrent = moreProtectiveStop(position, position.stopCurrent, stepStop2);
+    if (position.quickScalpEnabled && Number.isFinite(position.quickScalpStopReference)) {
+      position.quickScalpStopReference = moreProtectiveStop(
+        position,
+        position.quickScalpStopReference,
+        stepStop2
       );
     }
   }

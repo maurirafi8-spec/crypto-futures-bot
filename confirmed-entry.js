@@ -29,6 +29,18 @@ function oiClassForSide(
   const regime = String(oiContext?.regime || 'NEUTRAL').toUpperCase();
   const oiPct = Math.abs(finiteNumber(oiContext?.oiPct, 0));
 
+  const earlyContrary =
+    (dir === 'LONG' && ['SHORT_BUILDUP', 'LONG_UNWIND'].includes(regime)) ||
+    (dir === 'SHORT' && ['LONG_BUILDUP', 'SHORT_COVERING'].includes(regime));
+  if (earlyContrary) {
+    return {
+      level: 'STRONG_CONTRARY',
+      regime,
+      oiPct,
+      reason: `${regime} fortemente contrário ao ${dir}`
+    };
+  }
+
   if (oiContext?.confirmed === true) {
     return {
       level: 'FAVORABLE',
@@ -315,6 +327,17 @@ export class ConfirmedEntryManager {
     const macdOrPrime = macdOk || (sigScore >= 92 && distAtr <= 0.25 && bodyAtr <= 0.85);
     const rsiOk = side === "SHORT" ? (rsi5 >= 40 && rsi15 >= 36) : (rsi5 <= 60 && rsi15 <= 64);
     const btcMode = String(signal?.btcRegime?.mode || signal?.btcRegime?.regime || "ALIGNED").toUpperCase();
+    const slope15 = finiteNumber(signal?.marketRegime?.slope15, finiteNumber(signal?.pullback?.slope15, 0.15));
+    const slope1h = finiteNumber(signal?.marketRegime?.slope1h, finiteNumber(signal?.pullback?.slope1h, 0.15));
+    const momCount = finiteNumber(signal?.momentum?.confirmationCount, 2);
+    const slope1hOk = slope1h >= 0.11;
+    const btcAlignedOrElite = ["ALIGNED", "BTC_SELF"].includes(btcMode) || (
+      sigScore >= 85 &&
+      momCount >= 3 &&
+      vol5 >= 0.75 &&
+      slope15 >= 0.10 &&
+      distAtr <= 0.35
+    );
 
     if (
       signal?.pullback?.confirmed === true &&
@@ -324,15 +347,18 @@ export class ConfirmedEntryManager {
       vol5 >= 0.52 &&
       aligned4h &&
       macdOrPrime &&
-      rsiOk
+      rsiOk &&
+      slope1hOk &&
+      btcAlignedOrElite
     ) {
       const oiClass = oiClassForSide(
         signal?.side,
         signal?.oiContext,
         this.strongOiContraryPct
       );
+      const stretchedPullbackOk = distAtr <= 0.78 || (oiClass.level === "FAVORABLE" && momCount >= 3 && slope1h >= 0.16);
       const neutralOiBtcOk = oiClass.level !== "NEUTRAL" || ["ALIGNED", "BTC_SELF"].includes(btcMode);
-      if (oiClass.level !== "STRONG_CONTRARY" && oiClass.level !== "MILD_CONTRARY" && neutralOiBtcOk) {
+      if (oiClass.level !== "STRONG_CONTRARY" && oiClass.level !== "MILD_CONTRARY" && neutralOiBtcOk && stretchedPullbackOk) {
         const barTime = finiteNumber(signal?.t5?.openTime, Date.now());
         signal.confirmedEntry = {
           armedAt: Date.now(),

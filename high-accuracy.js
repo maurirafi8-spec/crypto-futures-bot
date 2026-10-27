@@ -27,6 +27,19 @@ function oiPolicyForSide(
     );
   const oiPct = Math.abs(num(signal?.oiContext?.oiPct));
 
+  const earlyContrary =
+    (side === 'LONG' && ['SHORT_BUILDUP', 'LONG_UNWIND'].includes(regime)) ||
+    (side === 'SHORT' && ['LONG_BUILDUP', 'SHORT_COVERING'].includes(regime));
+  if (earlyContrary) {
+    const strong = oiPct >= strongContraryPct;
+    return {
+      level: strong ? 'STRONG_CONTRARY' : 'MILD_CONTRARY',
+      regime,
+      oiPct,
+      accepted: !strong
+    };
+  }
+
   if (confirmedClass) {
     if (confirmedClass === 'STRONG_CONTRARY') {
       return { level: 'STRONG_CONTRARY', regime, oiPct, accepted: false };
