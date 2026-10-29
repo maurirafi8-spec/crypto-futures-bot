@@ -2073,6 +2073,44 @@ function eligibility(signal) {
   }
 
   if (
+    cfg.quickScalpEnabled &&
+    cfg.quickScalpEliteOnly &&
+    !cfg.quickScalpFallbackRunner
+  ) {
+    const preQuick = eliteQuickScalpAssessment(
+      signal,
+      eliteQuickOptions(
+        cfg,
+        strategy.profile === 'BLOCKED_HIGH_ACCURACY' ? 'HIGH_ACCURACY' : strategy.profile
+      )
+    );
+    const nonConfirmReasons = (preQuick.reasons || []).filter(
+      r =>
+        !String(r || '').includes('Confirmed Entry obrigatório') &&
+        !String(r || '').includes('Pullback Quick exige perfil HIGH_ACCURACY')
+    );
+    if (nonConfirmReasons.length > 0) {
+      return {
+        ok: false,
+        reason: 'ELITE QUICK bloqueado: ' + nonConfirmReasons.join(' · ')
+      };
+    }
+  }
+
+  const sameSideUnprotected = state.openPositions.find(
+    p =>
+      String(p.side || '').toUpperCase() === signalSide &&
+      Number(p.stage || 0) === 0 &&
+      !p.beLocked
+  );
+  if (sameSideUnprotected && String(sameSideUnprotected.symbol || '').toUpperCase() !== String(signal.symbol || '').toUpperCase()) {
+    return {
+      ok: false,
+      reason: `correlação direcional: já existe ${sameSideUnprotected.symbol} ${signalSide} aberto ainda sem TP1/Break-Even`
+    };
+  }
+
+  if (
     state.openPositions.length >=
     cfg.maxOpenPositions
   ) {
@@ -5556,9 +5594,10 @@ function updateOnePosition(position, snap) {
     return events;
   }
 
-  // V2.4 AUTO BREAK-EVEN LOCK EM +0.48R + STEP-LOCK PÓS-TP1 EM +1.08R:
+  // V2.6 AUTO BREAK-EVEN LOCK EM +0.36R (OU ESTAGNAÇÃO >= 35m COM +0.25R) + STEP-LOCK PÓS-TP1 EM +1.00R:
+  const openMinutesNow = (Date.now() - Number(position.openedAt || Date.now())) / 60000;
   if (
-    Number(position.mfeR || 0) >= 0.48 &&
+    (Number(position.mfeR || 0) >= 0.36 || (openMinutesNow >= 35 && Number(position.mfeR || 0) >= 0.25)) &&
     Number(position.stage || 0) === 0
   ) {
     const targetNetUsdc = profitProtectTargetNet(position);

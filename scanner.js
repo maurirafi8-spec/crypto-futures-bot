@@ -2566,12 +2566,19 @@ export function balancedEntryPreview({
 
   const entryMode =
     (
-      marketRegime.regime ===
-        'EXPANSION' &&
-      breakout.qualified &&
-      marketRegime.breakoutAllowed
+      pullback.confirmed &&
+      marketRegime.pullbackAllowed &&
+      trendExhaustion.ok &&
+      (finiteNumber(pullback.distanceAtr, 0) <= 0.78 || finiteNumber(t5?.volumeRatio, 0) < 1.75)
     )
-      ? 'BREAKOUT_STRONG'
+      ? 'PULLBACK'
+      : (
+        marketRegime.regime ===
+          'EXPANSION' &&
+        breakout.qualified &&
+        marketRegime.breakoutAllowed
+      )
+        ? 'BREAKOUT_STRONG'
       : (
         pullback.confirmed &&
         marketRegime.pullbackAllowed &&
@@ -3687,13 +3694,20 @@ export async function scanMarket({
 
       const entryMode =
         (
-          marketRegime.regime ===
-            'EXPANSION' &&
-          breakoutEnabled &&
-          breakout.qualified &&
-          marketRegime.breakoutAllowed
+          pullback.confirmed &&
+          marketRegime.pullbackAllowed &&
+          trendExhaustion.ok &&
+          (finiteNumber(pullback.distanceAtr, 0) <= 0.78 || finiteNumber(t5?.volumeRatio, 0) < 1.75)
         )
-          ? 'BREAKOUT_STRONG'
+          ? 'PULLBACK'
+          : (
+            marketRegime.regime ===
+              'EXPANSION' &&
+            breakoutEnabled &&
+            breakout.qualified &&
+            marketRegime.breakoutAllowed
+          )
+            ? 'BREAKOUT_STRONG'
           : (
             pullback.confirmed &&
             marketRegime.pullbackAllowed &&

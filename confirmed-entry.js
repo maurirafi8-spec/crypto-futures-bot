@@ -325,17 +325,17 @@ export class ConfirmedEntryManager {
     const aligned4h = signal?.marketRegime?.aligned4h !== false && signal?.trendExhaustion?.aligned4h !== false;
     const macdOk = signal?.momentum?.macdOk === true || (side === "LONG" ? finiteNumber(signal?.t5?.macdHist, 0) > 0 : finiteNumber(signal?.t5?.macdHist, 0) < 0);
     const macdOrPrime = macdOk || (sigScore >= 92 && distAtr <= 0.25 && bodyAtr <= 0.85);
-    const rsiOk = side === "SHORT" ? (rsi5 >= 40 && rsi15 >= 36) : (rsi5 <= 60 && rsi15 <= 64);
+    const rsiOk = side === "SHORT" ? (rsi5 >= 41.0 && (rsi5 <= 48.0 || sigScore >= 85) && rsi15 >= 40.5) : (rsi5 <= 59.0 && (rsi5 >= 52.0 || sigScore >= 85) && rsi15 <= 59.5);
     const btcMode = String(signal?.btcRegime?.mode || signal?.btcRegime?.regime || "ALIGNED").toUpperCase();
-    const slope15 = finiteNumber(signal?.marketRegime?.slope15, finiteNumber(signal?.pullback?.slope15, 0.15));
-    const slope1h = finiteNumber(signal?.marketRegime?.slope1h, finiteNumber(signal?.pullback?.slope1h, 0.15));
+    const slope15 = Math.round(finiteNumber(signal?.marketRegime?.slope15, finiteNumber(signal?.pullback?.slope15, 0.15)) * 100) / 100;
+    const slope1h = Math.round(finiteNumber(signal?.marketRegime?.slope1h, finiteNumber(signal?.pullback?.slope1h, 0.15)) * 100) / 100;
     const momCount = finiteNumber(signal?.momentum?.confirmationCount, 2);
-    const slope1hOk = slope1h >= 0.11;
+    const slopeOk = slope15 >= 0.12 && slope1h >= 0.11;
     const btcAlignedOrElite = ["ALIGNED", "BTC_SELF"].includes(btcMode) || (
       sigScore >= 85 &&
       momCount >= 3 &&
       vol5 >= 0.75 &&
-      slope15 >= 0.10 &&
+      slope15 >= 0.12 &&
       distAtr <= 0.35
     );
 
@@ -348,7 +348,7 @@ export class ConfirmedEntryManager {
       aligned4h &&
       macdOrPrime &&
       rsiOk &&
-      slope1hOk &&
+      slopeOk &&
       btcAlignedOrElite
     ) {
       const oiClass = oiClassForSide(
@@ -1076,6 +1076,10 @@ export class ConfirmedEntryManager {
         pullback: {
           ...item.signal.pullback,
           ...snap.pullback,
+          distanceAtr: Math.min(
+            finiteNumber(item.signal?.pullback?.distanceAtr, 99),
+            finiteNumber(snap?.pullback?.distanceAtr, 99)
+          ),
           triggerQuality: Math.max(
             finiteNumber(item.signal?.pullback?.triggerQuality, 0),
             finiteNumber(snap?.pullback?.triggerQuality, 0)
