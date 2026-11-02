@@ -325,18 +325,19 @@ export class ConfirmedEntryManager {
     const aligned4h = signal?.marketRegime?.aligned4h !== false && signal?.trendExhaustion?.aligned4h !== false;
     const macdOk = signal?.momentum?.macdOk === true || (side === "LONG" ? finiteNumber(signal?.t5?.macdHist, 0) > 0 : finiteNumber(signal?.t5?.macdHist, 0) < 0);
     const macdOrPrime = macdOk || (sigScore >= 92 && distAtr <= 0.25 && bodyAtr <= 0.85);
-    const rsiOk = side === "SHORT" ? (rsi5 >= 41.0 && (rsi5 <= 48.0 || sigScore >= 85) && rsi15 >= 40.5) : (rsi5 <= 59.0 && (rsi5 >= 52.0 || sigScore >= 85) && rsi15 <= 59.5);
+    const minRsi15Ce = sigScore >= 90 ? 34.0 : 36.5;
+    const maxRsi15Ce = sigScore >= 90 ? 66.0 : 63.5;
+    const rsiOk = side === "SHORT"
+      ? (rsi5 >= 32.0 && (rsi5 <= 50.0 || sigScore >= 85) && rsi15 >= minRsi15Ce)
+      : (rsi5 <= 68.0 && (rsi5 >= 50.0 || sigScore >= 85) && rsi15 <= maxRsi15Ce);
     const btcMode = String(signal?.btcRegime?.mode || signal?.btcRegime?.regime || "ALIGNED").toUpperCase();
     const slope15 = Math.round(finiteNumber(signal?.marketRegime?.slope15, finiteNumber(signal?.pullback?.slope15, 0.15)) * 100) / 100;
     const slope1h = Math.round(finiteNumber(signal?.marketRegime?.slope1h, finiteNumber(signal?.pullback?.slope1h, 0.15)) * 100) / 100;
     const momCount = finiteNumber(signal?.momentum?.confirmationCount, 2);
-    const slopeOk = slope15 >= 0.12 && slope1h >= 0.11;
+    const slopeOk = slope15 >= 0.10 && slope1h >= 0.10;
     const btcAlignedOrElite = ["ALIGNED", "BTC_SELF"].includes(btcMode) || (
-      sigScore >= 85 &&
-      momCount >= 3 &&
-      vol5 >= 0.75 &&
-      slope15 >= 0.12 &&
-      distAtr <= 0.35
+      (sigScore >= 86 && aiConf >= 80 && momCount >= 2 && vol5 >= 0.55 && distAtr <= 0.90) ||
+      (sigScore >= 80 && momCount >= 2 && vol5 >= 0.65 && slope15 >= 0.10 && distAtr <= 0.78)
     );
 
     if (
@@ -356,8 +357,10 @@ export class ConfirmedEntryManager {
         signal?.oiContext,
         this.strongOiContraryPct
       );
-      const stretchedPullbackOk = distAtr <= 0.78 || (oiClass.level === "FAVORABLE" && momCount >= 3 && slope1h >= 0.16);
-      const neutralOiBtcOk = oiClass.level !== "NEUTRAL" || ["ALIGNED", "BTC_SELF"].includes(btcMode);
+      const stretchedPullbackOk =
+        distAtr <= 0.80 ||
+        (distAtr <= 0.98 && (oiClass.level === "FAVORABLE" || sigScore >= 88) && momCount >= 2);
+      const neutralOiBtcOk = oiClass.level !== "NEUTRAL" || ["ALIGNED", "BTC_SELF"].includes(btcMode) || sigScore >= 88;
       if (oiClass.level !== "STRONG_CONTRARY" && oiClass.level !== "MILD_CONTRARY" && neutralOiBtcOk && stretchedPullbackOk) {
         const barTime = finiteNumber(signal?.t5?.openTime, Date.now());
         signal.confirmedEntry = {

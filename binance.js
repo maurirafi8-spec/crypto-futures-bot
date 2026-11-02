@@ -1,3 +1,14 @@
+import fs from 'node:fs';
+try {
+  if (fs.existsSync('.env')) {
+    for (const line of fs.readFileSync('.env', 'utf8').split(/\r?\n/)) {
+      const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+      if (m && !process.env[m[1]]) {
+        process.env[m[1]] = m[2].replace(/^['"]|['"]$/g, '');
+      }
+    }
+  }
+} catch {}
 const BASE = 'https://api.coinalyze.net/v1';
 const API_KEY = process.env.COINALYZE_API_KEY;
 

@@ -1,3 +1,14 @@
+import fs from 'node:fs';
+try {
+  if (fs.existsSync('.env')) {
+    for (const line of fs.readFileSync('.env', 'utf8').split(/\r?\n/)) {
+      const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+      if (m && !process.env[m[1]]) {
+        process.env[m[1]] = m[2].replace(/^['"]|['"]$/g, '');
+      }
+    }
+  }
+} catch {}
 import http from 'node:http';
 import { scanMarket, signalText } from './scanner.js';
 import { sendMessage, getUpdates } from './telegram.js';
@@ -76,8 +87,8 @@ import {
 } from './google-sync.js';
 
 const cfg = {
-  token: process.env.BOT_TOKEN,
-  chatId: process.env.TELEGRAM_CHAT_ID || '',
+  token: process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN,
+  chatId: (process.env.TELEGRAM_CHAT_ID && !String(process.env.TELEGRAM_CHAT_ID).includes('seu_chat_id')) ? process.env.TELEGRAM_CHAT_ID : '',
   port: Number(process.env.PORT || 3000),
   intervalMin: Math.max(
     Number(process.env.SCAN_INTERVAL_MINUTES || 1),
@@ -4249,7 +4260,9 @@ async function doScan({
             String(paperGate.reason || '').includes('já foi processado') ||
             String(paperGate.reason || '').includes('cooldown');
 
-          if (
+          // V2.7: Na fase PRE_ARM o sinal apenas não arma silenciosamente.
+          // Não envia notificação no Telegram para evitar spam de dezenas de mensagens.
+          /* if (
             paperConfig().notifyBlockedSignals &&
             !silentBlock
           ) {
@@ -4261,7 +4274,7 @@ async function doScan({
                 { phase: 'PRE_ARM' }
               )
             );
-          }
+          } */
 
           continue;
         }
@@ -5034,7 +5047,19 @@ async function pollingLoop() {
   }
 }
 
-http.createServer((req, res) => {
+http.createServer(async (req, res) => {
+  const urlPath = String(req?.url || "/").split("?")[0];
+  if (urlPath === "/cron-scan" || urlPath === "/scan-now") {
+    if (!scanning) {
+      try {
+        await doScan({ automatic: true });
+      } catch (err) {
+        console.error("[cron-scan]", err?.message || err);
+      }
+    }
+  } else if (!scanning && (!lastScanReport?.at || Date.now() - lastScanReport.at > 65000)) {
+    doScan({ automatic: true }).catch(console.error);
+  }
   res.writeHead(200, { 'content-type': 'application/json' });
   res.end(JSON.stringify({
     ok: true,
