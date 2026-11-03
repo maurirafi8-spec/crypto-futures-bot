@@ -43,6 +43,8 @@ import {
   testBlofinAccount,
   getBlofinPositions,
   executeBlofinOrder,
+  closeBlofinPosition,
+  formatBlofinInstId,
   blofinExecutionHistory
 } from './blofin-executor.js';
 import {
@@ -4526,6 +4528,240 @@ async function doScan({
   }
 }
 
+function blofinExecutionHistoryText() {
+  if (!blofinExecutionHistory.length) {
+    return (
+      '🧪 <b>Histórico BloFin</b>\n\n' +
+      'Nenhuma execução registrada desde o último deploy.\n\n' +
+      '💡 <i>Dica: Para testar uma ordem imediatamente no Modo Demo, envie:</i>\n' +
+      '<code>/btest BTC LONG</code> ou <code>/btest TSLA LONG</code>'
+    );
+  }
+  const lines = [
+    '🟢 <b>BloFin — Histórico de Execuções Recentes</b>',
+    ''
+  ];
+  for (const e of blofinExecutionHistory.slice(0, 10)) {
+    const icon = e.success ? '✅' : '❌';
+    const classIcon = e.assetClass === 'Stock' ? '📈 [AÇÃO]' : '🪙 [CRIPTO]';
+    const sideIcon = e.side === 'LONG' ? '🟢' : '🔴';
+    const timeStr = e.timestamp ? new Date(e.timestamp).toLocaleTimeString('pt-BR') : '';
+    lines.push(
+      `${icon} ${classIcon} <b>${e.instId} ${sideIcon} ${e.side}</b> (${e.mode})\n` +
+      `⏱ ${timeStr} · ⚙️ ${e.leverage}x · 💵 Notional: ${Number(e.notionalUsdt || 0).toFixed(2)}\n` +
+      `🎯 Entrada: ${e.entryPrice ?? '—'}` +
+      `${e.takeProfit ? ` · TP: ${e.takeProfit}` : ''}` +
+      `${e.stopLoss ? ` · SL: ${e.stopLoss}` : ''}\n` +
+      `🤖 IA: ${e.aiConfidence || 0}% · ⭐ Score: ${e.score || 0}\n` +
+      `${e.error ? `⚠️ <i>Erro: ${e.error}</i>\n` : ''}` +
+      `${e.id ? `🆔 <code>${e.id}</code>` : ''}`
+    );
+  }
+  return lines.join('\n\n');
+}
+
+async function blofinPositionsText() {
+  const cfg = blofinConfig();
+  if (!cfg.hasCredentials) {
+    return '⚠️ Credenciais BloFin não configuradas no Render. Impossível consultar posições.';
+  }
+  const positions = await getBlofinPositions();
+  if (!positions.length) {
+    return `🟢 <b>BloFin (${cfg.mode}) — Posições Abertas</b>\n\nNenhuma posição aberta no momento.`;
+  }
+  const lines = [
+    `🟢 <b>BloFin (${cfg.mode}) — Posições Abertas (${positions.length})</b>\n`
+  ];
+  for (const p of positions) {
+    const pnlIcon = p.unrealizedPnl >= 0 ? '🟢' : '🔴';
+    const sideIcon = p.side === 'LONG' ? '🟢' : '🔴';
+    lines.push(
+      `${sideIcon} <b>${p.instId} ${p.side}</b> (${p.leverage}x ${p.marginMode})\n` +
+      `📦 Contratos: ${p.contracts}\n` +
+      `🎯 Entrada: ${p.avgPrice} · Mark: ${p.markPrice}\n` +
+      `${pnlIcon} PnL Não Realizado: <b>${p.unrealizedPnl >= 0 ? '+' : ''}${p.unrealizedPnl.toFixed(4)} USDT</b>`
+    );
+  }
+  return lines.join('\n\n');
+}
+
+async function blofinStatusText() {
+  const cfg = blofinConfig();
+  const conn = await testBlofinConnectivity();
+  const acct = await testBlofinAccount();
+
+  const modeBadge = cfg.isDemo ? '🧪 DEMO (Sandbox)' : '🚀 LIVE (Real)';
+  const statusBadge = cfg.enabled ? '🟢 ATIVO' : '⏸ PAUSADO';
+  const stocksBadge = cfg.stocksEnabled ? '✅ HABILITADO' : '❌ DESATIVADO';
+
+  let credsText = '';
+  if (cfg.hasCredentials) {
+    credsText = '🔑 <b>Credenciais:</b> ✅ Configuradas no Render';
+  } else {
+    credsText =
+      '⚠️ <b>Credenciais:</b> ❌ NÃO configuradas!\n' +
+      '<i>Adicione no Environment do Render:</i>\n' +
+      '• <code>BLOFIN_API_KEY</code>\n' +
+      '• <code>BLOFIN_SECRET_KEY</code>\n' +
+      '• <code>BLOFIN_PASSPHRASE</code>';
+  }
+
+  let balanceText = '';
+  if (acct.ok) {
+    balanceText =
+      '💰 <b>Saldo Futuros BloFin:</b>\n' +
+      `  • Total: <b>${acct.balanceUsdt.toFixed(2)} USDT</b>\n` +
+      `  • Disponível: <b>${acct.availableUsdt.toFixed(2)} USDT</b>\n` +
+      `  • Congelado (Margem): <b>${acct.frozenUsdt.toFixed(2)} USDT</b>`;
+  } else if (cfg.hasCredentials) {
+    balanceText = `⚠️ <b>Saldo:</b> Falha na autenticação (${acct.message})`;
+  } else {
+    balanceText = 'ℹ️ <i>Configure as chaves no Render para consultar o saldo.</i>';
+  }
+
+  return (
+    `🟢 <b>BLOFIN EXECUTOR — STATUS & CONEXÃO</b>\n\n` +
+    `⚡ Status: <b>${statusBadge}</b>\n` +
+    `🏷 Modo: <b>${modeBadge}</b>\n` +
+    `📈 Ações Tokenizadas: <b>${stocksBadge}</b> (TSLA, NVDA, AAPL...)\n` +
+    `🌐 Conexão API: ${conn.ok ? `✅ OK (${conn.latencyMs}ms)` : `❌ ${conn.message}`}\n` +
+    `📊 Mercado: ${conn.cryptosAvailable ?? '—'} criptos · ${conn.stocksAvailable ?? '—'} ações\n\n` +
+    `${credsText}\n\n` +
+    `${balanceText}\n\n` +
+    `⚙️ <b>Parâmetros de Operação:</b>\n` +
+    `  • Alavancagem: <b>${cfg.leverage}x</b>\n` +
+    `  • Margem por Trade: <b>${cfg.marginUsdt} USDT</b>\n` +
+    `  • Modo de Margem: <b>${cfg.marginMode.toUpperCase()}</b>\n` +
+    `  • Máx Posições Abertas: <b>${cfg.maxOpenPositions}</b>\n` +
+    `  • Execuções nesta sessão: <b>${blofinExecutionHistory.length}</b>\n\n` +
+    `📋 <b>Comandos BloFin:</b>\n` +
+    `• /blofin — status geral e saldo\n` +
+    `• /bexecs — histórico de execuções\n` +
+    `• /bpos — ver posições abertas na BloFin\n` +
+    `• /btest BTC LONG — testar ordem demo imediata (Cripto)\n` +
+    `• /btest TSLA LONG — testar ordem demo imediata (Ação)\n` +
+    `• /bclose BTC-USDT — fechar posição a mercado`
+  );
+}
+
+async function handleBlofinManualTest(argsText, activeChatId) {
+  const cfg = blofinConfig();
+  if (!cfg.hasCredentials) {
+    return await sendMessage(
+      cfg.token,
+      activeChatId,
+      '❌ <b>Chaves BloFin ausentes no Render!</b>\n\n' +
+      'Para enviar ordens, adicione as variáveis no Render:\n' +
+      '• <code>BLOFIN_API_KEY</code>\n' +
+      '• <code>BLOFIN_SECRET_KEY</code>\n' +
+      '• <code>BLOFIN_PASSPHRASE</code>\n' +
+      '• <code>BLOFIN_DEMO=true</code> (para modo demo seguro)'
+    );
+  }
+
+  const parts = argsText.trim().split(/\s+/).slice(1);
+  let rawSymbol = parts[0] ? parts[0].toUpperCase() : 'BTC';
+  let side = parts[1] ? parts[1].toUpperCase() : 'LONG';
+  if (side !== 'LONG' && side !== 'SHORT') side = 'LONG';
+
+  const instId = formatBlofinInstId(rawSymbol);
+
+  await sendMessage(
+    cfg.token,
+    activeChatId,
+    `🧾 Enviando ordem de TESTE (${cfg.mode}) para <b>${instId} ${side}</b> na BloFin...`
+  );
+
+  let refPrice = 100;
+  try {
+    const res = await fetch(`https://openapi.blofin.com/api/v1/market/tickers?instId=${encodeURIComponent(instId)}`);
+    const json = await res.json();
+    if (json?.data?.[0]?.last) {
+      refPrice = Number(json.data[0].last);
+    }
+  } catch {}
+
+  const isLong = side === 'LONG';
+  const entry = refPrice;
+  const slOffset = entry * 0.015;
+  const tpOffset = entry * 0.025;
+  const stop = isLong ? Number((entry - slOffset).toFixed(4)) : Number((entry + slOffset).toFixed(4));
+  const tp1 = isLong ? Number((entry + tpOffset).toFixed(4)) : Number((entry - tpOffset).toFixed(4));
+
+  const testSignal = {
+    symbol: instId,
+    side,
+    entry,
+    stop,
+    tp1,
+    score: 90,
+    ai: { confidence: 85 }
+  };
+
+  try {
+    const res = await executeBlofinOrder(testSignal);
+    if (res.ok) {
+      await sendMessage(
+        cfg.token,
+        activeChatId,
+        `✅ <b>ORDEM BLOFIN (${res.mode}) EXECUTADA COM SUCESSO!</b>\n\n` +
+        `${res.isStock ? '📈 Ação Tokenizada' : '🪙 Criptomoeda'}: <b>${res.instId} ${side}</b>\n` +
+        `📦 Contratos: <b>${res.contracts}</b> (~${res.notional} notional)\n` +
+        `💰 Preço Ref.: ${res.entryPrice}\n` +
+        `🛑 Stop Loss: ${res.stopLoss}\n` +
+        `🎯 Take Profit: ${res.takeProfit}\n\n` +
+        `<i>Modo: ${res.mode} — verifique posições com /bpos</i>`
+      );
+    } else {
+      await sendMessage(
+        cfg.token,
+        activeChatId,
+        `❌ <b>Falha na execução BloFin (${cfg.mode}):</b>\n\n` +
+        `Motivo: <code>${res.error || res.reason || 'Erro desconhecido'}</code>\n\n` +
+        `<i>Dica: Se a API BloFin retornar erro de permissão ou saldo, verifique se a chave tem permissão de negociação e se há saldo na conta Futures Demo.</i>`
+      );
+    }
+  } catch (err) {
+    await sendMessage(
+      cfg.token,
+      activeChatId,
+      `❌ <b>Erro ao executar:</b>\n${err.message}`
+    );
+  }
+}
+
+async function handleBlofinClose(argsText, activeChatId) {
+  const cfg = blofinConfig();
+  const parts = argsText.trim().split(/\s+/).slice(1);
+  if (!parts[0]) {
+    return await sendMessage(
+      cfg.token,
+      activeChatId,
+      'ℹ️ <b>Uso:</b> <code>/bclose BTC-USDT</code> ou <code>/bclose TSLA-USDT</code>\nEnvie /bpos para ver as posições abertas.'
+    );
+  }
+  const instId = formatBlofinInstId(parts[0]);
+  await sendMessage(cfg.token, activeChatId, `⏳ Fechando posição <b>${instId}</b> na BloFin...`);
+  try {
+    const res = await closeBlofinPosition(instId);
+    if (res.ok) {
+      await sendMessage(
+        cfg.token,
+        activeChatId,
+        `✅ Posição <b>${instId}</b> fechada com sucesso na BloFin!`
+      );
+    } else {
+      await sendMessage(
+        cfg.token,
+        activeChatId,
+        `❌ Falha ao fechar posição <b>${instId}</b>: ${res.reason || res.error || 'erro desconhecido'}`
+      );
+    }
+  } catch (e) {
+    await sendMessage(cfg.token, activeChatId, `❌ Erro: ${e.message}`);
+  }
+}
+
 async function handleMessage(msg) {
   const text = (msg.text || '').trim();
   const plainHoldCommand = /^HOLD(?:\s|$)/i.test(text);
@@ -4568,7 +4804,12 @@ async function handleMessage(msg) {
       '/paperresume — reativar paper trading\n' +
       '/paperreset CONFIRM — zerar histórico/banca virtual\n' +
       '/kill — pausar e desarmar executor Hyperliquid\n' +
-      '/resume — reativar executor Hyperliquid (continua desarmado)'
+      '/resume — reativar executor Hyperliquid (continua desarmado)\n' +
+      '/blofin — status, saldo e conexão BloFin (Demo/Real)\n' +
+      '/bexecs — histórico de execuções BloFin (Cripto & Ações)\n' +
+      '/bpos — posições abertas na BloFin\n' +
+      '/btest BTC LONG — testar ordem demo na BloFin\n' +
+      '/bclose BTC-USDT — fechar posição na BloFin'
     );
   } else if (text.startsWith('/scheduler')) {
     await sendMessage(
@@ -5031,6 +5272,18 @@ async function handleMessage(msg) {
       activeChatId,
       '✅ Executor reativado, mas continua DESARMADO. Use /harm apenas quando quiser habilitar ordens TESTNET assinadas.'
     );
+  } else if (text.startsWith('/blofin')) {
+    const msgText = await blofinStatusText();
+    await sendMessage(cfg.token, activeChatId, msgText);
+  } else if (text.startsWith('/bexecs')) {
+    await sendMessage(cfg.token, activeChatId, blofinExecutionHistoryText());
+  } else if (text.startsWith('/bpos')) {
+    const msgText = await blofinPositionsText();
+    await sendMessage(cfg.token, activeChatId, msgText);
+  } else if (text.startsWith('/btest')) {
+    await handleBlofinManualTest(text, activeChatId);
+  } else if (text.startsWith('/bclose')) {
+    await handleBlofinClose(text, activeChatId);
   } else if (text.startsWith('/scan') || text.startsWith('/top')) {
     if (!scanning) {
       await sendMessage(
@@ -5039,8 +5292,14 @@ async function handleMessage(msg) {
         '🔎 Analisando mercado de Futuros...'
       );
     }
-
     await doScan({ forceReply: true });
+  } else if (text.startsWith('/')) {
+    await sendMessage(
+      cfg.token,
+      activeChatId,
+      `❓ <b>Comando não reconhecido:</b> <code>${text}</code>\n\n` +
+      'Envie /start para ver a lista de comandos ou /blofin para o status da BloFin.'
+    );
   }
 }
 
