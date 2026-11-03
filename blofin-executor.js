@@ -1,10 +1,12 @@
 // ==============================================================
-// BLOFIN EXECUTOR V1.1 — CRYPTO & TOKENIZED STOCKS (EQUITIES)
+// BLOFIN EXECUTOR V1.3 — DUAL-SIGNATURE & AUTO-ENVIRONMENT DETECT
 // Suporte nativo a Modo Demo (Sandbox) e Conta Real na BloFin
 // Suporta: Criptomoedas (BTC, ETH, SOL, SUI, etc.) e Ações (TSLA, NVDA, AAPL, etc.)
 // ==============================================================
 
 import crypto from 'node:crypto';
+
+export const BLOFIN_EXECUTOR_VERSION = 'V1.3 Dual-Engine';
 
 const LIVE_API_URL = 'https://openapi.blofin.com';
 const DEMO_API_URL = 'https://demo-trading-openapi.blofin.com';
@@ -67,6 +69,7 @@ export function blofinConfig() {
   const hasCredentials = Boolean(apiKey && secretKey && passphrase);
 
   return {
+    version: BLOFIN_EXECUTOR_VERSION,
     enabled: boolEnv('BLOFIN_EXECUTION_ENABLED', true),
     isDemo,
     mode: isDemo ? 'DEMO' : 'LIVE',
@@ -87,11 +90,11 @@ export function blofinConfig() {
 }
 
 /**
- * Assina requisição HTTP para BloFin usando HMAC-SHA256 Base64 Canônico
- * Formato canônico BloFin: requestPath + method.toUpperCase() + timestamp + nonce + body
- * Assinatura: HMAC-SHA256 binário codificado diretamente em Base64 (44 caracteres)
+ * Assina requisição HTTP para a API BloFin.
+ * Suporta o modo oficial da documentação (Hex 64 chars -> Base64 88 chars)
+ * e o modo direto (HMAC 32 bytes -> Base64 44 chars).
  */
-export function getBlofinHeaders(method, requestPath, bodyObj, apiKey, secretKey, passphrase) {
+export function getBlofinHeaders(method, requestPath, bodyObj, apiKey, secretKey, passphrase, useDirectBinary = false) {
   const timestamp = Date.now().toString();
   const nonce = crypto.randomUUID();
 
@@ -102,10 +105,21 @@ export function getBlofinHeaders(method, requestPath, bodyObj, apiKey, secretKey
 
   const prehash = `${requestPath}${method.toUpperCase()}${timestamp}${nonce}${bodyString}`;
 
-  const signature = crypto
-    .createHmac('sha256', secretKey)
-    .update(prehash)
-    .digest('base64');
+  let signature = '';
+  if (useDirectBinary) {
+    // Formato Direto (HMAC-SHA256 32 bytes em Base64 = 44 caracteres)
+    signature = crypto
+      .createHmac('sha256', secretKey)
+      .update(prehash)
+      .digest('base64');
+  } else {
+    // Formato Oficial BloFin Doc (HMAC-SHA256 64 hex chars em Base64 = 88 caracteres)
+    const hexDigest = crypto
+      .createHmac('sha256', secretKey)
+      .update(prehash)
+      .digest('hex');
+    signature = Buffer.from(hexDigest, 'utf8').toString('base64');
+  }
 
   return {
     'ACCESS-KEY': apiKey,
@@ -117,11 +131,7 @@ export function getBlofinHeaders(method, requestPath, bodyObj, apiKey, secretKey
   };
 }
 
-/**
- * Faz requisição HTTP à API Blofin com timeout e parsing seguro
- */
-export async function blofinRequest(method, pathWithQuery, body = null, customConfig = null) {
-  const cfg = customConfig || blofinConfig();
+async function executeSingleRequest(method, pathWithQuery, body, cfg, useDirectBinary) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
   const startedAt = Date.now();
@@ -133,7 +143,8 @@ export async function blofinRequest(method, pathWithQuery, body = null, customCo
       body,
       cfg.apiKey,
       cfg.secretKey,
-      cfg.passphrase
+      cfg.passphrase,
+      useDirectBinary
     );
 
     const fullUrl = `${cfg.apiUrl.replace(/\/$/, '')}${pathWithQuery}`;
@@ -162,7 +173,8 @@ export async function blofinRequest(method, pathWithQuery, body = null, customCo
       msg: json?.msg || '',
       data: json?.data ?? null,
       raw: text,
-      latencyMs: Date.now() - startedAt
+      latencyMs: Date.now() - startedAt,
+      signMode: useDirectBinary ? 'DIRECT_44' : 'HEX_BASE64_88'
     };
   } catch (error) {
     return {
@@ -172,14 +184,34 @@ export async function blofinRequest(method, pathWithQuery, body = null, customCo
       msg: error?.name === 'AbortError' ? 'timeout excedido' : error.message,
       data: null,
       raw: '',
-      latencyMs: Date.now() - startedAt
+      latencyMs: Date.now() - startedAt,
+      signMode: useDirectBinary ? 'DIRECT_44' : 'HEX_BASE64_88'
     };
   } finally {
     clearTimeout(timer);
   }
 }
 
-// Cache local de instrumentos Blofin (tickSize, lotSize, contractValue)
+/**
+ * Faz requisição HTTP à BloFin com DUAL-SIGNATURE ENGINE:
+ * Tenta o formato oficial (Hex 88 chars). Se falhar com erro de assinatura, retenta com o formato direto (44 chars).
+ */
+export async function blofinRequest(method, pathWithQuery, body = null, customConfig = null) {
+  const cfg = customConfig || blofinConfig();
+
+  // Tentativa 1: Oficial da documentação
+  let res = await executeSingleRequest(method, pathWithQuery, body, cfg, false);
+
+  // Tentativa 2: Fallback automático se a assinatura falhar
+  if (!res.ok && (res.code === '50111' || String(res.msg || '').toLowerCase().includes('signature'))) {
+    const res2 = await executeSingleRequest(method, pathWithQuery, body, cfg, true);
+    if (res2.ok) return res2;
+    return res2;
+  }
+
+  return res;
+}
+
 const instrumentsCache = new Map();
 let lastInstrumentsRefresh = 0;
 
@@ -211,16 +243,11 @@ export async function refreshBlofinInstruments() {
       }
       lastInstrumentsRefresh = now;
     }
-  } catch {
-    // Mantém o cache anterior
-  }
+  } catch {}
 
   return instrumentsCache;
 }
 
-/**
- * Conectividade pública
- */
 export async function testBlofinConnectivity() {
   const cfg = blofinConfig();
   const startedAt = Date.now();
@@ -262,7 +289,7 @@ export async function testBlofinConnectivity() {
 }
 
 /**
- * Consulta saldo autenticado da conta BloFin (Demo ou Real)
+ * Consulta saldo autenticado com auto-detecção de ambiente (DEMO vs LIVE)
  */
 export async function testBlofinAccount() {
   const cfg = blofinConfig();
@@ -276,17 +303,43 @@ export async function testBlofinAccount() {
     };
   }
 
-  // Tentativa 1: Futuros / Derivativos
-  let res = await blofinRequest('GET', '/api/v1/account/balance');
-
-  // Fallback 1: Ativos com filtro de futuros
+  // 1. Tenta no ambiente configurado (Demo ou Live)
+  let res = await blofinRequest('GET', '/api/v1/asset/balances?accountType=futures', null, cfg);
   if (!res.ok) {
-    res = await blofinRequest('GET', '/api/v1/asset/balances?accountType=futures');
+    res = await blofinRequest('GET', '/api/v1/account/balance', null, cfg);
+  }
+  if (!res.ok) {
+    res = await blofinRequest('GET', '/api/v1/asset/balances', null, cfg);
   }
 
-  // Fallback 2: Ativos geral
-  if (!res.ok) {
-    res = await blofinRequest('GET', '/api/v1/asset/balances');
+  // 2. Se falhou e estava configurado como DEMO, testa se a chave é da conta REAL (Live)
+  if (!res.ok && cfg.isDemo) {
+    const liveCfg = { ...cfg, isDemo: false, mode: 'LIVE', apiUrl: LIVE_API_URL };
+    let liveRes = await blofinRequest('GET', '/api/v1/asset/balances?accountType=futures', null, liveCfg);
+    if (!liveRes.ok) liveRes = await blofinRequest('GET', '/api/v1/account/balance', null, liveCfg);
+    if (liveRes.ok) {
+      return {
+        ok: false,
+        configured: true,
+        mode: cfg.mode,
+        message: '⚡ DETECTADO: Sua chave API foi criada na conta REAL (Live), não na Sandbox Demo! Mude no Render: BLOFIN_DEMO=false'
+      };
+    }
+  }
+
+  // 3. Se falhou e estava configurado como LIVE, testa se a chave é da Sandbox DEMO
+  if (!res.ok && !cfg.isDemo) {
+    const demoCfg = { ...cfg, isDemo: true, mode: 'DEMO', apiUrl: DEMO_API_URL };
+    let demoRes = await blofinRequest('GET', '/api/v1/asset/balances?accountType=futures', null, demoCfg);
+    if (!demoRes.ok) demoRes = await blofinRequest('GET', '/api/v1/account/balance', null, demoCfg);
+    if (demoRes.ok) {
+      return {
+        ok: false,
+        configured: true,
+        mode: cfg.mode,
+        message: '⚡ DETECTADO: Sua chave API é da Sandbox DEMO! Mude no Render: BLOFIN_DEMO=true'
+      };
+    }
   }
 
   if (!res.ok) {
@@ -341,9 +394,6 @@ export async function testBlofinAccount() {
   };
 }
 
-/**
- * Consulta posições abertas
- */
 export async function getBlofinPositions(instId = null) {
   const cfg = blofinConfig();
   if (!cfg.hasCredentials) return [];
@@ -375,9 +425,6 @@ export async function getBlofinPositions(instId = null) {
 
 export const blofinExecutionHistory = [];
 
-/**
- * Envia ordem com Stop Loss e Take Profit automáticos
- */
 export async function executeBlofinOrder(signal, options = {}) {
   const cfg = blofinConfig();
 
@@ -500,9 +547,6 @@ export async function executeBlofinOrder(signal, options = {}) {
   };
 }
 
-/**
- * Fecha uma posição a mercado na BloFin
- */
 export async function closeBlofinPosition(instId) {
   const positions = await getBlofinPositions(instId);
   const pos = positions.find(p => p.instId === instId);

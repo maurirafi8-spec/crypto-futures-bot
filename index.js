@@ -4596,51 +4596,93 @@ async function blofinStatusText() {
 
   let credsText = '';
   if (cfg.hasCredentials) {
-    credsText = '🔑 <b>Credenciais:</b> ✅ Configuradas no Render';
+    const maskKey = cfg.apiKey ? (cfg.apiKey.slice(0, 4) + '...' + cfg.apiKey.slice(-4) + ' (' + cfg.apiKey.length + ' carac)') : '—';
+    const maskSec = cfg.secretKey ? (cfg.secretKey.slice(0, 3) + '...' + cfg.secretKey.slice(-3) + ' (' + cfg.secretKey.length + ' carac)') : '—';
+    const maskPass = cfg.passphrase ? (cfg.passphrase.slice(0, 2) + '*** (' + cfg.passphrase.length + ' carac)') : '—';
+    credsText =
+      '🔑 <b>Credenciais no Render:</b> ✅ Configuradas
+' +
+      '  • Key: <code>' + maskKey + '</code>
+' +
+      '  • Secret: <code>' + maskSec + '</code>
+' +
+      '  • Senha (Passphrase): <code>' + maskPass + '</code>';
   } else {
     credsText =
-      '⚠️ <b>Credenciais:</b> ❌ NÃO configuradas!\n' +
-      '<i>Adicione no Environment do Render:</i>\n' +
-      '• <code>BLOFIN_API_KEY</code>\n' +
-      '• <code>BLOFIN_SECRET_KEY</code>\n' +
+      '⚠️ <b>Credenciais:</b> ❌ NÃO configuradas!
+' +
+      '<i>Adicione no Environment do Render:</i>
+' +
+      '• <code>BLOFIN_API_KEY</code>
+' +
+      '• <code>BLOFIN_SECRET_KEY</code>
+' +
       '• <code>BLOFIN_PASSPHRASE</code>';
   }
 
   let balanceText = '';
   if (acct.ok) {
     balanceText =
-      '💰 <b>Saldo Futuros BloFin:</b>\n' +
-      `  • Total: <b>${acct.balanceUsdt.toFixed(2)} USDT</b>\n` +
-      `  • Disponível: <b>${acct.availableUsdt.toFixed(2)} USDT</b>\n` +
-      `  • Congelado (Margem): <b>${acct.frozenUsdt.toFixed(2)} USDT</b>`;
+      '💰 <b>Saldo Futuros BloFin:</b>
+' +
+      '  • Total: <b>' + acct.balanceUsdt.toFixed(2) + ' USDT</b>
+' +
+      '  • Disponível: <b>' + acct.availableUsdt.toFixed(2) + ' USDT</b>
+' +
+      '  • Congelado (Margem): <b>' + acct.frozenUsdt.toFixed(2) + ' USDT</b>';
   } else if (cfg.hasCredentials) {
-    balanceText = `⚠️ <b>Saldo:</b> Falha na autenticação (${acct.message})`;
+    balanceText = '⚠️ <b>Saldo:</b> ' + acct.message;
   } else {
     balanceText = 'ℹ️ <i>Configure as chaves no Render para consultar o saldo.</i>';
   }
 
   return (
-    `🟢 <b>BLOFIN EXECUTOR — STATUS & CONEXÃO</b>\n\n` +
-    `⚡ Status: <b>${statusBadge}</b>\n` +
-    `🏷 Modo: <b>${modeBadge}</b>\n` +
-    `📈 Ações Tokenizadas: <b>${stocksBadge}</b> (TSLA, NVDA, AAPL...)\n` +
-    `🌐 Conexão API: ${conn.ok ? `✅ OK (${conn.latencyMs}ms)` : `❌ ${conn.message}`}\n` +
-    `📊 Mercado: ${conn.cryptosAvailable ?? '—'} criptos · ${conn.stocksAvailable ?? '—'} ações\n\n` +
-    `${credsText}\n\n` +
-    `${balanceText}\n\n` +
-    `⚙️ <b>Parâmetros de Operação:</b>\n` +
-    `  • Alavancagem: <b>${cfg.leverage}x</b>\n` +
-    `  • Margem por Trade: <b>${cfg.marginUsdt} USDT</b>\n` +
-    `  • Modo de Margem: <b>${cfg.marginMode.toUpperCase()}</b>\n` +
-    `  • Máx Posições Abertas: <b>${cfg.maxOpenPositions}</b>\n` +
-    `  • Execuções nesta sessão: <b>${blofinExecutionHistory.length}</b>\n\n` +
-    `📋 <b>Comandos BloFin:</b>\n` +
-    `• /blofin — status geral e saldo\n` +
-    `• /bexecs — histórico de execuções\n` +
-    `• /bpos — ver posições abertas na BloFin\n` +
-    `• /btest BTC LONG — testar ordem demo imediata (Cripto)\n` +
-    `• /btest TSLA LONG — testar ordem demo imediata (Ação)\n` +
-    `• /bclose BTC-USDT — fechar posição a mercado`
+    '🟢 <b>BLOFIN EXECUTOR — STATUS & CONEXÃO</b>
+
+' +
+    '⚡ Status: <b>' + statusBadge + '</b>
+' +
+    '🏷 Modo: <b>' + modeBadge + '</b> · <i>' + cfg.version + '</i>
+' +
+    '📈 Ações Tokenizadas: <b>' + stocksBadge + '</b> (TSLA, NVDA, AAPL...)
+' +
+    '🌐 Conexão API: ' + (conn.ok ? '✅ OK (' + conn.latencyMs + 'ms)' : '❌ ' + conn.message) + '
+' +
+    '📊 Mercado: ' + (conn.totalTickers ? conn.cryptosAvailable + ' criptos · ' + conn.stocksAvailable + ' ações' : '—') + '
+
+' +
+    credsText + '
+
+' +
+    balanceText + '
+
+' +
+    '⚙️ <b>Parâmetros de Operação:</b>
+' +
+    '  • Alavancagem: <b>' + cfg.leverage + 'x</b>
+' +
+    '  • Margem por Trade: <b>' + cfg.marginUsdt + ' USDT</b>
+' +
+    '  • Modo de Margem: <b>' + cfg.marginMode.toUpperCase() + '</b>
+' +
+    '  • Máx Posições Abertas: <b>' + cfg.maxOpenPositions + '</b>
+' +
+    '  • Execuções nesta sessão: <b>' + blofinExecutionHistory.length + '</b>
+
+' +
+    '📋 <b>Comandos BloFin:</b>
+' +
+    '• /blofin — status geral e saldo
+' +
+    '• /bexecs — histórico de execuções
+' +
+    '• /bpos — ver posições abertas na BloFin
+' +
+    '• /btest BTC LONG — testar ordem demo imediata (Cripto)
+' +
+    '• /btest TSLA LONG — testar ordem demo imediata (Ação)
+' +
+    '• /bclose BTC-USDT — fechar posição a mercado'
   );
 }
 
