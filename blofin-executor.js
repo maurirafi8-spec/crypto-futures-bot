@@ -58,7 +58,7 @@ export function formatBlofinInstId(symbol = '') {
 
 export function blofinConfig() {
   const isDemo = boolEnv('BLOFIN_DEMO', true);
-  // Limpa aspas e espaços acidentais ao copiar/colar no Render
+  // Limpa aspas ou espaços acidentais colados no Render
   const clean = v => String(v || '').trim().replace(/^["']|["']$/g, '').trim();
   const apiKey = clean(process.env.BLOFIN_API_KEY);
   const secretKey = clean(process.env.BLOFIN_SECRET_KEY);
@@ -87,7 +87,7 @@ export function blofinConfig() {
 }
 
 /**
- * Assina uma requisição HTTP para a API Blofin usando HMAC-SHA256 Base64 Canônico
+ * Assina requisição HTTP para BloFin usando HMAC-SHA256 Base64 Canônico
  * Formato canônico BloFin: requestPath + method.toUpperCase() + timestamp + nonce + body
  * Assinatura: HMAC-SHA256 binário codificado diretamente em Base64 (44 caracteres)
  */
@@ -102,7 +102,6 @@ export function getBlofinHeaders(method, requestPath, bodyObj, apiKey, secretKey
 
   const prehash = `${requestPath}${method.toUpperCase()}${timestamp}${nonce}${bodyString}`;
 
-  // HMAC-SHA256 binário codificado direto em base64 (especificação oficial BloFin / CCXT)
   const signature = crypto
     .createHmac('sha256', secretKey)
     .update(prehash)
@@ -213,14 +212,14 @@ export async function refreshBlofinInstruments() {
       lastInstrumentsRefresh = now;
     }
   } catch {
-    // Mantém o cache anterior se falhar
+    // Mantém o cache anterior
   }
 
   return instrumentsCache;
 }
 
 /**
- * Testa conectividade pública com a Blofin
+ * Conectividade pública
  */
 export async function testBlofinConnectivity() {
   const cfg = blofinConfig();
@@ -263,8 +262,7 @@ export async function testBlofinConnectivity() {
 }
 
 /**
- * Consulta a conta autenticada do usuário na Blofin (Demo ou Real)
- * Tenta tanto /api/v1/account/balance quanto /api/v1/asset/balances
+ * Consulta saldo autenticado da conta BloFin (Demo ou Real)
  */
 export async function testBlofinAccount() {
   const cfg = blofinConfig();
@@ -278,15 +276,15 @@ export async function testBlofinAccount() {
     };
   }
 
-  // Tentativa 1: /api/v1/account/balance (conta de futuros/derivativos)
+  // Tentativa 1: Futuros / Derivativos
   let res = await blofinRequest('GET', '/api/v1/account/balance');
 
-  // Fallback 1: /api/v1/asset/balances?accountType=futures
+  // Fallback 1: Ativos com filtro de futuros
   if (!res.ok) {
     res = await blofinRequest('GET', '/api/v1/asset/balances?accountType=futures');
   }
 
-  // Fallback 2: /api/v1/asset/balances
+  // Fallback 2: Ativos geral
   if (!res.ok) {
     res = await blofinRequest('GET', '/api/v1/asset/balances');
   }
@@ -302,7 +300,6 @@ export async function testBlofinAccount() {
     };
   }
 
-  // Parsing do saldo retornado pela BloFin
   let balanceUsdt = 0;
   let availableUsdt = 0;
   let frozenUsdt = 0;
@@ -345,7 +342,7 @@ export async function testBlofinAccount() {
 }
 
 /**
- * Consulta posições abertas na Blofin
+ * Consulta posições abertas
  */
 export async function getBlofinPositions(instId = null) {
   const cfg = blofinConfig();
@@ -376,11 +373,10 @@ export async function getBlofinPositions(instId = null) {
     });
 }
 
-// Histórico de execuções em memória para Telegram e interface
 export const blofinExecutionHistory = [];
 
 /**
- * Executa ordem de trading na Blofin (com TP1 e Stop Loss anexados)
+ * Envia ordem com Stop Loss e Take Profit automáticos
  */
 export async function executeBlofinOrder(signal, options = {}) {
   const cfg = blofinConfig();
@@ -401,7 +397,6 @@ export async function executeBlofinOrder(signal, options = {}) {
     return { ok: false, reason: 'negociação de ações tokenizadas desativada em BLOFIN_STOCKS_ENABLED' };
   }
 
-  // Verifica limite de posições abertas
   const currentPositions = await getBlofinPositions();
   if (currentPositions.length >= cfg.maxOpenPositions) {
     return {
@@ -410,7 +405,6 @@ export async function executeBlofinOrder(signal, options = {}) {
     };
   }
 
-  // Garante cache de instrumentos carregado
   await refreshBlofinInstruments();
   const inst = instrumentsCache.get(instId) || {
     contractValue: isStock ? 0.01 : (instId.startsWith('BTC') ? 0.001 : 1),
@@ -431,7 +425,6 @@ export async function executeBlofinOrder(signal, options = {}) {
     return { ok: false, reason: 'preço de entrada inválido' };
   }
 
-  // Cálculo da quantidade em número de contratos
   const appliedLeverage = Math.min(cfg.leverage, inst.maxLeverage);
   const notional = cfg.marginUsdt * appliedLeverage;
   const contractVal = inst.contractValue > 0 ? inst.contractValue : 1;
@@ -441,18 +434,14 @@ export async function executeBlofinOrder(signal, options = {}) {
   const minSize = inst.minSize > 0 ? inst.minSize : 1;
   const contracts = Math.max(minSize, Math.round(rawContracts / lotSize) * lotSize);
 
-  // Configura a alavancagem do par antes da ordem
   try {
     await blofinRequest('POST', '/api/v1/account/set-leverage', {
       instId,
       leverage: String(appliedLeverage),
       marginMode: cfg.marginMode
     });
-  } catch {
-    // Ignora se já estiver com alavancagem ajustada
-  }
+  } catch {}
 
-  // Payload da ordem com Stop Loss e Take Profit automáticos
   const orderPayload = {
     instId,
     marginMode: cfg.marginMode,
