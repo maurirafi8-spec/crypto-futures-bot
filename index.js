@@ -38,6 +38,14 @@ import {
   placeManualSignedTestnet
 } from './hyperliquid-executor.js';
 import {
+  blofinConfig,
+  testBlofinConnectivity,
+  testBlofinAccount,
+  getBlofinPositions,
+  executeBlofinOrder,
+  blofinExecutionHistory
+} from './blofin-executor.js';
+import {
   paperConfig,
   paperEligibilityPreview,
   maybeOpenPaperPosition,
@@ -3807,6 +3815,20 @@ async function processConfirmedEntrySnapshots(
 
       // Hyperliquid, se algum dia estiver explicitamente habilitado,
       // também recebe apenas a entrada já confirmada em 2 etapas.
+      // Executa na BloFin (Demo / Real) para Criptos e Ações Tokenizadas
+      if (blofinConfig().hasCredentials && blofinConfig().enabled) {
+        executeBlofinOrder(signal).then(res => {
+          if (res.ok) {
+            notify(
+              `🟢 <b>BLOFIN ${res.mode} — ORDEM EXECUTADA</b>\n` +
+              `Par: <b>${res.instId}</b> · ${signal.side}\n` +
+              `Tipo: ${res.isStock ? 'Ação Tokenizada' : 'Criptomoeda'}\n` +
+              `Contratos: ${res.contracts} · Notional: ${res.notional} USDT\n` +
+              `Entrada: ${res.entryPrice} · Stop: ${res.stopLoss} · TP: ${res.takeProfit}`
+            );
+          }
+        }).catch(err => console.error('[blofin] Erro na execução:', err.message));
+      }
       await maybeExecuteHyper(
         signal
       );

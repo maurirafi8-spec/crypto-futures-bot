@@ -1,15 +1,78 @@
-// V1.11.1 — LIQUID UNIVERSE preserved + FAST ENTRY
+// V1.11.1 — LIQUID UNIVERSE preserved + FAST ENTRY + EQUITIES
 // O scheduler aprende o volume 24h de cada ativo conforme os lotes normais
 // são escaneados. Assim não adicionamos chamadas extras de OHLCV e evitamos
 // pressionar o rate limit da Coinalyze.
 
+export const DEFAULT_EQUITY_BASES = [
+  'TSLA',
+  'NVDA',
+  'AAPL',
+  'MSFT',
+  'AMZN',
+  'META',
+  'COIN',
+  'AMD',
+  'MSTR'
+];
+
 export const DEFAULT_LIQUID_UNIVERSE_BASES = [
-  'BTC','ETH','SOL','XRP','BNB','DOGE','ADA','TRX','SUI','LINK',
-  'BCH','LTC','AVAX','HBAR','DOT','XLM','NEAR','UNI','AAVE','ETC',
-  'ATOM','ICP','FIL','INJ','APT','ARB','OP','TIA','SEI','PEPE',
-  'WIF','FET','RENDER','TAO','ENA','WLD','RUNE','POL','VET','ALGO',
-  'LDO','CRV','DYDX','GALA','SAND','MANA','APE','JUP','STX','IMX',
-  'PENDLE','MKR','GRT','TON','FLOKI','BONK','SHIB'
+  'BTC',
+  'ETH',
+  'SOL',
+  'XRP',
+  'BNB',
+  'DOGE',
+  'ADA',
+  'TRX',
+  'SUI',
+  'LINK',
+  'BCH',
+  'LTC',
+  'AVAX',
+  'HBAR',
+  'DOT',
+  'XLM',
+  'NEAR',
+  'UNI',
+  'AAVE',
+  'ETC',
+  'ATOM',
+  'ICP',
+  'FIL',
+  'INJ',
+  'APT',
+  'ARB',
+  'OP',
+  'TIA',
+  'SEI',
+  'PEPE',
+  'WIF',
+  'FET',
+  'RENDER',
+  'TAO',
+  'ENA',
+  'WLD',
+  'RUNE',
+  'POL',
+  'VET',
+  'ALGO',
+  'LDO',
+  'CRV',
+  'DYDX',
+  'GALA',
+  'SAND',
+  'MANA',
+  'APE',
+  'JUP',
+  'STX',
+  'IMX',
+  'PENDLE',
+  'MKR',
+  'GRT',
+  'TON',
+  'FLOKI',
+  'BONK',
+  'SHIB'
 ];
 
 export function normalizeUniverseBase(value) {
@@ -47,10 +110,12 @@ export class LiquidUniverseManager {
     observationMaxAgeMin = 360,
     coreEveryScans = 4,
     hotEveryScans = 4,
-    hotSize = 12
+    hotSize = 12,
+    enableEquities = true
   } = {}) {
-    this.seedBases = unique(seedBases);
-    this.maxSize = Math.max(20, Math.min(70, Number(maxSize) || 50));
+    const allSeeds = enableEquities ? [...DEFAULT_EQUITY_BASES, ...seedBases] : seedBases;
+    this.seedBases = unique(allSeeds);
+    this.maxSize = Math.max(20, Math.min(80, Number(maxSize) || 60));
     this.minQuoteVolume = Math.max(0, Number(minQuoteVolume) || 0);
     this.observationMaxAgeMs = Math.max(30, Number(observationMaxAgeMin) || 360) * 60_000;
     this.coreEveryScans = Math.max(2, Math.min(10, Number(coreEveryScans) || 4));
@@ -80,8 +145,6 @@ export class LiquidUniverseManager {
 
     if (available.size) {
       const filtered = this.seedBases.filter(base => available.has(base));
-      // Se alguma corretora usa um ticker recente que não estava no seed,
-      // só aceita quando é um ticker USDT perp com OHLCV e o seed não completou 50.
       if (filtered.length < this.maxSize) {
         for (const base of available) {
           if (!filtered.includes(base) && /^[A-Z0-9]{2,12}$/.test(base)) {
@@ -141,7 +204,6 @@ export class LiquidUniverseManager {
       }
     }
 
-    // Volume 24h é o ranking principal. Volume relativo e score só desempatarão.
     liquid.sort((a, b) =>
       (b.quoteVolume - a.quoteVolume) ||
       (b.volumeRatio - a.volumeRatio) ||
@@ -183,14 +245,10 @@ export class LiquidUniverseManager {
       return true;
     };
 
-    // Urgentes (posição PAPER / WAIT / IA pendente) têm prioridade,
-    // mas consomem no máximo 1 slot para não congelar a descoberta do universo.
     for (const urgent of unique(urgentBases)) {
       if (push(urgent)) break;
     }
 
-    // BTC/ETH/SOL reaparecem periodicamente para manter contexto macro fresco,
-    // sem roubar um slot em todos os scans.
     if (
       batch.length < batchSize &&
       core.length &&
@@ -201,7 +259,6 @@ export class LiquidUniverseManager {
       this.coreCursor = pick.nextCursor;
     }
 
-    // A cada alguns scans, revisita um dos top líquidos já observados.
     if (
       batch.length < batchSize &&
       hot.length &&
@@ -212,8 +269,6 @@ export class LiquidUniverseManager {
       this.hotCursor = pick.nextCursor;
     }
 
-    // O restante percorre o top-50 dinâmico. Com lote 4/min,
-    // todo o universo tende a ser revisto em ~13–18 minutos.
     if (batch.length < batchSize) {
       const pick = takeRotating(
         ranked,
