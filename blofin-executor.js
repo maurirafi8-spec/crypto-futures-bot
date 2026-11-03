@@ -1,5 +1,5 @@
 // ==============================================================
-// BLOFIN EXECUTOR V1.0 — CRYPTO & TOKENIZED STOCKS (EQUITIES)
+// BLOFIN EXECUTOR V1.1 — CRYPTO & TOKENIZED STOCKS (EQUITIES)
 // Suporte nativo a Modo Demo (Sandbox) e Conta Real na BloFin
 // Suporta: Criptomoedas (BTC, ETH, SOL, SUI, etc.) e Ações (TSLA, NVDA, AAPL, etc.)
 // ==============================================================
@@ -58,9 +58,11 @@ export function formatBlofinInstId(symbol = '') {
 
 export function blofinConfig() {
   const isDemo = boolEnv('BLOFIN_DEMO', true);
-  const apiKey = String(process.env.BLOFIN_API_KEY || '').trim();
-  const secretKey = String(process.env.BLOFIN_SECRET_KEY || '').trim();
-  const passphrase = String(process.env.BLOFIN_PASSPHRASE || '').trim();
+  // Limpa aspas e espaços acidentais ao copiar/colar no Render
+  const clean = v => String(v || '').trim().replace(/^["']|["']$/g, '').trim();
+  const apiKey = clean(process.env.BLOFIN_API_KEY);
+  const secretKey = clean(process.env.BLOFIN_SECRET_KEY);
+  const passphrase = clean(process.env.BLOFIN_PASSPHRASE);
 
   const hasCredentials = Boolean(apiKey && secretKey && passphrase);
 
@@ -85,8 +87,9 @@ export function blofinConfig() {
 }
 
 /**
- * Assina uma requisição HTTP para a API Blofin usando HMAC-SHA256 Base64
- * Formato canônico: requestPath + method.toUpperCase() + timestamp + nonce + body
+ * Assina uma requisição HTTP para a API Blofin usando HMAC-SHA256 Base64 Canônico
+ * Formato canônico BloFin: requestPath + method.toUpperCase() + timestamp + nonce + body
+ * Assinatura: HMAC-SHA256 binário codificado diretamente em Base64 (44 caracteres)
  */
 export function getBlofinHeaders(method, requestPath, bodyObj, apiKey, secretKey, passphrase) {
   const timestamp = Date.now().toString();
@@ -99,6 +102,7 @@ export function getBlofinHeaders(method, requestPath, bodyObj, apiKey, secretKey
 
   const prehash = `${requestPath}${method.toUpperCase()}${timestamp}${nonce}${bodyString}`;
 
+  // HMAC-SHA256 binário codificado direto em base64 (especificação oficial BloFin / CCXT)
   const signature = crypto
     .createHmac('sha256', secretKey)
     .update(prehash)
@@ -208,7 +212,7 @@ export async function refreshBlofinInstruments() {
       }
       lastInstrumentsRefresh = now;
     }
-  } catch (e) {
+  } catch {
     // Mantém o cache anterior se falhar
   }
 
@@ -260,6 +264,7 @@ export async function testBlofinConnectivity() {
 
 /**
  * Consulta a conta autenticada do usuário na Blofin (Demo ou Real)
+ * Tenta tanto /api/v1/account/balance quanto /api/v1/asset/balances
  */
 export async function testBlofinAccount() {
   const cfg = blofinConfig();
@@ -273,7 +278,18 @@ export async function testBlofinAccount() {
     };
   }
 
-  const res = await blofinRequest('GET', '/api/v1/asset/balances?accountType=futures');
+  // Tentativa 1: /api/v1/account/balance (conta de futuros/derivativos)
+  let res = await blofinRequest('GET', '/api/v1/account/balance');
+
+  // Fallback 1: /api/v1/asset/balances?accountType=futures
+  if (!res.ok) {
+    res = await blofinRequest('GET', '/api/v1/asset/balances?accountType=futures');
+  }
+
+  // Fallback 2: /api/v1/asset/balances
+  if (!res.ok) {
+    res = await blofinRequest('GET', '/api/v1/asset/balances');
+  }
 
   if (!res.ok) {
     return {
@@ -286,22 +302,45 @@ export async function testBlofinAccount() {
     };
   }
 
-  const balances = Array.isArray(res.data) ? res.data : [];
-  const usdt = balances.find(b => String(b?.currency || '').toUpperCase() === 'USDT') || {
-    balance: '0',
-    available: '0',
-    frozen: '0'
-  };
+  // Parsing do saldo retornado pela BloFin
+  let balanceUsdt = 0;
+  let availableUsdt = 0;
+  let frozenUsdt = 0;
+
+  if (Array.isArray(res.data) && res.data.length > 0) {
+    const first = res.data[0];
+    if (first?.details && Array.isArray(first.details)) {
+      const usdt = first.details.find(d => String(d?.currency || '').toUpperCase() === 'USDT');
+      if (usdt) {
+        balanceUsdt = Number(usdt.equity || usdt.balance || 0);
+        availableUsdt = Number(usdt.available || usdt.availBal || usdt.equity || 0);
+        frozenUsdt = Number(usdt.frozen || usdt.frozenBal || 0);
+      } else {
+        balanceUsdt = Number(first.totalEquity || 0);
+        availableUsdt = Number(first.availableBalance || first.totalEquity || 0);
+      }
+    } else {
+      const usdt = res.data.find(b => String(b?.currency || '').toUpperCase() === 'USDT');
+      if (usdt) {
+        balanceUsdt = Number(usdt.balance || usdt.equity || 0);
+        availableUsdt = Number(usdt.available || usdt.availBal || 0);
+        frozenUsdt = Number(usdt.frozen || 0);
+      }
+    }
+  } else if (res.data && typeof res.data === 'object') {
+    balanceUsdt = Number(res.data.totalEquity || res.data.balance || 0);
+    availableUsdt = Number(res.data.availableBalance || res.data.available || res.data.totalEquity || 0);
+  }
 
   return {
     ok: true,
     configured: true,
     mode: cfg.mode,
-    balanceUsdt: Number(usdt.balance || 0),
-    availableUsdt: Number(usdt.available || 0),
-    frozenUsdt: Number(usdt.frozen || 0),
+    balanceUsdt,
+    availableUsdt,
+    frozenUsdt,
     latencyMs: res.latencyMs,
-    message: `Conta BloFin ${cfg.mode} Autenticada com Sucesso! Saldo: ${Number(usdt.available || 0).toFixed(2)} USDT`
+    message: `Conta BloFin ${cfg.mode} Autenticada com Sucesso! Saldo: ${availableUsdt.toFixed(2)} USDT`
   };
 }
 
@@ -320,18 +359,21 @@ export async function getBlofinPositions(instId = null) {
   if (!res.ok || !Array.isArray(res.data)) return [];
 
   return res.data
-    .filter(p => Number(p?.positions || 0) !== 0)
-    .map(p => ({
-      instId: p.instId,
-      positionSide: p.positionSide || 'net',
-      side: Number(p.positions) > 0 ? 'LONG' : 'SHORT',
-      contracts: Math.abs(Number(p.positions || 0)),
-      avgPrice: Number(p.avgPrice || 0),
-      markPrice: Number(p.markPrice || 0),
-      unrealizedPnl: Number(p.unrealizedPnl || 0),
-      leverage: Number(p.leverage || cfg.leverage),
-      marginMode: p.marginMode || 'cross'
-    }));
+    .filter(p => Number(p?.positions || p?.contracts || 0) !== 0)
+    .map(p => {
+      const qty = Number(p.positions || p.contracts || 0);
+      return {
+        instId: p.instId,
+        positionSide: p.positionSide || 'net',
+        side: qty > 0 ? 'LONG' : 'SHORT',
+        contracts: Math.abs(qty),
+        avgPrice: Number(p.avgPrice || p.openAvgPrice || 0),
+        markPrice: Number(p.markPrice || 0),
+        unrealizedPnl: Number(p.unrealizedPnl || p.upl || 0),
+        leverage: Number(p.leverage || cfg.leverage),
+        marginMode: p.marginMode || 'cross'
+      };
+    });
 }
 
 // Histórico de execuções em memória para Telegram e interface
