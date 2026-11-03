@@ -1,4 +1,4 @@
-# Crypto Futures Bot — V2.0 Otimizado
+# Crypto Futures Bot — V2.8 (Calibração Elite Quick & Correlation Guard)
 
 Bot de trading para futuros perpétuos de criptomoedas com alta assertividade e payoff positivo.
 
