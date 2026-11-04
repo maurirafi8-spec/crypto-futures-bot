@@ -29,18 +29,6 @@ function oiClassForSide(
   const regime = String(oiContext?.regime || 'NEUTRAL').toUpperCase();
   const oiPct = Math.abs(finiteNumber(oiContext?.oiPct, 0));
 
-  const earlyContrary =
-    (dir === 'LONG' && ['SHORT_BUILDUP', 'LONG_UNWIND'].includes(regime)) ||
-    (dir === 'SHORT' && ['LONG_BUILDUP', 'SHORT_COVERING'].includes(regime));
-  if (earlyContrary) {
-    return {
-      level: 'STRONG_CONTRARY',
-      regime,
-      oiPct,
-      reason: `${regime} fortemente contrário ao ${dir}`
-    };
-  }
-
   if (oiContext?.confirmed === true) {
     return {
       level: 'FAVORABLE',
@@ -79,9 +67,9 @@ function oiClassForSide(
       regime === 'SHORT_BUILDUP' ||
       regime === 'LONG_UNWIND'
     ) {
-      const strong = true;
+      const strong = oiPct >= strongContraryPct;
       return {
-        level: 'STRONG_CONTRARY',
+        level: strong ? 'STRONG_CONTRARY' : 'MILD_CONTRARY',
         regime,
         oiPct,
         reason: strong
@@ -105,9 +93,9 @@ function oiClassForSide(
       regime === 'LONG_BUILDUP' ||
       regime === 'SHORT_COVERING'
     ) {
-      const strong = true;
+      const strong = oiPct >= strongContraryPct;
       return {
-        level: 'STRONG_CONTRARY',
+        level: strong ? 'STRONG_CONTRARY' : 'MILD_CONTRARY',
         regime,
         oiPct,
         reason: strong
@@ -268,7 +256,7 @@ export class ConfirmedEntryManager {
   } = {}) {
     this.enabled = enabled;
     this.pullbackOnly = pullbackOnly;
-    this.maxWaitBars = Math.max(4, Math.min(6, Number(maxWaitBars || 4)));
+    this.maxWaitBars = Math.max(2, Math.min(4, Number(maxWaitBars || 3)));
     // Clampa valores legados do .env para nunca travar em 0.55x ou 0.85x
     this.minVolumeRatio = Math.min(0.35, Math.max(0.20, Number(minVolumeRatio || 0.35)));
     this.volumeResumeMultiplier = Math.min(0.45, Math.max(0.30, Number(volumeResumeMultiplier || 0.45)));
@@ -313,55 +301,25 @@ export class ConfirmedEntryManager {
     // Se o scanner já confirmou o pullback no candle 5m fechado com trigger 4/5 ou 5/5,
     // score >= 82, IA >= 78% e volume >= 0.55x, não exige um 2º candle consecutivo de rompimento
     // (que fazia DOGE, TAO, XLM, AVAX, LTC e SUI armarem no fim do movimento e cancelarem).
-    const side = String(signal?.side || "").toUpperCase();
     const trigQuality = finiteNumber(signal?.pullback?.triggerQuality, 0);
     const sigScore = finiteNumber(signal?.score, 0);
     const aiConf = finiteNumber(signal?.ai?.confidence, 0);
     const vol5 = finiteNumber(signal?.t5?.volumeRatio, 0);
     const distAtr = finiteNumber(signal?.pullback?.distanceAtr, 0.5);
-    const bodyAtr = finiteNumber(signal?.antiChase?.bodyAtr, finiteNumber(signal?.breakout?.bodyAtr, 0.5));
-    const rsi5 = finiteNumber(signal?.t5?.rsi, 50);
-    const rsi15 = finiteNumber(signal?.t15?.rsi, 50);
-    const aligned4h = signal?.marketRegime?.aligned4h !== false && signal?.trendExhaustion?.aligned4h !== false;
-    const macdOk = signal?.momentum?.macdOk === true || (side === "LONG" ? finiteNumber(signal?.t5?.macdHist, 0) > 0 : finiteNumber(signal?.t5?.macdHist, 0) < 0);
-    const macdOrPrime = macdOk || (sigScore >= 92 && distAtr <= 0.25 && bodyAtr <= 0.85);
-    const minRsi15Ce = sigScore >= 90 ? 34.0 : 36.5;
-    const maxRsi15Ce = sigScore >= 90 ? 66.0 : 63.5;
-    const rsiOk = side === "SHORT"
-      ? (rsi5 >= 32.0 && (rsi5 <= 50.0 || sigScore >= 85) && rsi15 >= minRsi15Ce)
-      : (rsi5 <= 68.0 && (rsi5 >= 50.0 || sigScore >= 85) && rsi15 <= maxRsi15Ce);
-    const btcMode = String(signal?.btcRegime?.mode || signal?.btcRegime?.regime || "ALIGNED").toUpperCase();
-    const slope15 = Math.round(finiteNumber(signal?.marketRegime?.slope15, finiteNumber(signal?.pullback?.slope15, 0.15)) * 100) / 100;
-    const slope1h = Math.round(finiteNumber(signal?.marketRegime?.slope1h, finiteNumber(signal?.pullback?.slope1h, 0.15)) * 100) / 100;
-    const momCount = finiteNumber(signal?.momentum?.confirmationCount, 2);
-    const slopeOk = slope15 >= 0.10 && slope1h >= 0.10;
-    const btcAlignedOrElite = ["ALIGNED", "BTC_SELF"].includes(btcMode) || (
-      (sigScore >= 86 && aiConf >= 80 && momCount >= 2 && vol5 >= 0.55 && distAtr <= 0.90) ||
-      (sigScore >= 80 && momCount >= 2 && vol5 >= 0.65 && slope15 >= 0.10 && distAtr <= 0.78)
-    );
 
     if (
       signal?.pullback?.confirmed === true &&
-      trigQuality >= 3 &&
-      sigScore >= 80 &&
-      aiConf >= 76 &&
-      vol5 >= 0.52 &&
-      aligned4h &&
-      macdOrPrime &&
-      rsiOk &&
-      slopeOk &&
-      btcAlignedOrElite
+      trigQuality >= 4 &&
+      sigScore >= 82 &&
+      aiConf >= 78 &&
+      vol5 >= 0.55
     ) {
       const oiClass = oiClassForSide(
         signal?.side,
         signal?.oiContext,
         this.strongOiContraryPct
       );
-      const stretchedPullbackOk =
-        distAtr <= 0.80 ||
-        (distAtr <= 0.98 && (oiClass.level === "FAVORABLE" || sigScore >= 88) && momCount >= 2);
-      const neutralOiBtcOk = oiClass.level !== "NEUTRAL" || ["ALIGNED", "BTC_SELF"].includes(btcMode) || sigScore >= 88;
-      if (oiClass.level !== "STRONG_CONTRARY" && oiClass.level !== "MILD_CONTRARY" && neutralOiBtcOk && stretchedPullbackOk) {
+      if (oiClass.level !== 'STRONG_CONTRARY') {
         const barTime = finiteNumber(signal?.t5?.openTime, Date.now());
         signal.confirmedEntry = {
           armedAt: Date.now(),
@@ -574,7 +532,7 @@ export class ConfirmedEntryManager {
       expectedConfirmationBarTime:
         triggerBarTime + M5_MS,
       expiresAfterBarTime:
-        triggerBarTime + M5_MS * (this.maxWaitBars + 1),
+        triggerBarTime + M5_MS * this.maxWaitBars,
       triggerOpen,
       triggerHigh,
       triggerLow,
@@ -821,8 +779,7 @@ export class ConfirmedEntryManager {
 
       if (
         this.requireExhaustionOk &&
-        snap?.trendExhaustion?.ok === false &&
-        finiteNumber(item.score, 0) < 84
+        snap?.trendExhaustion?.ok === false
       ) {
         invalidate(`Trend Exhaustion Guard: ${snap?.trendExhaustion?.reason || 'tendência esticada'}`, 'EXHAUSTION');
         continue;
@@ -1079,10 +1036,6 @@ export class ConfirmedEntryManager {
         pullback: {
           ...item.signal.pullback,
           ...snap.pullback,
-          distanceAtr: Math.min(
-            finiteNumber(item.signal?.pullback?.distanceAtr, 99),
-            finiteNumber(snap?.pullback?.distanceAtr, 99)
-          ),
           triggerQuality: Math.max(
             finiteNumber(item.signal?.pullback?.triggerQuality, 0),
             finiteNumber(snap?.pullback?.triggerQuality, 0)

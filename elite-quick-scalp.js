@@ -27,25 +27,13 @@ function oiPolicyForSide(
     );
   const oiPct = Math.abs(num(signal?.oiContext?.oiPct));
 
-  const earlyContrary =
-    (side === 'LONG' && ['SHORT_BUILDUP', 'LONG_UNWIND'].includes(regime)) ||
-    (side === 'SHORT' && ['LONG_BUILDUP', 'SHORT_COVERING'].includes(regime));
-  if (earlyContrary) {
-    return {
-      ok: false,
-      label: 'STRONG_CONTRARY',
-      regime,
-      oiPct
-    };
-  }
-
   if (confirmedClass) {
     if (confirmedClass === 'STRONG_CONTRARY') {
       return { ok: false, label: 'STRONG_CONTRARY', regime, oiPct };
     }
 
     if (confirmedClass === 'MILD_CONTRARY') {
-      return { ok: false, label: 'STRONG_CONTRARY', regime, oiPct };
+      return { ok: true, label: 'MILD_CONTRARY', regime, oiPct };
     }
 
     return { ok: true, label: confirmedClass, regime, oiPct };
@@ -77,9 +65,10 @@ function oiPolicyForSide(
     (side === 'SHORT' && ['LONG_BUILDUP', 'SHORT_COVERING'].includes(regime));
 
   if (contrary) {
+    const strong = oiPct >= strongContraryPct;
     return {
-      ok: false,
-      label: 'STRONG_CONTRARY',
+      ok: !strong,
+      label: strong ? 'STRONG_CONTRARY' : 'MILD_CONTRARY',
       regime,
       oiPct
     };
@@ -193,7 +182,7 @@ export function eliteQuickScalpAssessment(
   const breakoutDistanceAtr =
     num(
       signal?.antiChase?.distanceAtr,
-      num(signal?.pullback?.distanceAtr, num(signal?.breakout?.distanceAtr, 1.0))
+      num(signal?.pullback?.distanceAtr, 99)
     );
 
   const oi =
@@ -215,7 +204,7 @@ export function eliteQuickScalpAssessment(
     Math.max(0, rawScore - scorePenalty4h - scorePenaltyOi);
 
   const exhaustionOk =
-    signal?.trendExhaustion?.ok !== false || rawScore >= 84;
+    signal?.trendExhaustion?.ok !== false;
 
   const antiChaseOk =
     signal?.antiChase?.ok !== false;
@@ -252,161 +241,8 @@ export function eliteQuickScalpAssessment(
 
   if (!oi.ok) {
     reasons.push(
-      `OI contrário ao ${side} (${oi.regime || 'UNKNOWN'}; ${oi.oiPct.toFixed(2)}%)`
+      `OI fortemente contrário (${oi.regime || 'UNKNOWN'}; ${oi.oiPct.toFixed(2)}%)`
     );
-  }
-
-  if (!aligned4h) {
-    reasons.push('4H contrário (Elite Quick exige 4H alinhado)');
-  }
-
-  const rsi5 = num(signal?.t5?.rsi, 50);
-  const rsi15 = num(signal?.t15?.rsi, 50);
-  const minRsi15 = rawScore >= 90 ? 34.0 : 36.5;
-  const maxRsi15 = rawScore >= 90 ? 66.0 : 63.5;
-
-  if (side === 'SHORT') {
-    if (rsi5 < 32.0) {
-      reasons.push(`RSI 5m em sobrevenda extrema (${rsi5.toFixed(1)} < 32.0)`);
-    }
-    if (rsi15 < minRsi15) {
-      reasons.push(`RSI 15m exaurido para SHORT (${rsi15.toFixed(1)} < ${minRsi15.toFixed(1)})`);
-    }
-    if (setup === 'PULLBACK' && rsi5 > 50.0 && rawScore < 85) {
-      reasons.push(`RSI 5m sem pressão vendedora para SHORT (${rsi5.toFixed(1)} > 50.0 com Score < 85)`);
-    }
-  } else if (side === 'LONG') {
-    if (rsi5 > 68.0) {
-      reasons.push(`RSI 5m em sobrecompra extrema (${rsi5.toFixed(1)} > 68.0)`);
-    }
-    if (rsi15 > maxRsi15) {
-      reasons.push(`RSI 15m exaurido para LONG (${rsi15.toFixed(1)} > ${maxRsi15.toFixed(1)})`);
-    }
-    if (setup === 'PULLBACK' && rsi5 < 50.0 && rawScore < 85) {
-      reasons.push(`RSI 5m sem força compradora para LONG (${rsi5.toFixed(1)} < 50.0 com Score < 85)`);
-    }
-  }
-
-  const btcMode = upper(signal?.btcRegime?.mode || signal?.btcRegime?.regime || 'ALIGNED');
-  if (oi.label === 'NEUTRAL' && !['ALIGNED', 'BTC_SELF'].includes(btcMode) && rawScore < 88) {
-    reasons.push(`OI neutro exige BTC ALIGNED ou Score >= 88 (atual ${btcMode})`);
-  }
-
-  const macdOk = signal?.momentum?.macdOk === true || (side === 'LONG' ? num(signal?.t5?.macdHist, 0) > 0 : num(signal?.t5?.macdHist, 0) < 0);
-  const pullbackDistAtr = num(signal?.pullback?.distanceAtr, 0.5);
-  const candleBodyAtr = num(signal?.antiChase?.bodyAtr, breakoutBodyAtr);
-  if (setup === 'PULLBACK' && !macdOk && !(rawScore >= 92 && pullbackDistAtr <= 0.25 && candleBodyAtr <= 0.85)) {
-    reasons.push('MACD 5m não confirma o pullback');
-  }
-  const slope15 = Math.round(num(signal?.marketRegime?.slope15, num(signal?.pullback?.slope15, 0.15)) * 100) / 100;
-  const slope1h = Math.round(num(signal?.marketRegime?.slope1h, num(signal?.pullback?.slope1h, 0.15)) * 100) / 100;
-  if (setup === 'PULLBACK') {
-    if (volume5 > 0 && volume5 < 0.52) {
-      reasons.push(`volume 5m ${volume5.toFixed(2)}x < 0.52x`);
-    }
-    if (slope15 < 0.10) {
-      reasons.push(`slope15 ${slope15.toFixed(2)} ATR < 0.10 ATR (15m sem inclinação/aceleração)`);
-    }
-    if (slope1h < 0.10) {
-      reasons.push(`slope1H ${slope1h.toFixed(2)} ATR < 0.10 ATR (1H sem inclinação suficiente)`);
-    }
-    const effectiveChaseAtr = signal.confirmedEntry ? chaseAtr : pullbackDistAtr * 0.6;
-    const triggerQualityOk =
-      triggerQuality >= 5 ||
-      (pullbackDistAtr <= 0.88 && effectiveChaseAtr <= 0.50);
-
-    const highConvictionPullback =
-      rawScore >= 88 &&
-      ai >= 80 &&
-      momentumCount >= 2 &&
-      oi.label !== 'STRONG_CONTRARY' &&
-      pullbackDistAtr <= 0.98 &&
-      (triggerQuality >= 5 ? effectiveChaseAtr <= 0.65 : effectiveChaseAtr <= 0.50) &&
-      triggerQualityOk;
-
-    const normalPullbackOk =
-      pullbackDistAtr <= 0.80 &&
-      effectiveChaseAtr <= 0.50;
-
-    const moderateStretchedOk =
-      ['FAVORABLE', 'SUPPORTIVE'].includes(oi.label) &&
-      momentumCount >= 2 &&
-      pullbackDistAtr <= 0.92 &&
-      (triggerQuality >= 5 ? effectiveChaseAtr <= 0.60 : effectiveChaseAtr <= 0.50) &&
-      triggerQualityOk &&
-      slope1h >= 0.10 &&
-      slope15 >= 0.10;
-
-    if (!highConvictionPullback && !normalPullbackOk && !moderateStretchedOk) {
-      if (!triggerQualityOk) {
-        reasons.push(`pullback trigger ${triggerQuality}/5 exige EMA <= 0.88 ATR e chase <= 0.50 ATR (atual EMA ${pullbackDistAtr.toFixed(2)} ATR / chase ${effectiveChaseAtr.toFixed(2)} ATR)`);
-      } else {
-        reasons.push(`pullback esticado (EMA ${pullbackDistAtr.toFixed(2)} ATR / chase ${effectiveChaseAtr.toFixed(2)} ATR) sem Score >= 88 ou OI favorável`);
-      }
-    }
-
-    if (!['ALIGNED', 'BTC_SELF'].includes(btcMode)) {
-      if (btcMode === 'OPPOSITE') {
-        reasons.push('BTC fortemente contrário ao setup');
-      } else {
-        const btcMixedEliteOk =
-          (rawScore >= 86 && ai >= 80 && momentumCount >= 2 && volume5 >= 0.55 && pullbackDistAtr <= 0.90 && oi.label !== 'STRONG_CONTRARY') ||
-          (rawScore >= 80 && momentumCount >= 2 && volume5 >= 0.65 && slope15 >= 0.10 && pullbackDistAtr <= 0.78 && ['FAVORABLE', 'SUPPORTIVE'].includes(oi.label));
-        if (!btcMixedEliteOk) {
-          reasons.push(`BTC ${btcMode} exige Score >= 86 (ou Score >= 80 com vol >= 0.65x, slope15 >= 0.10 e EMA <= 0.78 ATR)`);
-        }
-      }
-    }
-  }
-  if (setup === 'BREAKOUT_STRONG') {
-    if (oi.label === 'STRONG_CONTRARY') {
-      reasons.push(`Breakout bloqueado por OI fortemente contrário (${oi.regime})`);
-    }
-    if (side === 'LONG' && !['ALIGNED', 'BTC_SELF'].includes(btcMode)) {
-      if (rsi15 > 60.0) {
-        reasons.push(`LONG Breakout com BTC ${btcMode} bloqueado: RSI 15m esticado (${rsi15.toFixed(1)} > 60.0)`);
-      }
-      if (breakoutDistanceAtr > 1.20) {
-        reasons.push(`LONG Breakout com BTC ${btcMode} bloqueado: preço esticado da EMA20 (${breakoutDistanceAtr.toFixed(2)} ATR > 1.20 ATR)`);
-      }
-    }
-    const minEliteBodyAtr = rawScore >= 95 ? 0.45 : (rawScore >= 92 ? 0.50 : 0.65);
-    const eliteBreakoutQuality =
-      rawScore >= 92 &&
-      ai >= 82 &&
-      volume5 >= 1.25 &&
-      breakoutBodyAtr >= minEliteBodyAtr &&
-      edge >= 80 &&
-      aligned4h;
-
-    const standardBreakoutQuality =
-      rawScore >= 88 &&
-      ai >= 78 &&
-      volume5 >= 1.65 &&
-      breakoutBodyAtr >= 0.55 &&
-      ['FAVORABLE', 'SUPPORTIVE'].includes(oi.label) &&
-      aligned4h;
-
-    if (!eliteBreakoutQuality && !standardBreakoutQuality) {
-      if (volume5 < 1.65 && (rawScore < 92 || volume5 < 1.25)) {
-        reasons.push(`Breakout exige volume forte >= 1.65x ou Score >= 92 com vol >= 1.25x (atual ${volume5.toFixed(2)}x)`);
-      }
-      if (rawScore >= 92 && volume5 >= 1.25 && breakoutBodyAtr < minEliteBodyAtr) {
-        reasons.push(`Breakout Score ${rawScore} exige corpo >= ${minEliteBodyAtr.toFixed(2)} ATR (atual ${breakoutBodyAtr.toFixed(2)} ATR)`);
-      }
-      if (rawScore < 88) {
-        reasons.push(`Breakout Quick exige Score >= 88 (atual ${rawScore})`);
-      }
-      if (oi.label !== 'FAVORABLE' && oi.label !== 'SUPPORTIVE') {
-        reasons.push(`Breakout exige OI FAVORABLE ou SUPPORTIVE (atual ${oi.regime || oi.label})`);
-      }
-    }
-    if (!macdOk && rawScore < 95) {
-      reasons.push('Breakout exige MACD 5m alinhado');
-    }
-    if (btcMode === 'OPPOSITE') {
-      reasons.push(`Breakout bloqueado por BTC contrário (atual ${btcMode})`);
-    }
   }
 
   const scoreReason = minScore => {
@@ -436,7 +272,7 @@ export function eliteQuickScalpAssessment(
       reasons.push(`IA ${ai}% < ${pullbackMinAi}%`);
     }
 
-    if (signal.confirmedEntry && chaseAtr > pullbackMaxChaseAtr) {
+    if (chaseAtr > pullbackMaxChaseAtr) {
       reasons.push(
         `chase ${chaseAtr.toFixed(2)} ATR > ${pullbackMaxChaseAtr.toFixed(2)} ATR`
       );

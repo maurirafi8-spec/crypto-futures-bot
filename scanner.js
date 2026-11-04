@@ -985,15 +985,9 @@ function contextualOiStatus({
 
   // Se o preço de 30m está quase neutro, um pullback+trigger
   // recém confirmado pode validar o OI crescente.
-  const contraryRegime =
-    (side === 'LONG' && ['SHORT_BUILDUP', 'LONG_UNWIND'].includes(regime)) ||
-    (side === 'SHORT' && ['LONG_BUILDUP', 'SHORT_COVERING'].includes(regime));
-
   const pullbackReload =
     oiRising &&
     neutralPrice &&
-    !contraryRegime &&
-    (side === 'LONG' ? pricePct >= -0.02 : side === 'SHORT' ? pricePct <= 0.02 : false) &&
     Boolean(
       pullback?.confirmed
     );
@@ -1028,19 +1022,6 @@ function entryOiPolicy(
   const regime = String(oiContext?.regime || 'NEUTRAL').toUpperCase();
   const oiAbs = Math.abs(finiteNumber(oiContext?.oiPct, 0));
 
-  const earlyContrary =
-    (dir === 'LONG' && ['SHORT_BUILDUP', 'LONG_UNWIND'].includes(regime)) ||
-    (dir === 'SHORT' && ['LONG_BUILDUP', 'SHORT_COVERING'].includes(regime));
-  if (earlyContrary) {
-    const strong = oiAbs >= strongContraryPct;
-    return {
-      level: strong ? 'STRONG_CONTRARY' : 'MILD_CONTRARY',
-      accepted: !strong,
-      penalty: strong ? 0 : 2,
-      regime,
-      oiAbs
-    };
-  }
   if (oiContext?.confirmed === true) {
     return { level: 'FAVORABLE', accepted: true, penalty: 0, regime, oiAbs };
   }
@@ -2566,19 +2547,12 @@ export function balancedEntryPreview({
 
   const entryMode =
     (
-      pullback.confirmed &&
-      marketRegime.pullbackAllowed &&
-      trendExhaustion.ok &&
-      (finiteNumber(pullback.distanceAtr, 0) <= 0.78 || finiteNumber(t5?.volumeRatio, 0) < 1.75)
+      marketRegime.regime ===
+        'EXPANSION' &&
+      breakout.qualified &&
+      marketRegime.breakoutAllowed
     )
-      ? 'PULLBACK'
-      : (
-        marketRegime.regime ===
-          'EXPANSION' &&
-        breakout.qualified &&
-        marketRegime.breakoutAllowed
-      )
-        ? 'BREAKOUT_STRONG'
+      ? 'BREAKOUT_STRONG'
       : (
         pullback.confirmed &&
         marketRegime.pullbackAllowed &&
@@ -3694,20 +3668,13 @@ export async function scanMarket({
 
       const entryMode =
         (
-          pullback.confirmed &&
-          marketRegime.pullbackAllowed &&
-          trendExhaustion.ok &&
-          (finiteNumber(pullback.distanceAtr, 0) <= 0.78 || finiteNumber(t5?.volumeRatio, 0) < 1.75)
+          marketRegime.regime ===
+            'EXPANSION' &&
+          breakoutEnabled &&
+          breakout.qualified &&
+          marketRegime.breakoutAllowed
         )
-          ? 'PULLBACK'
-          : (
-            marketRegime.regime ===
-              'EXPANSION' &&
-            breakoutEnabled &&
-            breakout.qualified &&
-            marketRegime.breakoutAllowed
-          )
-            ? 'BREAKOUT_STRONG'
+          ? 'BREAKOUT_STRONG'
           : (
             pullback.confirmed &&
             marketRegime.pullbackAllowed &&

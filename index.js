@@ -11,7 +11,7 @@ try {
 } catch {}
 import http from 'node:http';
 import { scanMarket, signalText } from './scanner.js';
-import { sendMessage, getUpdates } from './telegram.js';
+import { sendMessage, getUpdates, deleteWebhook } from './telegram.js';
 import {
   analyzeSignalWithAI,
   aiConfigured,
@@ -3825,8 +3825,14 @@ async function processConfirmedEntrySnapshots(
               `🟢 <b>BLOFIN ${res.mode} — ORDEM EXECUTADA</b>\n` +
               `Par: <b>${res.instId}</b> · ${signal.side}\n` +
               `Tipo: ${res.isStock ? 'Ação Tokenizada' : 'Criptomoeda'}\n` +
-              `Contratos: ${res.contracts} · Notional: ${res.notional} USDT\n` +
+              `Contratos: <b>${res.contracts}</b> (~${res.notional} USDT)\n` +
               `Entrada: ${res.entryPrice} · Stop: ${res.stopLoss} · TP: ${res.takeProfit}`
+            );
+          } else {
+            notify(
+              `⚠️ <b>BLOFIN ${res.mode} — FALHA NA EXECUÇÃO</b>\n` +
+              `Par: <b>${res.instId}</b> · ${signal.side}\n` +
+              `Motivo: <code>${res.error || res.reason || 'Erro desconhecido'}</code>`
             );
           }
         }).catch(err => console.error('[blofin] Erro na execução:', err.message));
@@ -4358,6 +4364,27 @@ async function doScan({
         await notify(
           paperOpen.message
         );
+
+        // Executa na BloFin também em entradas diretas
+        if (blofinConfig().hasCredentials && blofinConfig().enabled) {
+          executeBlofinOrder(signal).then(res => {
+            if (res.ok) {
+              notify(
+                `🟢 <b>BLOFIN ${res.mode} — ORDEM EXECUTADA</b>\n` +
+                `Par: <b>${res.instId}</b> · ${signal.side}\n` +
+                `Tipo: ${res.isStock ? 'Ação Tokenizada' : 'Criptomoeda'}\n` +
+                `Contratos: <b>${res.contracts}</b> (~${res.notional} USDT)\n` +
+                `Entrada: ${res.entryPrice} · Stop: ${res.stopLoss} · TP: ${res.takeProfit}`
+              );
+            } else {
+              notify(
+                `⚠️ <b>BLOFIN ${res.mode} — FALHA NA EXECUÇÃO</b>\n` +
+                `Par: <b>${res.instId}</b> · ${signal.side}\n` +
+                `Motivo: <code>${res.error || res.reason || 'Erro desconhecido'}</code>`
+              );
+            }
+          }).catch(err => console.error('[blofin] Erro na execução:', err.message));
+        }
       } else {
         console.log(
           `[paper] ${signal.symbol}: ${paperOpen.reason}`
@@ -4653,120 +4680,139 @@ async function blofinStatusText() {
 
 
 async function handleBlofinManualTest(argsText, activeChatId) {
-  const cfg = blofinConfig();
-  if (!cfg.hasCredentials) {
-    return await sendMessage(
-      cfg.token,
-      activeChatId,
-      '❌ <b>Chaves BloFin ausentes no Render!</b>\n\n' +
-      'Para enviar ordens, adicione as variáveis no Render:\n' +
-      '• <code>BLOFIN_API_KEY</code>\n' +
-      '• <code>BLOFIN_SECRET_KEY</code>\n' +
-      '• <code>BLOFIN_PASSPHRASE</code>\n' +
-      '• <code>BLOFIN_DEMO=true</code> (para modo demo seguro)'
-    );
+  const targetChatId = activeChatId || cfg.chatId;
+  const botToken = cfg.token || process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
+
+  if (!botToken || !targetChatId) {
+    console.error('[btest] Ausente botToken ou targetChatId', { botToken: !!botToken, targetChatId });
+    return;
   }
 
-  const parts = argsText.trim().split(/\s+/).slice(1);
-  let rawSymbol = parts[0] ? parts[0].toUpperCase() : 'BTC';
-  let side = parts[1] ? parts[1].toUpperCase() : 'LONG';
-  if (side !== 'LONG' && side !== 'SHORT') side = 'LONG';
-
-  const instId = formatBlofinInstId(rawSymbol);
-
-  await sendMessage(
-    cfg.token,
-    activeChatId,
-    `🧾 Enviando ordem de TESTE (${cfg.mode}) para <b>${instId} ${side}</b> na BloFin...`
-  );
-
-  let refPrice = 100;
   try {
-    const res = await fetch(`https://openapi.blofin.com/api/v1/market/tickers?instId=${encodeURIComponent(instId)}`);
-    const json = await res.json();
-    if (json?.data?.[0]?.last) {
-      refPrice = Number(json.data[0].last);
+    const bCfg = blofinConfig();
+
+    if (!bCfg.hasCredentials) {
+      return await sendMessage(
+        botToken,
+        targetChatId,
+        '❌ <b>Chaves BloFin ausentes no Render!</b>\n\n' +
+        'Para enviar ordens, adicione as variáveis no Render:\n' +
+        '• <code>BLOFIN_API_KEY</code>\n' +
+        '• <code>BLOFIN_SECRET_KEY</code>\n' +
+        '• <code>BLOFIN_PASSPHRASE</code>\n' +
+        '• <code>BLOFIN_DEMO=true</code> (para modo demo seguro)'
+      );
     }
-  } catch {}
 
-  const isLong = side === 'LONG';
-  const entry = refPrice;
-  const slOffset = entry * 0.015;
-  const tpOffset = entry * 0.025;
-  const stop = isLong ? Number((entry - slOffset).toFixed(4)) : Number((entry + slOffset).toFixed(4));
-  const tp1 = isLong ? Number((entry + tpOffset).toFixed(4)) : Number((entry - tpOffset).toFixed(4));
+    const cleanArgs = String(argsText || '').replace(/^\/btest(?:@[a-zA-Z0-9_]+)?\s*/i, '').trim();
+    const parts = cleanArgs ? cleanArgs.split(/\s+/) : [];
+    let rawSymbol = parts[0] ? parts[0].toUpperCase() : 'BTC';
+    let side = parts[1] ? parts[1].toUpperCase() : 'LONG';
+    if (side !== 'SHORT') side = 'LONG';
 
-  const testSignal = {
-    symbol: instId,
-    side,
-    entry,
-    stop,
-    tp1,
-    score: 90,
-    ai: { confidence: 85 }
-  };
+    const instId = formatBlofinInstId(rawSymbol);
 
-  try {
+    await sendMessage(
+      botToken,
+      targetChatId,
+      `🧾 Enviando ordem de TESTE (${bCfg.mode}) para <b>${instId} ${side}</b> na BloFin...`
+    );
+
+    let refPrice = 100;
+    try {
+      const res = await fetch(`https://openapi.blofin.com/api/v1/market/tickers?instId=${encodeURIComponent(instId)}`);
+      const json = await res.json();
+      if (json?.data?.[0]?.last) {
+        refPrice = Number(json.data[0].last);
+      }
+    } catch (e) {
+      console.warn('[btest] ticker fetch error:', e?.message);
+    }
+
+    const isLong = side === 'LONG';
+    const entry = refPrice;
+    const slOffset = entry * 0.015;
+    const tpOffset = entry * 0.025;
+    const precision = entry >= 100 ? 2 : entry >= 1 ? 4 : 6;
+    const stop = isLong ? Number((entry - slOffset).toFixed(precision)) : Number((entry + slOffset).toFixed(precision));
+    const tp1 = isLong ? Number((entry + tpOffset).toFixed(precision)) : Number((entry - tpOffset).toFixed(precision));
+
+    const testSignal = {
+      symbol: instId,
+      side,
+      entry,
+      stop,
+      tp1,
+      score: 90,
+      ai: { confidence: 85 }
+    };
+
     const res = await executeBlofinOrder(testSignal);
     if (res.ok) {
       await sendMessage(
-        cfg.token,
-        activeChatId,
+        botToken,
+        targetChatId,
         `✅ <b>ORDEM BLOFIN (${res.mode}) EXECUTADA COM SUCESSO!</b>\n\n` +
         `${res.isStock ? '📈 Ação Tokenizada' : '🪙 Criptomoeda'}: <b>${res.instId} ${side}</b>\n` +
-        `📦 Contratos: <b>${res.contracts}</b> (~${res.notional} notional)\n` +
+        `📦 Contratos: <b>${res.contracts}</b> (~${res.notional} USDT notional)\n` +
         `💰 Preço Ref.: ${res.entryPrice}\n` +
         `🛑 Stop Loss: ${res.stopLoss}\n` +
         `🎯 Take Profit: ${res.takeProfit}\n\n` +
-        `<i>Modo: ${res.mode} — verifique posições com /bpos</i>`
+        `<i>Modo: ${res.mode} — consulte a posição com /bpos</i>`
       );
     } else {
       await sendMessage(
-        cfg.token,
-        activeChatId,
-        `❌ <b>Falha na execução BloFin (${cfg.mode}):</b>\n\n` +
+        botToken,
+        targetChatId,
+        `❌ <b>Falha na execução BloFin (${bCfg.mode}):</b>\n\n` +
         `Motivo: <code>${res.error || res.reason || 'Erro desconhecido'}</code>\n\n` +
-        `<i>Dica: Se a API BloFin retornar erro de permissão ou saldo, verifique se a chave tem permissão de negociação e se há saldo na conta Futures Demo.</i>`
+        `<i>Verifique se o saldo na conta Demo é suficiente para a margem e se as credenciais possuem permissão de Trade.</i>`
       );
     }
   } catch (err) {
+    console.error('[btest-error]', err);
     await sendMessage(
-      cfg.token,
-      activeChatId,
-      `❌ <b>Erro ao executar:</b>\n${err.message}`
-    );
+      botToken,
+      targetChatId,
+      `❌ <b>Erro ao executar teste BloFin:</b>\n<code>${String(err?.message || err).replace(/[<>&]/g, '')}</code>`
+    ).catch(() => {});
   }
 }
 
 async function handleBlofinClose(argsText, activeChatId) {
-  const cfg = blofinConfig();
-  const parts = argsText.trim().split(/\s+/).slice(1);
-  if (!parts[0]) {
-    return await sendMessage(
-      cfg.token,
-      activeChatId,
-      'ℹ️ <b>Uso:</b> <code>/bclose BTC-USDT</code> ou <code>/bclose TSLA-USDT</code>\nEnvie /bpos para ver as posições abertas.'
-    );
-  }
-  const instId = formatBlofinInstId(parts[0]);
-  await sendMessage(cfg.token, activeChatId, `⏳ Fechando posição <b>${instId}</b> na BloFin...`);
+  const targetChatId = activeChatId || cfg.chatId;
+  const botToken = cfg.token || process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
+
+  if (!botToken || !targetChatId) return;
+
   try {
+    const cleanArgs = String(argsText || '').replace(/^\/bclose(?:@[a-zA-Z0-9_]+)?\s*/i, '').trim();
+    const parts = cleanArgs ? cleanArgs.split(/\s+/) : [];
+    if (!parts[0]) {
+      return await sendMessage(
+        botToken,
+        targetChatId,
+        'ℹ️ <b>Uso:</b> <code>/bclose BTC-USDT</code> ou <code>/bclose TSLA-USDT</code>\nEnvie /bpos para ver as posições abertas.'
+      );
+    }
+    const instId = formatBlofinInstId(parts[0]);
+    await sendMessage(botToken, targetChatId, `⏳ Fechando posição <b>${instId}</b> na BloFin...`);
     const res = await closeBlofinPosition(instId);
     if (res.ok) {
       await sendMessage(
-        cfg.token,
-        activeChatId,
+        botToken,
+        targetChatId,
         `✅ Posição <b>${instId}</b> fechada com sucesso na BloFin!`
       );
     } else {
       await sendMessage(
-        cfg.token,
-        activeChatId,
+        botToken,
+        targetChatId,
         `❌ Falha ao fechar posição <b>${instId}</b>: ${res.reason || res.error || 'erro desconhecido'}`
       );
     }
   } catch (e) {
-    await sendMessage(cfg.token, activeChatId, `❌ Erro: ${e.message}`);
+    await sendMessage(botToken, targetChatId, `❌ Erro: ${e.message}`).catch(() => {});
   }
 }
 
@@ -4776,8 +4822,21 @@ async function handleMessage(msg) {
   if (!text.startsWith('/') && !plainHoldCommand) return;
 
   activeChatId = String(msg.chat.id);
+  const senderInfo = msg.from ? (msg.from.username ? `@${msg.from.username}` : (msg.from.first_name || 'user')) : 'user';
+  console.log(`[telegram] [chat:${activeChatId}] Mensagem recebida de ${senderInfo}: "${text}"`);
 
-  if (text.startsWith('/start')) {
+  if (/^\/(?:ping|test)(?:\s|@|$)/i.test(text)) {
+    const bCfg = blofinConfig();
+    await sendMessage(
+      cfg.token,
+      activeChatId,
+      `🏓 <b>PONG! Bot 100% ONLINE e Conectado!</b>\n\n` +
+      `⚡ Telegram: Resposta instantânea OK\n` +
+      `💼 BloFin Modo: <b>${bCfg.mode}</b> (${bCfg.hasCredentials ? '✅ Credenciais Configuradas' : '⚠️ Credenciais Ausentes'})\n` +
+      `🕒 Horário Servidor: ${new Date().toISOString()}\n\n` +
+      `<i>Envie /blofin para ver seu saldo ou /btest DOGE LONG para simular uma ordem demo na BloFin.</i>`
+    );
+  } else if (text.startsWith('/start')) {
     await sendMessage(
       cfg.token,
       activeChatId,
@@ -5280,17 +5339,17 @@ async function handleMessage(msg) {
       activeChatId,
       '✅ Executor reativado, mas continua DESARMADO. Use /harm apenas quando quiser habilitar ordens TESTNET assinadas.'
     );
-  } else if (text.startsWith('/blofin')) {
+  } else if (/^\/blofin(?:\s|@|$)/i.test(text)) {
     const msgText = await blofinStatusText();
     await sendMessage(cfg.token, activeChatId, msgText);
-  } else if (text.startsWith('/bexecs')) {
+  } else if (/^\/bexecs(?:\s|@|$)/i.test(text)) {
     await sendMessage(cfg.token, activeChatId, blofinExecutionHistoryText());
-  } else if (text.startsWith('/bpos')) {
+  } else if (/^\/bpos(?:\s|@|$)/i.test(text)) {
     const msgText = await blofinPositionsText();
     await sendMessage(cfg.token, activeChatId, msgText);
-  } else if (text.startsWith('/btest')) {
+  } else if (/^\/btest(?:\s|@|$)/i.test(text)) {
     await handleBlofinManualTest(text, activeChatId);
-  } else if (text.startsWith('/bclose')) {
+  } else if (/^\/bclose(?:\s|@|$)/i.test(text)) {
     await handleBlofinClose(text, activeChatId);
   } else if (text.startsWith('/scan') || text.startsWith('/top')) {
     if (!scanning) {
@@ -5312,25 +5371,48 @@ async function handleMessage(msg) {
 }
 
 async function pollingLoop() {
+  if (!cfg.token) {
+    console.error('[telegram] AVISO: BOT_TOKEN não está configurado. Polling inativo.');
+    return;
+  }
+
+  console.log(`[telegram] Iniciando Telegram Polling... Token: ${String(cfg.token).slice(0, 7)}...`);
+  try {
+    const delRes = await deleteWebhook(cfg.token);
+    if (delRes?.ok) {
+      console.log('[telegram] Webhooks anteriores limpos com sucesso. Polling exclusivo ativo.');
+    }
+  } catch (e) {
+    console.warn('[telegram] Aviso ao verificar/limpar webhook:', e?.message || e);
+  }
+
+  console.log('[telegram] ✅ Bot online e escutando mensagens no Telegram!');
+
   while (true) {
     try {
       const data = await getUpdates(cfg.token, updateOffset, 25);
 
       for (const u of data.result || []) {
         updateOffset = u.update_id + 1;
-        if (u.message) await handleMessage(u.message);
+        const msg = u.message || u.edited_message || u.channel_post;
+        if (msg) {
+          try {
+            await handleMessage(msg);
+          } catch (mErr) {
+            console.error('[telegram] Erro ao processar mensagem individual:', mErr?.message || mErr);
+          }
+        }
       }
     } catch (e) {
-      console.error('[telegram]', e.message);
+      const errMsg = String(e?.message || e);
+      console.error('[telegram]', errMsg);
 
-      // Em rolling deploy o processo antigo pode continuar fazendo getUpdates
-      // por alguns segundos. HTTP 409 aqui normalmente é conflito temporário
-      // entre as duas instâncias, então fazemos backoff maior.
-      const waitMs =
-        String(e.message || '').includes('409')
-          ? 30000
-          : 3000;
+      if (errMsg.includes('409')) {
+        console.warn('[telegram] Conflito 409 detectado (outra instância ativa ou webhook antigo). Tentando limpar webhook e aguardando 5s...');
+        try { await deleteWebhook(cfg.token); } catch {}
+      }
 
+      const waitMs = errMsg.includes('409') ? 5000 : 2500;
       await new Promise(r => setTimeout(r, waitMs));
     }
   }

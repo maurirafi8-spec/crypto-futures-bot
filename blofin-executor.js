@@ -481,6 +481,9 @@ export async function executeBlofinOrder(signal, options = {}) {
   const minSize = inst.minSize > 0 ? inst.minSize : 1;
   const contracts = Math.max(minSize, Math.round(rawContracts / lotSize) * lotSize);
 
+  const decimals = (lotSize.toString().split('.')[1] || '').length;
+  const formattedSize = decimals > 0 ? contracts.toFixed(decimals) : String(Math.round(contracts));
+
   try {
     await blofinRequest('POST', '/api/v1/account/set-leverage', {
       instId,
@@ -489,12 +492,14 @@ export async function executeBlofinOrder(signal, options = {}) {
     });
   } catch {}
 
+  const defaultPosSide = isLong ? 'long' : 'short';
   const orderPayload = {
     instId,
     marginMode: cfg.marginMode,
+    positionSide: defaultPosSide,
     side: orderSide,
     orderType: 'market',
-    size: String(contracts)
+    size: formattedSize
   };
 
   if (takeProfit > 0) {
@@ -507,7 +512,28 @@ export async function executeBlofinOrder(signal, options = {}) {
     orderPayload.slOrderPrice = '-1';
   }
 
-  const res = await blofinRequest('POST', '/api/v1/trade/order', orderPayload);
+  // Tentativa 1: Ordem a mercado com posição Hedge (long/short)
+  let res = await blofinRequest('POST', '/api/v1/trade/order', orderPayload);
+
+  // Tentativa 2: Se falhar por causa de modo de posição (Hedge vs One-Way/Net)
+  if (!res.ok && (String(res.code) === '51000' || String(res.code) === '50000' || /positionSide|posSide|position mode/i.test(res.msg || res.raw || ''))) {
+    orderPayload.positionSide = orderPayload.positionSide === 'net' ? defaultPosSide : 'net';
+    res = await blofinRequest('POST', '/api/v1/trade/order', orderPayload);
+  }
+
+  // Tentativa 3: Se falhar por causa de TP/SL anexado no pedido inicial a mercado
+  if (!res.ok && (orderPayload.tpTriggerPrice || orderPayload.slTriggerPrice)) {
+    delete orderPayload.tpTriggerPrice;
+    delete orderPayload.tpOrderPrice;
+    delete orderPayload.slTriggerPrice;
+    delete orderPayload.slOrderPrice;
+    res = await blofinRequest('POST', '/api/v1/trade/order', orderPayload);
+
+    if (!res.ok && (String(res.code) === '51000' || /positionSide|posSide/i.test(res.msg || res.raw || ''))) {
+      orderPayload.positionSide = 'net';
+      res = await blofinRequest('POST', '/api/v1/trade/order', orderPayload);
+    }
+  }
 
   const executionRecord = {
     id: res.data?.[0]?.orderId || `BLF_${Date.now()}`,
@@ -526,7 +552,7 @@ export async function executeBlofinOrder(signal, options = {}) {
     score: Number(signal?.score || 0),
     aiConfidence: Number(signal?.ai?.confidence || 0),
     success: res.ok,
-    error: res.ok ? null : (res.msg || res.raw)
+    error: res.ok ? null : (res.msg || res.raw || `HTTP ${res.status}`)
   };
 
   blofinExecutionHistory.unshift(executionRecord);
@@ -543,7 +569,7 @@ export async function executeBlofinOrder(signal, options = {}) {
     stopLoss,
     takeProfit,
     response: res.data,
-    error: res.ok ? null : (res.msg || res.raw)
+    error: res.ok ? null : (res.msg || res.raw || `HTTP ${res.status}`)
   };
 }
 
@@ -556,22 +582,31 @@ export async function closeBlofinPosition(instId) {
   }
 
   const closeSide = pos.side === 'LONG' ? 'sell' : 'buy';
+  const posSide = pos.positionSide || (pos.side === 'LONG' ? 'long' : 'short');
 
-  const res = await blofinRequest('POST', '/api/v1/trade/order', {
+  const closePayload = {
     instId,
-    marginMode: pos.marginMode,
+    marginMode: pos.marginMode || 'cross',
+    positionSide: posSide,
     side: closeSide,
     orderType: 'market',
-    size: String(pos.contracts),
-    reduceOnly: true
-  });
+    size: String(pos.contracts)
+  };
+
+  let res = await blofinRequest('POST', '/api/v1/trade/order', closePayload);
+
+  if (!res.ok && (String(res.code) === '51000' || /positionSide|posSide/i.test(res.msg || res.raw || ''))) {
+    closePayload.positionSide = 'net';
+    res = await blofinRequest('POST', '/api/v1/trade/order', closePayload);
+  }
 
   return {
     ok: res.ok,
     instId,
-    closedSide: pos.side,
     contracts: pos.contracts,
+    side: closeSide,
     response: res.data,
     error: res.ok ? null : (res.msg || res.raw)
   };
 }
+
