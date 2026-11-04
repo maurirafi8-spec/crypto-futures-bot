@@ -528,8 +528,8 @@ export async function executeBlofinOrder(signal, options = {}) {
   const orderSide = isLong ? 'buy' : 'sell';
 
   const entryPrice = Number(signal?.entry || signal?.t5?.price || 0);
-  const stopLoss = Number(signal?.stop || 0);
-  const takeProfit = Number(signal?.tp1 || signal?.tp2 || 0);
+  const stopLoss = Number(signal?.quickScalpStopReference || signal?.stop || 0);
+  const takeProfit = Number(signal?.quickScalpTargetReference || signal?.tp1 || signal?.tp2 || 0);
 
   if (entryPrice <= 0) {
     return { ok: false, reason: 'preço de entrada inválido' };

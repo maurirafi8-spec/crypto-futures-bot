@@ -3819,7 +3819,14 @@ async function processConfirmedEntrySnapshots(
       // também recebe apenas a entrada já confirmada em 2 etapas.
       // Executa na BloFin (Demo / Real) para Criptos e Ações Tokenizadas
       if (blofinConfig().hasCredentials && blofinConfig().enabled) {
-        executeBlofinOrder(signal).then(res => {
+        const blofinSignal = {
+          ...signal,
+          ...(paperOpen?.position ? {
+            quickScalpTargetReference: paperOpen.position.quickScalpTargetReference,
+            quickScalpStopReference: paperOpen.position.quickScalpStopReference
+          } : {})
+        };
+        executeBlofinOrder(blofinSignal).then(res => {
           if (res.ok) {
             notify(
               `🟢 <b>BLOFIN ${res.mode} — ORDEM EXECUTADA</b>\n` +
@@ -4367,7 +4374,14 @@ async function doScan({
 
         // Executa na BloFin também em entradas diretas
         if (blofinConfig().hasCredentials && blofinConfig().enabled) {
-          executeBlofinOrder(signal).then(res => {
+          const blofinSignal = {
+            ...signal,
+            ...(paperOpen?.position ? {
+              quickScalpTargetReference: paperOpen.position.quickScalpTargetReference,
+              quickScalpStopReference: paperOpen.position.quickScalpStopReference
+            } : {})
+          };
+          executeBlofinOrder(blofinSignal).then(res => {
             if (res.ok) {
               notify(
                 `🟢 <b>BLOFIN ${res.mode} — ORDEM EXECUTADA</b>\n` +

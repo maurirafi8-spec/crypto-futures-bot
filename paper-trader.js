@@ -148,9 +148,9 @@ export function paperConfig() {
     quickScalpLeverage:
       intEnv('PAPER_QUICK_SCALP_LEVERAGE', 5, 1, 50),
 
-    // Alvo LÍQUIDO sobre o notional, já considerando fee + slippage.
+    // Alvo LÍQUIDO sobre o notional, já considerando fee + slippage. Payoff 1.46:1 (+0.95% vs -0.65%).
     quickScalpTargetNetPct:
-      numEnv('PAPER_QUICK_SCALP_TARGET_NET_PCT', 0.85, 0.01, 5),
+      numEnv('PAPER_QUICK_SCALP_TARGET_NET_PCT', 0.95, 0.01, 5),
 
     quickScalpStopNetPct:
       numEnv('PAPER_QUICK_SCALP_STOP_NET_PCT', 0.65, 0.05, 10),
@@ -539,11 +539,11 @@ export function paperConfig() {
 
     // V1.6.2:
     // buffer proporcional ao tamanho da posição, em vez de piso fixo em USDC.
-    // 0.05% de um notional de 10 USDC = 0.005 USDC.
+    // 0.15% de um notional de 75 USDC = 0.1125 USDC.
     profitProtectBufferPctNotional:
       numEnv(
         'PAPER_PROFIT_PROTECT_BUFFER_PCT_NOTIONAL',
-        0.05,
+        0.15,
         0,
         5
       ),
@@ -4755,38 +4755,74 @@ function updateOnePosition(position, snap) {
     }
   }
 
-  // V2.2 AUTO BREAK-EVEN LOCK (+0.38R MFE):
-  // Se o trade já andou >= +0.38R a favor (como GALAUSDT que foi a +0.49R),
-  // protege o stop automaticamente no Break-Even + taxas para nunca virar perda!
-  if (
-    Number(position.mfeR || 0) >= 0.38 &&
-    Number(position.stage || 0) === 0
-  ) {
-    const targetNetUsdc = profitProtectTargetNet(position);
-    const beStop = profitProtectStopReference(position, targetNetUsdc);
-    const protectedStop = clampProtectedStop(
-      position,
-      moreProtectiveStop(position, position.entryFill, beStop),
-      1
-    );
-    position.stopCurrent = moreProtectiveStop(
-      position,
-      position.stopCurrent,
-      protectedStop
-    );
-    if (position.quickScalpEnabled && Number.isFinite(position.quickScalpStopReference)) {
-      position.quickScalpStopReference = moreProtectiveStop(
+  // V2.3 PROGRESSIVE PROFIT LOCK & PAYOFF GUARD:
+  // Nunca mais estrangula o trade no ruído de 5m (+0.38R) com micro lucro de 0.04 USDC.
+  // - De 0 a +0.69R MFE: O trade respira com stop inicial intacto para buscar o alvo cheio (+0.71 a +0.85 USDC).
+  // - Em +0.70R MFE: Move stop para Break-Even + taxas (+0.15% NET) -> Trade 100% sem risco.
+  // - Em +0.85R MFE: Trava no mínimo 50% do lucro do alvo (+0.45% NET, ~ +0.34 USDC)!
+  // - No alvo Quick (+0.95% a +1.10% NET): Realiza 100% da vitória cheia (+0.71 a +0.85 USDC)!
+  const currentMfeR = Number(position.mfeR || 0);
+
+  if (position.quickScalpEnabled) {
+    const notional = Number(position.initialNotional || 0);
+    const targetNetUsdc = Number(position.quickScalpTargetNetUsdc || (notional * 0.0095));
+
+    if (currentMfeR >= 0.85 && notional > 0) {
+      // Trava 50% do lucro do alvo (+0.45% a +0.50% NET)
+      const lockNetUsdc = Math.max(targetNetUsdc * 0.50, notional * 0.0045);
+      const lockStop = profitProtectStopReference(position, lockNetUsdc);
+      if (Number.isFinite(lockStop)) {
+        position.quickScalpStopReference = moreProtectiveStop(
+          position,
+          position.quickScalpStopReference,
+          lockStop
+        );
+        position.stopCurrent = moreProtectiveStop(
+          position,
+          position.stopCurrent,
+          lockStop
+        );
+        position.quickProfitLockStage = 2;
+      }
+    } else if (currentMfeR >= 0.70 && notional > 0 && !position.quickProfitLockStage) {
+      // Break-even com folga de taxas + buffer (+0.15% NET)
+      const beNetUsdc = notional * 0.0015;
+      const beStop = profitProtectStopReference(position, beNetUsdc);
+      if (Number.isFinite(beStop)) {
+        position.quickScalpStopReference = moreProtectiveStop(
+          position,
+          position.quickScalpStopReference,
+          beStop
+        );
+        position.stopCurrent = moreProtectiveStop(
+          position,
+          position.stopCurrent,
+          beStop
+        );
+        position.quickProfitLockStage = 1;
+      }
+    }
+  } else {
+    // Trades Swing / Runner: ativa Break-Even apenas após +0.70R para não matar trades antes do TP1
+    if (currentMfeR >= 0.70 && Number(position.stage || 0) === 0) {
+      const targetNetUsdc = profitProtectTargetNet(position);
+      const beStop = profitProtectStopReference(position, targetNetUsdc);
+      const protectedStop = clampProtectedStop(
         position,
-        position.quickScalpStopReference,
+        moreProtectiveStop(position, position.entryFill, beStop),
+        1
+      );
+      position.stopCurrent = moreProtectiveStop(
+        position,
+        position.stopCurrent,
         protectedStop
       );
     }
   }
 
-  // V2.2 QUICK SCALP + PARCIAIS EM ESCADA:
-  // Só aciona saída 100% no alvo final Quick se bater quickScalpTargetReference;
-  // permite que TP1 (50% em 0.55R) e TP2 (35% em 0.95R) realizem lucro no caminho,
-  // e elimina o fechamento cego de 35m quando o trade já bateu TP1 ou já ativou Break-Even.
+  // V2.3 QUICK SCALP + ALVO PRINCIPAL:
+  // Aciona saída 100% no alvo final Quick (+0.95% NET = +0.71 USDC);
+  // permite que TP1 realize parcial se atingido, e protege ganhos progressivamente.
   if (position.quickScalpEnabled) {
     const targetHit =
       quickScalpTargetTouched(
@@ -4809,6 +4845,7 @@ function updateOnePosition(position, snap) {
           fastTf
         );
 
+      const mfeR = Number(position.mfeR || 0);
       const result =
         closeRemainingAt(
           position,
@@ -4817,9 +4854,13 @@ function updateOnePosition(position, snap) {
             : position.quickScalpStopReference,
           targetFirst
             ? `QUICK SCALP TP +${Number(position.quickScalpTargetNetPct || 0).toFixed(2)}% NET`
-            : (Number(position.stage || 0) > 0 || Number(position.mfeR || 0) >= 0.38)
-              ? `STOP GAIN QUICK após +${Number(position.mfeR || 0).toFixed(2)}R`
-              : `QUICK SCALP STOP -${Number(position.quickScalpStopNetPct || 0).toFixed(2)}% NET`
+            : Number(position.stage || 0) > 0
+              ? `STOP GAIN QUICK após TP${position.stage}`
+              : mfeR >= 0.85
+                ? `TRAILING STOP QUICK (+${mfeR.toFixed(2)}R MFE)`
+                : mfeR >= 0.70
+                  ? `BREAK-EVEN QUICK (+${mfeR.toFixed(2)}R MFE)`
+                  : `QUICK SCALP STOP -${Number(position.quickScalpStopNetPct || 0).toFixed(2)}% NET`
         );
 
       events.push(
@@ -4845,10 +4886,15 @@ function updateOnePosition(position, snap) {
     }
 
     if (quickStopHit) {
+      const mfeR = Number(position.mfeR || 0);
       const outcomeLabel =
-        (Number(position.stage || 0) > 0 || Number(position.mfeR || 0) >= 0.38)
-          ? `STOP GAIN QUICK após TP${position.stage || 1}`
-          : `QUICK SCALP STOP -${Number(position.quickScalpStopNetPct || 0).toFixed(2)}% NET`;
+        Number(position.stage || 0) > 0
+          ? `STOP GAIN QUICK após TP${position.stage}`
+          : mfeR >= 0.85
+            ? `TRAILING STOP QUICK (+${mfeR.toFixed(2)}R MFE)`
+            : mfeR >= 0.70
+              ? `BREAK-EVEN QUICK (+${mfeR.toFixed(2)}R MFE)`
+              : `QUICK SCALP STOP -${Number(position.quickScalpStopNetPct || 0).toFixed(2)}% NET`;
 
       const result =
         closeRemainingAt(
