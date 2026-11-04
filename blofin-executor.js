@@ -48,13 +48,19 @@ export function isEquitySymbol(symbol = '') {
 }
 
 export function formatBlofinInstId(symbol = '') {
-  const s = String(symbol || '').toUpperCase().trim();
-  if (s.includes('-USDT')) return s;
+  let s = String(symbol || '').toUpperCase().trim();
+  s = s.replace(/-SWAP$/i, '')
+       .replace(/-PERP$/i, '')
+       .replace(/:.*$/, '')
+       .trim();
+
+  if (s.endsWith('-USDT')) return s;
+
   const base = s
     .replace(/[-_/]/g, '')
     .replace(/USDT.*$/, '')
-    .replace(/PERP.*$/, '')
     .trim();
+
   return `${base}-USDT`;
 }
 
@@ -164,13 +170,28 @@ async function executeSingleRequest(method, pathWithQuery, body, cfg, useDirectB
       json = null;
     }
 
-    const isSuccess = res.ok && json && (json.code === '0' || json.code === 0);
+    const firstItem = Array.isArray(json?.data) ? json.data[0] : json?.data;
+    const subCode = firstItem?.sCode != null ? String(firstItem.sCode) : null;
+    const subMsg = firstItem?.sMsg || firstItem?.msg || '';
+
+    // No BloFin, a operação é sucesso se o código geral for 0 E o sub-código do item for 0 ou ausente
+    const isSuccess = res.ok && json && (json.code === '0' || json.code === 0) && (!subCode || subCode === '0' || subCode === '00000');
+
+    // Mensagem descritiva: se subMsg detalhar o erro, expõe para o usuário
+    let effectiveMsg = json?.msg || '';
+    if (subMsg && subMsg !== json?.msg) {
+      effectiveMsg = json?.msg && json.msg !== 'All operations failed'
+        ? `${json.msg}: ${subMsg}`
+        : subMsg;
+    }
 
     return {
       ok: isSuccess,
       status: res.status,
-      code: json?.code ?? null,
-      msg: json?.msg || '',
+      code: subCode || json?.code || null,
+      topCode: json?.code || null,
+      subCode,
+      msg: effectiveMsg || text,
       data: json?.data ?? null,
       raw: text,
       latencyMs: Date.now() - startedAt,
@@ -210,6 +231,48 @@ export async function blofinRequest(method, pathWithQuery, body = null, customCo
   }
 
   return res;
+}
+
+export function extractBlofinError(res) {
+  if (!res) return 'Sem resposta da API BloFin';
+  const first = Array.isArray(res.data) ? res.data[0] : (res.data || {});
+  const subMsg = first?.sMsg || first?.msg;
+  const subCode = first?.sCode || first?.code;
+
+  if (subMsg && subMsg !== res.msg) {
+    return `${subMsg}${subCode && subCode !== '0' ? ` (código: ${subCode})` : ''}`;
+  }
+  if (res.msg && res.msg !== 'All operations failed') {
+    return `${res.msg}${res.code ? ` (código: ${res.code})` : ''}`;
+  }
+  if (subMsg) {
+    return `${subMsg}${subCode && subCode !== '0' ? ` (código: ${subCode})` : ''}`;
+  }
+  return res.msg || res.raw || `HTTP ${res.status || 'erro'}`;
+}
+
+let cachedPositionMode = null;
+let lastPositionModeFetch = 0;
+
+export async function getBlofinPositionMode() {
+  const now = Date.now();
+  if (cachedPositionMode && now - lastPositionModeFetch < 5 * 60 * 1000) {
+    return cachedPositionMode;
+  }
+  const cfg = blofinConfig();
+  if (!cfg.hasCredentials) return 'long_short_mode';
+  try {
+    const res = await blofinRequest('GET', '/api/v1/account/position-mode');
+    if (res.ok && res.data?.positionMode) {
+      cachedPositionMode = res.data.positionMode;
+      lastPositionModeFetch = now;
+      console.log(`[blofin] Modo de Posição detectado da conta: ${cachedPositionMode}`);
+      return cachedPositionMode;
+    }
+  } catch (e) {
+    console.warn('[blofin] Aviso ao consultar position-mode:', e?.message || e);
+  }
+  return cachedPositionMode || 'long_short_mode';
 }
 
 const instrumentsCache = new Map();
@@ -488,52 +551,103 @@ export async function executeBlofinOrder(signal, options = {}) {
     await blofinRequest('POST', '/api/v1/account/set-leverage', {
       instId,
       leverage: String(appliedLeverage),
-      marginMode: cfg.marginMode
+      marginMode: cfg.marginMode,
+      positionSide: isLong ? 'long' : 'short'
     });
   } catch {}
 
-  const defaultPosSide = isLong ? 'long' : 'short';
-  const orderPayload = {
-    instId,
-    marginMode: cfg.marginMode,
-    positionSide: defaultPosSide,
-    side: orderSide,
-    orderType: 'market',
-    size: formattedSize
-  };
+  const posMode = await getBlofinPositionMode();
+  const isNetMode = posMode === 'net_mode';
+  const detectedPosSide = isNetMode ? 'net' : (isLong ? 'long' : 'short');
+  const alternatePosSide = isNetMode ? (isLong ? 'long' : 'short') : 'net';
 
-  if (takeProfit > 0) {
-    orderPayload.tpTriggerPrice = String(takeProfit);
-    orderPayload.tpOrderPrice = '-1';
-  }
+  const attempts = [
+    // 1. Modo detectado (com TP/SL embutido)
+    { posSide: detectedPosSide, includeTpSl: true, label: `Modo detectado (${detectedPosSide}) com TP/SL` },
+    // 2. Modo detectado puro a mercado (sem TP/SL embutido para evitar rejeição por preço de gatilho)
+    { posSide: detectedPosSide, includeTpSl: false, label: `Modo detectado (${detectedPosSide}) a mercado direto` },
+    // 3. Modo alternativo (net vs long/short)
+    { posSide: alternatePosSide, includeTpSl: false, label: `Modo alternativo (${alternatePosSide}) a mercado` },
+    // 4. Modo alternativo com TP/SL
+    { posSide: alternatePosSide, includeTpSl: true, label: `Modo alternativo (${alternatePosSide}) com TP/SL` },
+    // 5. Sem positionSide (One-way puro)
+    { posSide: null, includeTpSl: false, label: 'Ordem a mercado sem positionSide' }
+  ];
 
-  if (stopLoss > 0) {
-    orderPayload.slTriggerPrice = String(stopLoss);
-    orderPayload.slOrderPrice = '-1';
-  }
+  let res = null;
+  let finalPosSide = detectedPosSide;
+  let placedWithTpSl = false;
 
-  // Tentativa 1: Ordem a mercado com posição Hedge (long/short)
-  let res = await blofinRequest('POST', '/api/v1/trade/order', orderPayload);
+  for (const att of attempts) {
+    const payload = {
+      instId,
+      marginMode: cfg.marginMode,
+      side: orderSide,
+      orderType: 'market',
+      size: formattedSize
+    };
 
-  // Tentativa 2: Se falhar por causa de modo de posição (Hedge vs One-Way/Net)
-  if (!res.ok && (String(res.code) === '51000' || String(res.code) === '50000' || /positionSide|posSide|position mode/i.test(res.msg || res.raw || ''))) {
-    orderPayload.positionSide = orderPayload.positionSide === 'net' ? defaultPosSide : 'net';
-    res = await blofinRequest('POST', '/api/v1/trade/order', orderPayload);
-  }
+    if (att.posSide) {
+      payload.positionSide = att.posSide;
+    }
 
-  // Tentativa 3: Se falhar por causa de TP/SL anexado no pedido inicial a mercado
-  if (!res.ok && (orderPayload.tpTriggerPrice || orderPayload.slTriggerPrice)) {
-    delete orderPayload.tpTriggerPrice;
-    delete orderPayload.tpOrderPrice;
-    delete orderPayload.slTriggerPrice;
-    delete orderPayload.slOrderPrice;
-    res = await blofinRequest('POST', '/api/v1/trade/order', orderPayload);
+    if (att.includeTpSl) {
+      if (takeProfit > 0) {
+        payload.tpTriggerPrice = String(takeProfit);
+        payload.tpOrderPrice = '-1';
+      }
+      if (stopLoss > 0) {
+        payload.slTriggerPrice = String(stopLoss);
+        payload.slOrderPrice = '-1';
+      }
+    }
 
-    if (!res.ok && (String(res.code) === '51000' || /positionSide|posSide/i.test(res.msg || res.raw || ''))) {
-      orderPayload.positionSide = 'net';
-      res = await blofinRequest('POST', '/api/v1/trade/order', orderPayload);
+    res = await blofinRequest('POST', '/api/v1/trade/order', payload);
+    const first = Array.isArray(res.data) ? res.data[0] : res.data;
+    const subCode = first?.sCode != null ? String(first.sCode) : null;
+    const isOrderAccepted = res.ok && (!subCode || subCode === '0' || subCode === '00000');
+
+    if (isOrderAccepted) {
+      res.ok = true;
+      finalPosSide = att.posSide || 'net';
+      placedWithTpSl = att.includeTpSl;
+      console.log(`[blofin] Ordem aceita com sucesso usando estratégia: ${att.label}`);
+      break;
     }
   }
+
+  // Se a ordem a mercado abriu mas sem TP/SL embutido, anexa TP/SL via endpoint dedicado /api/v1/trade/order-tpsl
+  if (res.ok && !placedWithTpSl && (takeProfit > 0 || stopLoss > 0)) {
+    try {
+      const tpslPayload = {
+        instId,
+        marginMode: cfg.marginMode,
+        side: isLong ? 'sell' : 'buy', // Lado de encerramento da posição
+        size: '-1' // Protege a posição inteira
+      };
+      if (finalPosSide) {
+        tpslPayload.positionSide = finalPosSide;
+      }
+      if (takeProfit > 0) {
+        tpslPayload.tpTriggerPrice = String(takeProfit);
+        tpslPayload.tpOrderPrice = '-1';
+      }
+      if (stopLoss > 0) {
+        tpslPayload.slTriggerPrice = String(stopLoss);
+        tpslPayload.slOrderPrice = '-1';
+      }
+      const tpslRes = await blofinRequest('POST', '/api/v1/trade/order-tpsl', tpslPayload);
+      if (tpslRes.ok) {
+        console.log(`[blofin] TP/SL anexado com sucesso via order-tpsl para ${instId} (TP: ${takeProfit}, SL: ${stopLoss})`);
+      } else {
+        console.warn('[blofin] order-tpsl aviso:', extractBlofinError(tpslRes));
+      }
+    } catch (e) {
+      console.warn('[blofin] Falha ao enviar TP/SL pós-ordem:', e?.message || e);
+    }
+  }
+
+  const detailedError = res.ok ? null : extractBlofinError(res);
 
   const executionRecord = {
     id: res.data?.[0]?.orderId || `BLF_${Date.now()}`,
@@ -552,7 +666,7 @@ export async function executeBlofinOrder(signal, options = {}) {
     score: Number(signal?.score || 0),
     aiConfidence: Number(signal?.ai?.confidence || 0),
     success: res.ok,
-    error: res.ok ? null : (res.msg || res.raw || `HTTP ${res.status}`)
+    error: detailedError
   };
 
   blofinExecutionHistory.unshift(executionRecord);
@@ -569,7 +683,8 @@ export async function executeBlofinOrder(signal, options = {}) {
     stopLoss,
     takeProfit,
     response: res.data,
-    error: res.ok ? null : (res.msg || res.raw || `HTTP ${res.status}`)
+    error: detailedError,
+    reason: detailedError
   };
 }
 
@@ -595,10 +710,12 @@ export async function closeBlofinPosition(instId) {
 
   let res = await blofinRequest('POST', '/api/v1/trade/order', closePayload);
 
-  if (!res.ok && (String(res.code) === '51000' || /positionSide|posSide/i.test(res.msg || res.raw || ''))) {
-    closePayload.positionSide = 'net';
+  if (!res.ok) {
+    closePayload.positionSide = closePayload.positionSide === 'net' ? (pos.side === 'LONG' ? 'long' : 'short') : 'net';
     res = await blofinRequest('POST', '/api/v1/trade/order', closePayload);
   }
+
+  const detailedError = res.ok ? null : extractBlofinError(res);
 
   return {
     ok: res.ok,
@@ -606,7 +723,8 @@ export async function closeBlofinPosition(instId) {
     contracts: pos.contracts,
     side: closeSide,
     response: res.data,
-    error: res.ok ? null : (res.msg || res.raw)
+    error: detailedError,
+    reason: detailedError
   };
 }
 
