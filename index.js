@@ -44,6 +44,7 @@ import {
   getBlofinPositions,
   executeBlofinOrder,
   closeBlofinPosition,
+  updateBlofinTpSl,
   formatBlofinInstId,
   blofinExecutionHistory
 } from './blofin-executor.js';
@@ -3970,6 +3971,38 @@ async function doScan({
       await notify(event);
     }
 
+    // SINCRONIZAÇÃO AUTOMÁTICA EM TEMPO REAL COM A BLOFIN:
+    if (blofinConfig().hasCredentials && blofinConfig().enabled) {
+      // 1. Encerramento automático de posições na BloFin (quando fecha no Paper Trader)
+      for (const closed of paperUpdate.closedPositions || []) {
+        const instId = formatBlofinInstId(closed.symbol);
+        closeBlofinPosition(instId).then(res => {
+          if (res.ok) {
+            notify(
+              `🟢 <b>BLOFIN ${res.mode} — POSIÇÃO FECHADA AUTOMATICAMENTE</b>\n` +
+              `Par: <b>${instId}</b> · ${closed.side}\n` +
+              `Motivo: <code>${closed.outcome}</code>\n` +
+              `💵 PnL Paper: ${closed.netPnl >= 0 ? '+' : ''}${closed.netPnl.toFixed(2)} USDC\n` +
+              `✅ Posição liquidada na corretora em sincronia com o bot!`
+            );
+          }
+        }).catch(err => console.error('[blofin] Erro ao fechar posição automaticamente:', err.message));
+      }
+
+      // 2. Trailing Stop e Stop Gain automático na BloFin
+      for (const update of paperUpdate.updatedStops || []) {
+        const instId = formatBlofinInstId(update.symbol);
+        updateBlofinTpSl(instId, {
+          stopLoss: update.newStop,
+          side: update.side
+        }).then(res => {
+          if (res.ok) {
+            console.log(`[blofin] Stop loss atualizado na BloFin para ${instId}: ${update.newStop}`);
+          }
+        }).catch(err => console.error('[blofin] Erro ao sincronizar stop na BloFin:', err.message));
+      }
+    }
+
     // V1.8.1: resolve primeiro os setups que já estavam ARMED.
     // Essa etapa NÃO chama IA novamente.
     const confirmedEntryCycle =
@@ -4911,7 +4944,7 @@ async function handleMessage(msg) {
       `🟦 Gemini fallback: ${geminiFallbackConfigured() ? 'ATIVO' : 'SEM CHAVE'} · ${geminiFallbackModel()}\n` +
       `🚦 OpenRouter circuit: ${openRouterCircuitStatus().blocked ? `PAUSADO ~${openRouterCircuitStatus().remainingMin}m` : 'NORMAL'}\n` +
       `⏱ Scan automático: a cada ${cfg.intervalMin} min\n` +
-      `🪙 Lote automático: ${cfg.scanBatchSize} moedas · pares /USDT\n` +
+      `������ Lote automático: ${cfg.scanBatchSize} moedas · pares /USDT\n` +
       `🔁 Universo: BTC/ETH/SOL prioritários + 30 moedas em rotação\n` +
       `⚡ Modo: SCALP 5m · alvo de duração 15min–3h\n` +
       `🧠 Smart Stop: estrutura 5m + 0.25 ATR · faixa 1.25–2.00 ATR\n` +

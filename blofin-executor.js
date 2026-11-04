@@ -285,7 +285,9 @@ export async function refreshBlofinInstruments() {
   }
 
   try {
-    const res = await fetch('https://openapi.blofin.com/api/v1/market/instruments?instType=SWAP');
+    const cfg = blofinConfig();
+    const endpoint = `${cfg.apiUrl.replace(/\/$/, '')}/api/v1/market/instruments?instType=SWAP`;
+    const res = await fetch(endpoint);
     const json = await res.json();
     if (json?.code === '0' && Array.isArray(json?.data)) {
       instrumentsCache.clear();
@@ -477,7 +479,7 @@ export async function getBlofinPositions(instId = null) {
         positionSide: p.positionSide || 'net',
         side: qty > 0 ? 'LONG' : 'SHORT',
         contracts: Math.abs(qty),
-        avgPrice: Number(p.avgPrice || p.openAvgPrice || 0),
+        avgPrice: Number(p.averagePrice || p.avgPrice || p.openAvgPrice || 0),
         markPrice: Number(p.markPrice || 0),
         unrealizedPnl: Number(p.unrealizedPnl || p.upl || 0),
         leverage: Number(p.leverage || cfg.leverage),
@@ -516,6 +518,19 @@ export async function executeBlofinOrder(signal, options = {}) {
   }
 
   await refreshBlofinInstruments();
+  if (instrumentsCache.size > 0 && !instrumentsCache.has(instId)) {
+    const reason = cfg.isDemo
+      ? `Par ${instId} não está disponível na Sandbox DEMO da BloFin (Demo possui 87 pares; ativo na conta REAL)`
+      : `Par ${instId} não encontrado nos instrumentos perpétuos da BloFin`;
+    return {
+      ok: false,
+      instId,
+      mode: cfg.mode,
+      error: reason,
+      reason
+    };
+  }
+
   const inst = instrumentsCache.get(instId) || {
     contractValue: isStock ? 0.01 : (instId.startsWith('BTC') ? 0.001 : 1),
     lotSize: 1,
@@ -723,6 +738,52 @@ export async function closeBlofinPosition(instId) {
     contracts: pos.contracts,
     side: closeSide,
     response: res.data,
+    error: detailedError,
+    reason: detailedError
+  };
+}
+
+export async function updateBlofinTpSl(instId, { takeProfit = 0, stopLoss = 0, side = 'LONG' } = {}) {
+  const cfg = blofinConfig();
+  if (!cfg.enabled || !cfg.hasCredentials) {
+    return { ok: false, reason: 'executor BloFin desabilitado ou sem credenciais' };
+  }
+
+  const isLong = String(side || '').toUpperCase() === 'LONG';
+  const closeSide = isLong ? 'sell' : 'buy';
+  const posMode = await getBlofinPositionMode();
+  const isNetMode = posMode === 'net_mode';
+  const positionSide = isNetMode ? 'net' : (isLong ? 'long' : 'short');
+
+  const payload = {
+    instId,
+    marginMode: cfg.marginMode,
+    side: closeSide,
+    positionSide,
+    size: '-1' // Protege a posição inteira
+  };
+
+  if (takeProfit > 0) {
+    payload.tpTriggerPrice = String(takeProfit);
+    payload.tpOrderPrice = '-1';
+  }
+  if (stopLoss > 0) {
+    payload.slTriggerPrice = String(stopLoss);
+    payload.slOrderPrice = '-1';
+  }
+
+  let res = await blofinRequest('POST', '/api/v1/trade/order-tpsl', payload);
+  if (!res.ok) {
+    payload.positionSide = positionSide === 'net' ? (isLong ? 'long' : 'short') : 'net';
+    res = await blofinRequest('POST', '/api/v1/trade/order-tpsl', payload);
+  }
+
+  const detailedError = res.ok ? null : extractBlofinError(res);
+  return {
+    ok: res.ok,
+    instId,
+    stopLoss,
+    takeProfit,
     error: detailedError,
     reason: detailedError
   };

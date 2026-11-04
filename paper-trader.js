@@ -697,6 +697,21 @@ function loadState() {
 
 let state = loadState();
 
+export let pendingClosedTrades = [];
+export let pendingStopUpdates = [];
+
+export function registerStopUpdate(position) {
+  const newStop = Number(position?.quickScalpStopReference || position?.stopCurrent);
+  if (!Number.isFinite(newStop) || newStop <= 0) return;
+  pendingStopUpdates.push({
+    symbol: position.symbol,
+    dataSymbol: position.dataSymbol,
+    side: position.side,
+    newStop,
+    stage: position.stage
+  });
+}
+
 function ensureDay() {
   const key = dayKey();
 
@@ -3669,6 +3684,8 @@ function finalizePosition(position, outcome, exitMark) {
 
   delete closed.remainingQty;
 
+  pendingClosedTrades.push(closed);
+
   state.closedTrades.unshift(closed);
 
   if (state.closedTrades.length > 300) {
@@ -4783,6 +4800,7 @@ function updateOnePosition(position, snap) {
           lockStop
         );
         position.quickProfitLockStage = 2;
+        registerStopUpdate(position);
       }
     } else if (currentMfeR >= 0.70 && notional > 0 && !position.quickProfitLockStage) {
       // Break-even com folga de taxas + buffer (+0.15% NET)
@@ -4800,6 +4818,7 @@ function updateOnePosition(position, snap) {
           beStop
         );
         position.quickProfitLockStage = 1;
+        registerStopUpdate(position);
       }
     }
   } else {
@@ -4817,6 +4836,7 @@ function updateOnePosition(position, snap) {
         position.stopCurrent,
         protectedStop
       );
+      registerStopUpdate(position);
     }
   }
 
@@ -5295,6 +5315,7 @@ function updateOnePosition(position, snap) {
     if (position.quickScalpEnabled) {
       position.quickScalpStopReference = position.stopCurrent;
     }
+    registerStopUpdate(position);
 
     if (leg) {
       events.push(
@@ -5638,8 +5659,15 @@ export function updatePaperTrading(snapshots) {
   updateDrawdown();
   saveState();
 
+  const closedToSync = [...pendingClosedTrades];
+  pendingClosedTrades = [];
+  const stopsToSync = [...pendingStopUpdates];
+  pendingStopUpdates = [];
+
   return {
     events,
+    closedPositions: closedToSync,
+    updatedStops: stopsToSync,
     equity:
       currentEquity(),
     balance:
