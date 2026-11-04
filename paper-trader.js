@@ -6693,3 +6693,143 @@ export function paperPositionSnapshot(symbol, side = null) {
     ? { ...found }
     : null;
 }
+
+export function adoptExternalPosition(extPos) {
+  if (!extPos || !extPos.symbol) {
+    return { adopted: false, reason: 'INVALID_POSITION_PAYLOAD' };
+  }
+
+  const rawSymbol = String(extPos.symbol).replace(/[-_]/g, '').toUpperCase();
+  const side = String(extPos.side || 'LONG').toUpperCase();
+  const instId = extPos.instId || `${rawSymbol.replace(/USDT$/, '')}-USDT`;
+
+  // Se já existe uma posição com esse símbolo e lado no paper trader, não duplica
+  const existing = state.openPositions.find(p => {
+    const s = String(p.symbol || p.dataSymbol || '').toUpperCase().replace(/[-_]/g, '');
+    const sd = String(p.side || '').toUpperCase();
+    return s === rawSymbol && sd === side;
+  });
+
+  if (existing) {
+    return { adopted: false, reason: 'ALREADY_TRACKED', position: existing };
+  }
+
+  const cfg = paperConfig();
+  const entryFill = Number(extPos.entryPrice || extPos.avgPrice || extPos.markPrice || 0);
+  if (!Number.isFinite(entryFill) || entryFill <= 0) {
+    return { adopted: false, reason: 'INVALID_ENTRY_PRICE' };
+  }
+
+  const leverage = Math.max(1, Number(extPos.leverage || cfg.quickScalpLeverage || 5));
+  let contracts = Number(extPos.contracts || 0);
+  let notional = Number(extPos.notional || 0);
+
+  if (notional <= 0) {
+    if (contracts > 0) {
+      notional = contracts * entryFill;
+    } else {
+      notional = (cfg.quickScalpMarginUsdc || 15) * leverage;
+    }
+  }
+
+  // Notional mínimo para cálculo coerente
+  if (notional < 5) {
+    notional = (cfg.quickScalpMarginUsdc || 15) * leverage;
+  }
+
+  const margin = round(notional / leverage, 4);
+  const qty = notional / entryFill;
+  const entryFee = notional * (cfg.feeRate || 0.00045);
+
+  const quick = quickScalpLevels({
+    side,
+    entryFill,
+    qty,
+    entryFee,
+    initialNotional: notional,
+    initialMargin: margin,
+    targetNetPct: cfg.quickScalpTargetNetPct || 0.95,
+    stopNetPct: cfg.quickScalpStopNetPct || 0.65,
+    feeRate: cfg.feeRate || 0.00045,
+    slippageBps: cfg.slippageBps || 3
+  });
+
+  const targetRef = quick ? quick.targetReference : (side === 'LONG' ? round(entryFill * 1.011, 6) : round(entryFill * 0.989, 6));
+  const stopRef = quick ? quick.stopReference : (side === 'LONG' ? round(entryFill * 0.992, 6) : round(entryFill * 1.008, 6));
+
+  const id = `blofin_recon_${rawSymbol}_${Date.now()}`;
+  const position = {
+    id,
+    symbol: rawSymbol,
+    dataSymbol: rawSymbol,
+    instId,
+    side,
+    entryFill,
+    entryTime: Date.now(),
+    initialQty: qty,
+    remainingQty: qty,
+    initialNotional: round(notional, 4),
+    initialMargin: margin,
+    leverage,
+    entryFee,
+    stopInitial: stopRef,
+    stopCurrent: stopRef,
+    tp1: targetRef,
+    tp2: targetRef,
+    tp3: targetRef,
+    quickScalpEnabled: true,
+    quickScalpMode: 'ELITE_QUICK_RECONCILED',
+    quickScalpTargetReference: targetRef,
+    quickScalpStopReference: stopRef,
+    quickScalpTargetNetPct: cfg.quickScalpTargetNetPct || 0.95,
+    quickScalpStopNetPct: cfg.quickScalpStopNetPct || 0.65,
+    quickScalpTargetNetUsdc: quick ? quick.targetNetUsdc : round(notional * 0.0095, 2),
+    quickScalpStopNetUsdc: quick ? quick.stopNetUsdc : round(-notional * 0.0065, 2),
+    quickScalpTargetRoiMarginPct: quick ? quick.targetRoiMarginPct : 4.75,
+    quickScalpStopRoiMarginPct: quick ? quick.stopRoiMarginPct : -3.25,
+    quickProfitLockStage: 0,
+    stage: 0,
+    realizedGrossPnl: 0,
+    exitFees: 0,
+    lastMark: Number(extPos.markPrice || entryFill),
+    mfeR: 0,
+    maeR: 0,
+    mfePrice: entryFill,
+    maePrice: entryFill,
+    exitLegs: [],
+    isReconciledFromBlofin: true,
+    adoptedAt: Date.now()
+  };
+
+  state.openPositions.push(position);
+  saveState();
+
+  return {
+    adopted: true,
+    position
+  };
+}
+
+export function closePositionBySymbol(symbolOrInstId, outcome = 'MANUAL_BCLOSE') {
+  if (!symbolOrInstId) return { closed: false };
+  const target = String(symbolOrInstId).replace(/[-_]/g, '').toUpperCase();
+  const rawTarget = String(symbolOrInstId).toUpperCase();
+
+  const idx = state.openPositions.findIndex(p => {
+    const s = String(p.symbol || p.dataSymbol || '').replace(/[-_]/g, '').toUpperCase();
+    const inst = String(p.instId || '').toUpperCase();
+    return s === target || inst === rawTarget || s === rawTarget;
+  });
+
+  if (idx < 0) {
+    return { closed: false };
+  }
+
+  const pos = state.openPositions[idx];
+  const closed = finalizePosition(pos, outcome, pos.lastMark || pos.entryFill);
+  return {
+    closed: true,
+    position: closed
+  };
+}
+
