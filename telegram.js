@@ -147,14 +147,3 @@ export async function getUpdates(token, offset, timeout = 25) {
   if (!res.ok) throw new Error(`Telegram polling ${res.status}: ${await res.text()}`);
   return res.json();
 }
-
-export async function deleteWebhook(token) {
-  try {
-    const res = await fetch(API(token) + '/deleteWebhook?drop_pending_updates=false');
-    const data = await res.json().catch(() => null);
-    return data;
-  } catch (e) {
-    console.warn('[telegram] deleteWebhook falhou:', e?.message || e);
-    return null;
-  }
-}

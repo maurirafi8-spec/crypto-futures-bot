@@ -62,7 +62,9 @@ import {
   paperReset,
   paperStateInfo,
   paperOpenSymbols,
-  paperHasOpenPosition
+  paperHasOpenPosition,
+  adoptExternalPosition,
+  closePositionBySymbol
 } from './paper-trader.js';
 import {
   analyzeHoldPortfolio,
@@ -3963,6 +3965,9 @@ async function doScan({
       snapshots
     );
 
+    // Reconcilia ordens abertas na BloFin (ex.: após deploy no Render) antes de atualizar
+    await syncBlofinWithPaper().catch(() => {});
+
     // Atualiza primeiro as posições paper usando somente candle fechado.
     const paperUpdate =
       updatePaperTrading(snapshots);
@@ -4634,11 +4639,97 @@ function blofinExecutionHistoryText() {
   return lines.join('\n\n');
 }
 
+async function syncBlofinWithPaper(options = {}) {
+  const bCfg = blofinConfig();
+  if (!bCfg.hasCredentials || !bCfg.enabled) {
+    return;
+  }
+
+  try {
+    const positions = await getBlofinPositions();
+    if (!Array.isArray(positions) || positions.length === 0) {
+      return;
+    }
+
+    const adoptedList = [];
+
+    for (const p of positions) {
+      const contracts = Number(p.contracts || 0);
+      if (contracts <= 0) continue;
+
+      const rawSymbol = String(p.instId || '').replace(/[-_]/g, '').toUpperCase();
+      const side = String(p.side || 'LONG').toUpperCase();
+
+      // Já está no paper?
+      if (paperHasOpenPosition(rawSymbol, side)) {
+        continue;
+      }
+
+      const entryPrice = Number(p.avgPrice || p.markPrice || 0);
+      if (entryPrice <= 0) continue;
+
+      const leverage = Number(p.leverage || 5);
+      const notional = contracts > 0 ? (contracts * entryPrice) : (15 * leverage);
+
+      const res = adoptExternalPosition({
+        symbol: rawSymbol,
+        instId: p.instId,
+        side,
+        entryPrice,
+        contracts,
+        leverage,
+        notional,
+        markPrice: p.markPrice
+      });
+
+      if (res.adopted) {
+        adoptedList.push({
+          instId: p.instId,
+          side,
+          contracts,
+          entryPrice,
+          markPrice: p.markPrice,
+          unrealizedPnl: p.unrealizedPnl,
+          targetRef: res.position.quickScalpTargetReference,
+          stopRef: res.position.quickScalpStopReference
+        });
+      }
+    }
+
+    if (adoptedList.length > 0) {
+      console.log(`[blofin-reconcile] ${adoptedList.length} posição(ões) BloFin reconectada(s) ao Paper Trader.`);
+      const lines = [
+        `🔄 <b>BLOFIN — ${adoptedList.length} POSIÇÃO(ÕES) RECONECTADA(S) PÓS-DEPLOY</b>\n`,
+        `<i>As ordens abertas na BloFin antes do deploy foram reconhecidas e voltaram a ser acompanhadas ativamente pelo trailing stop e auto-close do bot!</i>\n`
+      ];
+
+      for (const it of adoptedList) {
+        lines.push(
+          `🪙 <b>${it.instId} ${it.side}</b> (5x cross)\n` +
+          `📦 Contratos: ${it.contracts}\n` +
+          `🎯 Entrada: ${it.entryPrice} · Mark: ${it.markPrice}\n` +
+          `⚡ Alvo Quick: <b>${it.targetRef}</b> (+0.95% NET)\n` +
+          `🛑 Stop Base: <b>${it.stopRef}</b> (BE +0.70R ativado)`
+        );
+      }
+
+      const botToken = cfg.token || process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
+      const targetChatId = activeChatId || cfg.chatId;
+      if (botToken && targetChatId) {
+        await sendMessage(botToken, targetChatId, lines.join('\n\n')).catch(() => {});
+      }
+    }
+  } catch (err) {
+    console.error('[blofin-reconcile] Erro ao sincronizar posições BloFin com Paper:', err.message);
+  }
+}
+
 async function blofinPositionsText() {
   const cfg = blofinConfig();
   if (!cfg.hasCredentials) {
     return '⚠️ Credenciais BloFin não configuradas no Render. Impossível consultar posições.';
   }
+  await syncBlofinWithPaper().catch(() => {});
   const positions = await getBlofinPositions();
   if (!positions.length) {
     return `🟢 <b>BloFin (${cfg.mode}) — Posições Abertas</b>\n\nNenhuma posição aberta no momento.`;
@@ -4846,10 +4937,11 @@ async function handleBlofinClose(argsText, activeChatId) {
     await sendMessage(botToken, targetChatId, `⏳ Fechando posição <b>${instId}</b> na BloFin...`);
     const res = await closeBlofinPosition(instId);
     if (res.ok) {
+      closePositionBySymbol(instId, 'MANUAL_BCLOSE');
       await sendMessage(
         botToken,
         targetChatId,
-        `✅ Posição <b>${instId}</b> fechada com sucesso na BloFin!`
+        `✅ Posição <b>${instId}</b> fechada com sucesso na BloFin e removida do acompanhamento!`
       );
     } else {
       await sendMessage(
@@ -4944,7 +5036,7 @@ async function handleMessage(msg) {
       `🟦 Gemini fallback: ${geminiFallbackConfigured() ? 'ATIVO' : 'SEM CHAVE'} · ${geminiFallbackModel()}\n` +
       `🚦 OpenRouter circuit: ${openRouterCircuitStatus().blocked ? `PAUSADO ~${openRouterCircuitStatus().remainingMin}m` : 'NORMAL'}\n` +
       `⏱ Scan automático: a cada ${cfg.intervalMin} min\n` +
-      `������ Lote automático: ${cfg.scanBatchSize} moedas · pares /USDT\n` +
+      `🪙 Lote automático: ${cfg.scanBatchSize} moedas · pares /USDT\n` +
       `🔁 Universo: BTC/ETH/SOL prioritários + 30 moedas em rotação\n` +
       `⚡ Modo: SCALP 5m · alvo de duração 15min–3h\n` +
       `🧠 Smart Stop: estrutura 5m + 0.25 ATR · faixa 1.25–2.00 ATR\n` +
@@ -5132,7 +5224,11 @@ async function handleMessage(msg) {
       activeChatId,
       paperTradesText()
     );
-  } else if (text.startsWith('/paperpos')) {
+  } else if (
+    text.startsWith('/paperpos') ||
+    text.startsWith('/posicoes') ||
+    text.startsWith('/pos')
+  ) {
     await sendMessage(
       cfg.token,
       activeChatId,
@@ -5545,6 +5641,11 @@ http.createServer(async (req, res) => {
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
 console.log('Crypto Futures Scanner V1.11.1 FAST ENTRY pronto ✅');
+
+// Reconcilia imediatamente quaisquer posições da BloFin abertas antes do deploy
+setTimeout(() => {
+  syncBlofinWithPaper().catch(err => console.error('[startup] Erro na reconciliação BloFin:', err.message));
+}, 3000);
 
 // Em rolling deploy o processo antigo do Render pode permanecer vivo por
 // alguns segundos. Um pequeno atraso evita duas instâncias consumindo a
