@@ -6667,9 +6667,8 @@ export function paperHasOpenPosition(symbol, side = null) {
 }
 
 export function paperPositionSnapshot(symbol, side = null) {
-  const target =
-    String(symbol || '')
-      .toUpperCase();
+  const cleanTarget = String(symbol || '').replace(/[-_]/g, '').toUpperCase();
+  const rawTarget = String(symbol || '').toUpperCase();
 
   const targetSide =
     side == null
@@ -6678,9 +6677,14 @@ export function paperPositionSnapshot(symbol, side = null) {
 
   const found =
     state.openPositions.find(p => {
+      const s = String(p.symbol || p.dataSymbol || '').replace(/[-_]/g, '').toUpperCase();
+      const inst = String(p.instId || '').toUpperCase();
+
       const sameSymbol =
-        String(p.symbol || '').toUpperCase() === target ||
-        String(p.dataSymbol || '').toUpperCase() === target;
+        s === cleanTarget ||
+        inst === rawTarget ||
+        s === rawTarget ||
+        String(p.symbol || '').toUpperCase() === rawTarget;
 
       const sameSide =
         targetSide == null ||

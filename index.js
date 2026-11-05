@@ -63,6 +63,7 @@ import {
   paperStateInfo,
   paperOpenSymbols,
   paperHasOpenPosition,
+  paperPositionSnapshot,
   adoptExternalPosition,
   closePositionBySymbol
 } from './paper-trader.js';
@@ -4714,7 +4715,7 @@ async function syncBlofinWithPaper(options = {}) {
       }
 
       const botToken = cfg.token || process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
-      const targetChatId = activeChatId || cfg.chatId;
+      const targetChatId = options.activeChatId || activeChatId || cfg.chatId;
       if (botToken && targetChatId) {
         await sendMessage(botToken, targetChatId, lines.join('\n\n')).catch(() => {});
       }
@@ -4724,12 +4725,12 @@ async function syncBlofinWithPaper(options = {}) {
   }
 }
 
-async function blofinPositionsText() {
+async function blofinPositionsText(callerChatId = null) {
   const cfg = blofinConfig();
   if (!cfg.hasCredentials) {
     return '⚠️ Credenciais BloFin não configuradas no Render. Impossível consultar posições.';
   }
-  await syncBlofinWithPaper().catch(() => {});
+  await syncBlofinWithPaper({ activeChatId: callerChatId }).catch(() => {});
   const positions = await getBlofinPositions();
   if (!positions.length) {
     return `🟢 <b>BloFin (${cfg.mode}) — Posições Abertas</b>\n\nNenhuma posição aberta no momento.`;
@@ -4740,11 +4741,26 @@ async function blofinPositionsText() {
   for (const p of positions) {
     const pnlIcon = p.unrealizedPnl >= 0 ? '🟢' : '🔴';
     const sideIcon = p.side === 'LONG' ? '🟢' : '🔴';
+    const cleanSym = String(p.instId || '').replace(/[-_]/g, '');
+    const paperPos = paperPositionSnapshot(p.instId) || paperPositionSnapshot(cleanSym);
+    let trackingInfo = '';
+    if (paperPos) {
+      const targetVal = paperPos.quickScalpTargetReference || paperPos.tp1;
+      const stopVal = paperPos.quickScalpStopReference || paperPos.stopCurrent;
+      trackingInfo =
+        `\n🤖 <b>Acompanhamento:</b> ✅ ATIVO (Trailing & Auto-Close)` +
+        `\n🎯 Alvo Quick: <b>${targetVal ? Number(targetVal).toFixed(4) : '—'}</b> (+0.95% NET)` +
+        `\n🛑 Stop Atual: <b>${stopVal ? Number(stopVal).toFixed(4) : '—'}</b> (BE em +0.70R)`;
+    } else {
+      trackingInfo = `\n🤖 <b>Acompanhamento:</b> 🔄 Sincronizando com o motor...`;
+    }
+
     lines.push(
       `${sideIcon} <b>${p.instId} ${p.side}</b> (${p.leverage}x ${p.marginMode})\n` +
       `📦 Contratos: ${p.contracts}\n` +
       `🎯 Entrada: ${p.avgPrice} · Mark: ${p.markPrice}\n` +
-      `${pnlIcon} PnL Não Realizado: <b>${p.unrealizedPnl >= 0 ? '+' : ''}${p.unrealizedPnl.toFixed(4)} USDT</b>`
+      `${pnlIcon} PnL Não Realizado: <b>${p.unrealizedPnl >= 0 ? '+' : ''}${p.unrealizedPnl.toFixed(4)} USDT</b>` +
+      trackingInfo
     );
   }
   return lines.join('\n\n');
@@ -4805,7 +4821,8 @@ async function blofinStatusText() {
     `  • Margem por Trade: <b>${cfg.marginUsdt} USDT</b>\n` +
     `  • Modo de Margem: <b>${cfg.marginMode.toUpperCase()}</b>\n` +
     `  • Máx Posições Abertas: <b>${cfg.maxOpenPositions}</b>\n` +
-    `  • Execuções nesta sessão: <b>${blofinExecutionHistory.length}</b>\n\n` +
+    `  • Posições em Acompanhamento: <b>${paperOpenSymbols().length} ativa(s)</b>\n` +
+    `  • Novas Ordens desta sessão: <b>${blofinExecutionHistory.length}</b>\n\n` +
     `📋 <b>Comandos BloFin:</b>\n` +
     `• /blofin — status geral e saldo\n` +
     `• /bexecs — histórico de execuções\n` +
@@ -5488,7 +5505,7 @@ async function handleMessage(msg) {
   } else if (/^\/bexecs(?:\s|@|$)/i.test(text)) {
     await sendMessage(cfg.token, activeChatId, blofinExecutionHistoryText());
   } else if (/^\/bpos(?:\s|@|$)/i.test(text)) {
-    const msgText = await blofinPositionsText();
+    const msgText = await blofinPositionsText(activeChatId);
     await sendMessage(cfg.token, activeChatId, msgText);
   } else if (/^\/btest(?:\s|@|$)/i.test(text)) {
     await handleBlofinManualTest(text, activeChatId);
