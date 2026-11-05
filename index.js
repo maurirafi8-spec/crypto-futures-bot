@@ -3984,8 +3984,9 @@ async function doScan({
         const instId = formatBlofinInstId(closed.symbol);
         closeBlofinPosition(instId).then(res => {
           if (res.ok) {
+            const modeTag = res.mode || (blofinConfig().isDemo ? 'DEMO' : 'LIVE');
             notify(
-              `🟢 <b>BLOFIN ${res.mode} — POSIÇÃO FECHADA AUTOMATICAMENTE</b>\n` +
+              `🟢 <b>BLOFIN (${modeTag}) — POSIÇÃO FECHADA AUTOMATICAMENTE</b>\n` +
               `Par: <b>${instId}</b> · ${closed.side}\n` +
               `Motivo: <code>${closed.outcome}</code>\n` +
               `💵 PnL Paper: ${closed.netPnl >= 0 ? '+' : ''}${closed.netPnl.toFixed(2)} USDC\n` +

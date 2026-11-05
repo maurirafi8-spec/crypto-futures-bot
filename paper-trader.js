@@ -148,9 +148,9 @@ export function paperConfig() {
     quickScalpLeverage:
       intEnv('PAPER_QUICK_SCALP_LEVERAGE', 5, 1, 50),
 
-    // Alvo LÍQUIDO sobre o notional, já considerando fee + slippage. Payoff 1.46:1 (+0.95% vs -0.65%).
+    // Alvo LÍQUIDO ampliado sobre o notional: Payoff favorável de quase 3:1 (+1.85% vs -0.65%).
     quickScalpTargetNetPct:
-      numEnv('PAPER_QUICK_SCALP_TARGET_NET_PCT', 0.95, 0.01, 5),
+      numEnv('PAPER_QUICK_SCALP_TARGET_NET_PCT', 1.85, 0.01, 10),
 
     quickScalpStopNetPct:
       numEnv('PAPER_QUICK_SCALP_STOP_NET_PCT', 0.65, 0.05, 10),
@@ -282,13 +282,13 @@ export function paperConfig() {
       intEnv('PAPER_HIGH_ACCURACY_MIN_MOMENTUM_CONFIRMATIONS', 2, 1, 3),
 
     highAccuracyTp1R:
-      Math.min(0.55, numEnv('PAPER_HIGH_ACCURACY_TP1_R', 0.55, 0.2, 3)),
+      numEnv('PAPER_HIGH_ACCURACY_TP1_R', 1.25, 0.2, 5),
 
     highAccuracyTp2R:
-      Math.min(0.95, numEnv('PAPER_HIGH_ACCURACY_TP2_R', 0.95, 0.3, 4)),
+      numEnv('PAPER_HIGH_ACCURACY_TP2_R', 1.95, 0.3, 6),
 
     highAccuracyTp3R:
-      Math.min(1.45, numEnv('PAPER_HIGH_ACCURACY_TP3_R', 1.45, 0.5, 6)),
+      numEnv('PAPER_HIGH_ACCURACY_TP3_R', 2.85, 0.5, 10),
 
     highAccuracyTp1ClosePct:
       numEnv('PAPER_HIGH_ACCURACY_TP1_CLOSE_PCT', 50, 5, 90),
@@ -4782,41 +4782,35 @@ function updateOnePosition(position, snap) {
 
   if (position.quickScalpEnabled) {
     const notional = Number(position.initialNotional || 0);
-    const targetNetUsdc = Number(position.quickScalpTargetNetUsdc || (notional * 0.0095));
+    const targetNetUsdc = Number(position.quickScalpTargetNetUsdc || (notional * 0.0185));
 
-    if (currentMfeR >= 0.85 && notional > 0) {
-      // Trava 50% do lucro do alvo (+0.45% a +0.50% NET)
-      const lockNetUsdc = Math.max(targetNetUsdc * 0.50, notional * 0.0045);
+    if (currentMfeR >= 1.50 && notional > 0 && Number(position.quickProfitLockStage || 0) < 3) {
+      // Estágio 3: em +1.50R, trava 65% do alvo (+1.20% NET = ~+0.90 a +1.15 USDC)
+      const lockNetUsdc = Math.max(targetNetUsdc * 0.65, notional * 0.0120);
       const lockStop = profitProtectStopReference(position, lockNetUsdc);
       if (Number.isFinite(lockStop)) {
-        position.quickScalpStopReference = moreProtectiveStop(
-          position,
-          position.quickScalpStopReference,
-          lockStop
-        );
-        position.stopCurrent = moreProtectiveStop(
-          position,
-          position.stopCurrent,
-          lockStop
-        );
+        position.quickScalpStopReference = moreProtectiveStop(position, position.quickScalpStopReference, lockStop);
+        position.stopCurrent = moreProtectiveStop(position, position.stopCurrent, lockStop);
+        position.quickProfitLockStage = 3;
+        registerStopUpdate(position);
+      }
+    } else if (currentMfeR >= 1.10 && notional > 0 && Number(position.quickProfitLockStage || 0) < 2) {
+      // Estágio 2: em +1.10R, trava +0.75% NET (~+0.56 a +0.70 USDC, cobrindo 1 stop inteiro!)
+      const lockNetUsdc = Math.max(targetNetUsdc * 0.40, notional * 0.0075);
+      const lockStop = profitProtectStopReference(position, lockNetUsdc);
+      if (Number.isFinite(lockStop)) {
+        position.quickScalpStopReference = moreProtectiveStop(position, position.quickScalpStopReference, lockStop);
+        position.stopCurrent = moreProtectiveStop(position, position.stopCurrent, lockStop);
         position.quickProfitLockStage = 2;
         registerStopUpdate(position);
       }
     } else if (currentMfeR >= 0.70 && notional > 0 && !position.quickProfitLockStage) {
-      // Break-even com folga de taxas + buffer (+0.15% NET)
-      const beNetUsdc = notional * 0.0015;
+      // Estágio 1: em +0.70R, Break-even com folga de taxas + buffer (+0.18% NET) — risco ZERO
+      const beNetUsdc = notional * 0.0018;
       const beStop = profitProtectStopReference(position, beNetUsdc);
       if (Number.isFinite(beStop)) {
-        position.quickScalpStopReference = moreProtectiveStop(
-          position,
-          position.quickScalpStopReference,
-          beStop
-        );
-        position.stopCurrent = moreProtectiveStop(
-          position,
-          position.stopCurrent,
-          beStop
-        );
+        position.quickScalpStopReference = moreProtectiveStop(position, position.quickScalpStopReference, beStop);
+        position.stopCurrent = moreProtectiveStop(position, position.stopCurrent, beStop);
         position.quickProfitLockStage = 1;
         registerStopUpdate(position);
       }
@@ -6752,13 +6746,13 @@ export function adoptExternalPosition(extPos) {
     entryFee,
     initialNotional: notional,
     initialMargin: margin,
-    targetNetPct: cfg.quickScalpTargetNetPct || 0.95,
+    targetNetPct: cfg.quickScalpTargetNetPct || 1.85,
     stopNetPct: cfg.quickScalpStopNetPct || 0.65,
     feeRate: cfg.feeRate || 0.00045,
     slippageBps: cfg.slippageBps || 3
   });
 
-  const targetRef = quick ? quick.targetReference : (side === 'LONG' ? round(entryFill * 1.011, 6) : round(entryFill * 0.989, 6));
+  const targetRef = quick ? quick.targetReference : (side === 'LONG' ? round(entryFill * 1.020, 6) : round(entryFill * 0.980, 6));
   const stopRef = quick ? quick.stopReference : (side === 'LONG' ? round(entryFill * 0.992, 6) : round(entryFill * 1.008, 6));
 
   const id = `blofin_recon_${rawSymbol}_${Date.now()}`;
@@ -6785,9 +6779,9 @@ export function adoptExternalPosition(extPos) {
     quickScalpMode: 'ELITE_QUICK_RECONCILED',
     quickScalpTargetReference: targetRef,
     quickScalpStopReference: stopRef,
-    quickScalpTargetNetPct: cfg.quickScalpTargetNetPct || 0.95,
+    quickScalpTargetNetPct: cfg.quickScalpTargetNetPct || 1.85,
     quickScalpStopNetPct: cfg.quickScalpStopNetPct || 0.65,
-    quickScalpTargetNetUsdc: quick ? quick.targetNetUsdc : round(notional * 0.0095, 2),
+    quickScalpTargetNetUsdc: quick ? quick.targetNetUsdc : round(notional * 0.0185, 2),
     quickScalpStopNetUsdc: quick ? quick.stopNetUsdc : round(-notional * 0.0065, 2),
     quickScalpTargetRoiMarginPct: quick ? quick.targetRoiMarginPct : 4.75,
     quickScalpStopRoiMarginPct: quick ? quick.stopRoiMarginPct : -3.25,
