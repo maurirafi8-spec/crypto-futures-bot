@@ -2718,7 +2718,7 @@ function smartStopConfig() {
     tp1R:
       numberEnv(
         'SMART_STOP_TP1_R',
-        1.25,
+        1.15,
         0.50,
         3.00
       ),
@@ -2726,7 +2726,7 @@ function smartStopConfig() {
     tp2R:
       numberEnv(
         'SMART_STOP_TP2_R',
-        1.95,
+        1.60,
         0.80,
         4.00
       ),
@@ -2734,7 +2734,7 @@ function smartStopConfig() {
     tp3R:
       numberEnv(
         'SMART_STOP_TP3_R',
-        2.85,
+        2.25,
         1.00,
         6.00
       )

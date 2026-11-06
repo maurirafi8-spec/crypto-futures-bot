@@ -252,9 +252,9 @@ export function highAccuracyTargets({
   side,
   entry,
   stop,
-  tp1R = 1.20,
-  tp2R = 1.85,
-  tp3R = 2.60
+  tp1R = 0.55,
+  tp2R = 0.95,
+  tp3R = 1.45
 } = {}) {
   const e = num(entry, NaN);
   const s = num(stop, NaN);

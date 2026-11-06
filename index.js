@@ -62,10 +62,7 @@ import {
   paperReset,
   paperStateInfo,
   paperOpenSymbols,
-  paperHasOpenPosition,
-  paperPositionSnapshot,
-  adoptExternalPosition,
-  closePositionBySymbol
+  paperHasOpenPosition
 } from './paper-trader.js';
 import {
   analyzeHoldPortfolio,
@@ -3966,9 +3963,6 @@ async function doScan({
       snapshots
     );
 
-    // Reconcilia ordens abertas na BloFin (ex.: após deploy no Render) antes de atualizar
-    await syncBlofinWithPaper().catch(() => {});
-
     // Atualiza primeiro as posições paper usando somente candle fechado.
     const paperUpdate =
       updatePaperTrading(snapshots);
@@ -3984,9 +3978,8 @@ async function doScan({
         const instId = formatBlofinInstId(closed.symbol);
         closeBlofinPosition(instId).then(res => {
           if (res.ok) {
-            const modeTag = res.mode || (blofinConfig().isDemo ? 'DEMO' : 'LIVE');
             notify(
-              `🟢 <b>BLOFIN (${modeTag}) — POSIÇÃO FECHADA AUTOMATICAMENTE</b>\n` +
+              `🟢 <b>BLOFIN ${res.mode} — POSIÇÃO FECHADA AUTOMATICAMENTE</b>\n` +
               `Par: <b>${instId}</b> · ${closed.side}\n` +
               `Motivo: <code>${closed.outcome}</code>\n` +
               `💵 PnL Paper: ${closed.netPnl >= 0 ? '+' : ''}${closed.netPnl.toFixed(2)} USDC\n` +
@@ -4641,97 +4634,11 @@ function blofinExecutionHistoryText() {
   return lines.join('\n\n');
 }
 
-async function syncBlofinWithPaper(options = {}) {
-  const bCfg = blofinConfig();
-  if (!bCfg.hasCredentials || !bCfg.enabled) {
-    return;
-  }
-
-  try {
-    const positions = await getBlofinPositions();
-    if (!Array.isArray(positions) || positions.length === 0) {
-      return;
-    }
-
-    const adoptedList = [];
-
-    for (const p of positions) {
-      const contracts = Number(p.contracts || 0);
-      if (contracts <= 0) continue;
-
-      const rawSymbol = String(p.instId || '').replace(/[-_]/g, '').toUpperCase();
-      const side = String(p.side || 'LONG').toUpperCase();
-
-      // Já está no paper?
-      if (paperHasOpenPosition(rawSymbol, side)) {
-        continue;
-      }
-
-      const entryPrice = Number(p.avgPrice || p.markPrice || 0);
-      if (entryPrice <= 0) continue;
-
-      const leverage = Number(p.leverage || 5);
-      const notional = contracts > 0 ? (contracts * entryPrice) : (15 * leverage);
-
-      const res = adoptExternalPosition({
-        symbol: rawSymbol,
-        instId: p.instId,
-        side,
-        entryPrice,
-        contracts,
-        leverage,
-        notional,
-        markPrice: p.markPrice
-      });
-
-      if (res.adopted) {
-        adoptedList.push({
-          instId: p.instId,
-          side,
-          contracts,
-          entryPrice,
-          markPrice: p.markPrice,
-          unrealizedPnl: p.unrealizedPnl,
-          targetRef: res.position.quickScalpTargetReference,
-          stopRef: res.position.quickScalpStopReference
-        });
-      }
-    }
-
-    if (adoptedList.length > 0) {
-      console.log(`[blofin-reconcile] ${adoptedList.length} posição(ões) BloFin reconectada(s) ao Paper Trader.`);
-      const lines = [
-        `🔄 <b>BLOFIN — ${adoptedList.length} POSIÇÃO(ÕES) RECONECTADA(S) PÓS-DEPLOY</b>\n`,
-        `<i>As ordens abertas na BloFin antes do deploy foram reconhecidas e voltaram a ser acompanhadas ativamente pelo trailing stop e auto-close do bot!</i>\n`
-      ];
-
-      for (const it of adoptedList) {
-        lines.push(
-          `🪙 <b>${it.instId} ${it.side}</b> (5x cross)\n` +
-          `📦 Contratos: ${it.contracts}\n` +
-          `🎯 Entrada: ${it.entryPrice} · Mark: ${it.markPrice}\n` +
-          `⚡ Alvo Quick: <b>${it.targetRef}</b> (+0.95% NET)\n` +
-          `🛑 Stop Base: <b>${it.stopRef}</b> (BE +0.70R ativado)`
-        );
-      }
-
-      const botToken = cfg.token || process.env.BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
-      const targetChatId = options.activeChatId || activeChatId || cfg.chatId;
-      if (botToken && targetChatId) {
-        await sendMessage(botToken, targetChatId, lines.join('\n\n')).catch(() => {});
-      }
-    }
-  } catch (err) {
-    console.error('[blofin-reconcile] Erro ao sincronizar posições BloFin com Paper:', err.message);
-  }
-}
-
-async function blofinPositionsText(callerChatId = null) {
+async function blofinPositionsText() {
   const cfg = blofinConfig();
   if (!cfg.hasCredentials) {
     return '⚠️ Credenciais BloFin não configuradas no Render. Impossível consultar posições.';
   }
-  await syncBlofinWithPaper({ activeChatId: callerChatId }).catch(() => {});
   const positions = await getBlofinPositions();
   if (!positions.length) {
     return `🟢 <b>BloFin (${cfg.mode}) — Posições Abertas</b>\n\nNenhuma posição aberta no momento.`;
@@ -4742,26 +4649,11 @@ async function blofinPositionsText(callerChatId = null) {
   for (const p of positions) {
     const pnlIcon = p.unrealizedPnl >= 0 ? '🟢' : '🔴';
     const sideIcon = p.side === 'LONG' ? '🟢' : '🔴';
-    const cleanSym = String(p.instId || '').replace(/[-_]/g, '');
-    const paperPos = paperPositionSnapshot(p.instId) || paperPositionSnapshot(cleanSym);
-    let trackingInfo = '';
-    if (paperPos) {
-      const targetVal = paperPos.quickScalpTargetReference || paperPos.tp1;
-      const stopVal = paperPos.quickScalpStopReference || paperPos.stopCurrent;
-      trackingInfo =
-        `\n🤖 <b>Acompanhamento:</b> ✅ ATIVO (Trailing & Auto-Close)` +
-        `\n🎯 Alvo Quick: <b>${targetVal ? Number(targetVal).toFixed(4) : '—'}</b> (+0.95% NET)` +
-        `\n🛑 Stop Atual: <b>${stopVal ? Number(stopVal).toFixed(4) : '—'}</b> (BE em +0.70R)`;
-    } else {
-      trackingInfo = `\n🤖 <b>Acompanhamento:</b> 🔄 Sincronizando com o motor...`;
-    }
-
     lines.push(
       `${sideIcon} <b>${p.instId} ${p.side}</b> (${p.leverage}x ${p.marginMode})\n` +
       `📦 Contratos: ${p.contracts}\n` +
       `🎯 Entrada: ${p.avgPrice} · Mark: ${p.markPrice}\n` +
-      `${pnlIcon} PnL Não Realizado: <b>${p.unrealizedPnl >= 0 ? '+' : ''}${p.unrealizedPnl.toFixed(4)} USDT</b>` +
-      trackingInfo
+      `${pnlIcon} PnL Não Realizado: <b>${p.unrealizedPnl >= 0 ? '+' : ''}${p.unrealizedPnl.toFixed(4)} USDT</b>`
     );
   }
   return lines.join('\n\n');
@@ -4822,8 +4714,7 @@ async function blofinStatusText() {
     `  • Margem por Trade: <b>${cfg.marginUsdt} USDT</b>\n` +
     `  • Modo de Margem: <b>${cfg.marginMode.toUpperCase()}</b>\n` +
     `  • Máx Posições Abertas: <b>${cfg.maxOpenPositions}</b>\n` +
-    `  • Posições em Acompanhamento: <b>${paperOpenSymbols().length} ativa(s)</b>\n` +
-    `  • Novas Ordens desta sessão: <b>${blofinExecutionHistory.length}</b>\n\n` +
+    `  • Execuções nesta sessão: <b>${blofinExecutionHistory.length}</b>\n\n` +
     `📋 <b>Comandos BloFin:</b>\n` +
     `• /blofin — status geral e saldo\n` +
     `• /bexecs — histórico de execuções\n` +
@@ -4955,11 +4846,10 @@ async function handleBlofinClose(argsText, activeChatId) {
     await sendMessage(botToken, targetChatId, `⏳ Fechando posição <b>${instId}</b> na BloFin...`);
     const res = await closeBlofinPosition(instId);
     if (res.ok) {
-      closePositionBySymbol(instId, 'MANUAL_BCLOSE');
       await sendMessage(
         botToken,
         targetChatId,
-        `✅ Posição <b>${instId}</b> fechada com sucesso na BloFin e removida do acompanhamento!`
+        `✅ Posição <b>${instId}</b> fechada com sucesso na BloFin!`
       );
     } else {
       await sendMessage(
@@ -5054,7 +4944,7 @@ async function handleMessage(msg) {
       `🟦 Gemini fallback: ${geminiFallbackConfigured() ? 'ATIVO' : 'SEM CHAVE'} · ${geminiFallbackModel()}\n` +
       `🚦 OpenRouter circuit: ${openRouterCircuitStatus().blocked ? `PAUSADO ~${openRouterCircuitStatus().remainingMin}m` : 'NORMAL'}\n` +
       `⏱ Scan automático: a cada ${cfg.intervalMin} min\n` +
-      `🪙 Lote automático: ${cfg.scanBatchSize} moedas · pares /USDT\n` +
+      `������ Lote automático: ${cfg.scanBatchSize} moedas · pares /USDT\n` +
       `🔁 Universo: BTC/ETH/SOL prioritários + 30 moedas em rotação\n` +
       `⚡ Modo: SCALP 5m · alvo de duração 15min–3h\n` +
       `🧠 Smart Stop: estrutura 5m + 0.25 ATR · faixa 1.25–2.00 ATR\n` +
@@ -5242,11 +5132,7 @@ async function handleMessage(msg) {
       activeChatId,
       paperTradesText()
     );
-  } else if (
-    text.startsWith('/paperpos') ||
-    text.startsWith('/posicoes') ||
-    text.startsWith('/pos')
-  ) {
+  } else if (text.startsWith('/paperpos')) {
     await sendMessage(
       cfg.token,
       activeChatId,
@@ -5506,7 +5392,7 @@ async function handleMessage(msg) {
   } else if (/^\/bexecs(?:\s|@|$)/i.test(text)) {
     await sendMessage(cfg.token, activeChatId, blofinExecutionHistoryText());
   } else if (/^\/bpos(?:\s|@|$)/i.test(text)) {
-    const msgText = await blofinPositionsText(activeChatId);
+    const msgText = await blofinPositionsText();
     await sendMessage(cfg.token, activeChatId, msgText);
   } else if (/^\/btest(?:\s|@|$)/i.test(text)) {
     await handleBlofinManualTest(text, activeChatId);
@@ -5659,11 +5545,6 @@ http.createServer(async (req, res) => {
 }).listen(cfg.port, () => console.log(`HTTP :${cfg.port}`));
 
 console.log('Crypto Futures Scanner V1.11.1 FAST ENTRY pronto ✅');
-
-// Reconcilia imediatamente quaisquer posições da BloFin abertas antes do deploy
-setTimeout(() => {
-  syncBlofinWithPaper().catch(err => console.error('[startup] Erro na reconciliação BloFin:', err.message));
-}, 3000);
 
 // Em rolling deploy o processo antigo do Render pode permanecer vivo por
 // alguns segundos. Um pequeno atraso evita duas instâncias consumindo a

@@ -148,9 +148,9 @@ export function paperConfig() {
     quickScalpLeverage:
       intEnv('PAPER_QUICK_SCALP_LEVERAGE', 5, 1, 50),
 
-    // Alvo LÍQUIDO ampliado sobre o notional: Payoff favorável de quase 3:1 (+1.85% vs -0.65%).
+    // Alvo LÍQUIDO sobre o notional, já considerando fee + slippage. Payoff 1.46:1 (+0.95% vs -0.65%).
     quickScalpTargetNetPct:
-      numEnv('PAPER_QUICK_SCALP_TARGET_NET_PCT', 1.85, 0.01, 10),
+      numEnv('PAPER_QUICK_SCALP_TARGET_NET_PCT', 0.95, 0.01, 5),
 
     quickScalpStopNetPct:
       numEnv('PAPER_QUICK_SCALP_STOP_NET_PCT', 0.65, 0.05, 10),
@@ -282,13 +282,13 @@ export function paperConfig() {
       intEnv('PAPER_HIGH_ACCURACY_MIN_MOMENTUM_CONFIRMATIONS', 2, 1, 3),
 
     highAccuracyTp1R:
-      numEnv('PAPER_HIGH_ACCURACY_TP1_R', 1.25, 0.2, 5),
+      Math.min(0.55, numEnv('PAPER_HIGH_ACCURACY_TP1_R', 0.55, 0.2, 3)),
 
     highAccuracyTp2R:
-      numEnv('PAPER_HIGH_ACCURACY_TP2_R', 1.95, 0.3, 6),
+      Math.min(0.95, numEnv('PAPER_HIGH_ACCURACY_TP2_R', 0.95, 0.3, 4)),
 
     highAccuracyTp3R:
-      numEnv('PAPER_HIGH_ACCURACY_TP3_R', 2.85, 0.5, 10),
+      Math.min(1.45, numEnv('PAPER_HIGH_ACCURACY_TP3_R', 1.45, 0.5, 6)),
 
     highAccuracyTp1ClosePct:
       numEnv('PAPER_HIGH_ACCURACY_TP1_CLOSE_PCT', 50, 5, 90),
@@ -4782,35 +4782,41 @@ function updateOnePosition(position, snap) {
 
   if (position.quickScalpEnabled) {
     const notional = Number(position.initialNotional || 0);
-    const targetNetUsdc = Number(position.quickScalpTargetNetUsdc || (notional * 0.0185));
+    const targetNetUsdc = Number(position.quickScalpTargetNetUsdc || (notional * 0.0095));
 
-    if (currentMfeR >= 1.50 && notional > 0 && Number(position.quickProfitLockStage || 0) < 3) {
-      // Estágio 3: em +1.50R, trava 65% do alvo (+1.20% NET = ~+0.90 a +1.15 USDC)
-      const lockNetUsdc = Math.max(targetNetUsdc * 0.65, notional * 0.0120);
+    if (currentMfeR >= 0.85 && notional > 0) {
+      // Trava 50% do lucro do alvo (+0.45% a +0.50% NET)
+      const lockNetUsdc = Math.max(targetNetUsdc * 0.50, notional * 0.0045);
       const lockStop = profitProtectStopReference(position, lockNetUsdc);
       if (Number.isFinite(lockStop)) {
-        position.quickScalpStopReference = moreProtectiveStop(position, position.quickScalpStopReference, lockStop);
-        position.stopCurrent = moreProtectiveStop(position, position.stopCurrent, lockStop);
-        position.quickProfitLockStage = 3;
-        registerStopUpdate(position);
-      }
-    } else if (currentMfeR >= 1.10 && notional > 0 && Number(position.quickProfitLockStage || 0) < 2) {
-      // Estágio 2: em +1.10R, trava +0.75% NET (~+0.56 a +0.70 USDC, cobrindo 1 stop inteiro!)
-      const lockNetUsdc = Math.max(targetNetUsdc * 0.40, notional * 0.0075);
-      const lockStop = profitProtectStopReference(position, lockNetUsdc);
-      if (Number.isFinite(lockStop)) {
-        position.quickScalpStopReference = moreProtectiveStop(position, position.quickScalpStopReference, lockStop);
-        position.stopCurrent = moreProtectiveStop(position, position.stopCurrent, lockStop);
+        position.quickScalpStopReference = moreProtectiveStop(
+          position,
+          position.quickScalpStopReference,
+          lockStop
+        );
+        position.stopCurrent = moreProtectiveStop(
+          position,
+          position.stopCurrent,
+          lockStop
+        );
         position.quickProfitLockStage = 2;
         registerStopUpdate(position);
       }
     } else if (currentMfeR >= 0.70 && notional > 0 && !position.quickProfitLockStage) {
-      // Estágio 1: em +0.70R, Break-even com folga de taxas + buffer (+0.18% NET) — risco ZERO
-      const beNetUsdc = notional * 0.0018;
+      // Break-even com folga de taxas + buffer (+0.15% NET)
+      const beNetUsdc = notional * 0.0015;
       const beStop = profitProtectStopReference(position, beNetUsdc);
       if (Number.isFinite(beStop)) {
-        position.quickScalpStopReference = moreProtectiveStop(position, position.quickScalpStopReference, beStop);
-        position.stopCurrent = moreProtectiveStop(position, position.stopCurrent, beStop);
+        position.quickScalpStopReference = moreProtectiveStop(
+          position,
+          position.quickScalpStopReference,
+          beStop
+        );
+        position.stopCurrent = moreProtectiveStop(
+          position,
+          position.stopCurrent,
+          beStop
+        );
         position.quickProfitLockStage = 1;
         registerStopUpdate(position);
       }
@@ -6661,8 +6667,9 @@ export function paperHasOpenPosition(symbol, side = null) {
 }
 
 export function paperPositionSnapshot(symbol, side = null) {
-  const cleanTarget = String(symbol || '').replace(/[-_]/g, '').toUpperCase();
-  const rawTarget = String(symbol || '').toUpperCase();
+  const target =
+    String(symbol || '')
+      .toUpperCase();
 
   const targetSide =
     side == null
@@ -6671,14 +6678,9 @@ export function paperPositionSnapshot(symbol, side = null) {
 
   const found =
     state.openPositions.find(p => {
-      const s = String(p.symbol || p.dataSymbol || '').replace(/[-_]/g, '').toUpperCase();
-      const inst = String(p.instId || '').toUpperCase();
-
       const sameSymbol =
-        s === cleanTarget ||
-        inst === rawTarget ||
-        s === rawTarget ||
-        String(p.symbol || '').toUpperCase() === rawTarget;
+        String(p.symbol || '').toUpperCase() === target ||
+        String(p.dataSymbol || '').toUpperCase() === target;
 
       const sameSide =
         targetSide == null ||
@@ -6691,143 +6693,3 @@ export function paperPositionSnapshot(symbol, side = null) {
     ? { ...found }
     : null;
 }
-
-export function adoptExternalPosition(extPos) {
-  if (!extPos || !extPos.symbol) {
-    return { adopted: false, reason: 'INVALID_POSITION_PAYLOAD' };
-  }
-
-  const rawSymbol = String(extPos.symbol).replace(/[-_]/g, '').toUpperCase();
-  const side = String(extPos.side || 'LONG').toUpperCase();
-  const instId = extPos.instId || `${rawSymbol.replace(/USDT$/, '')}-USDT`;
-
-  // Se já existe uma posição com esse símbolo e lado no paper trader, não duplica
-  const existing = state.openPositions.find(p => {
-    const s = String(p.symbol || p.dataSymbol || '').toUpperCase().replace(/[-_]/g, '');
-    const sd = String(p.side || '').toUpperCase();
-    return s === rawSymbol && sd === side;
-  });
-
-  if (existing) {
-    return { adopted: false, reason: 'ALREADY_TRACKED', position: existing };
-  }
-
-  const cfg = paperConfig();
-  const entryFill = Number(extPos.entryPrice || extPos.avgPrice || extPos.markPrice || 0);
-  if (!Number.isFinite(entryFill) || entryFill <= 0) {
-    return { adopted: false, reason: 'INVALID_ENTRY_PRICE' };
-  }
-
-  const leverage = Math.max(1, Number(extPos.leverage || cfg.quickScalpLeverage || 5));
-  let contracts = Number(extPos.contracts || 0);
-  let notional = Number(extPos.notional || 0);
-
-  if (notional <= 0) {
-    if (contracts > 0) {
-      notional = contracts * entryFill;
-    } else {
-      notional = (cfg.quickScalpMarginUsdc || 15) * leverage;
-    }
-  }
-
-  // Notional mínimo para cálculo coerente
-  if (notional < 5) {
-    notional = (cfg.quickScalpMarginUsdc || 15) * leverage;
-  }
-
-  const margin = round(notional / leverage, 4);
-  const qty = notional / entryFill;
-  const entryFee = notional * (cfg.feeRate || 0.00045);
-
-  const quick = quickScalpLevels({
-    side,
-    entryFill,
-    qty,
-    entryFee,
-    initialNotional: notional,
-    initialMargin: margin,
-    targetNetPct: cfg.quickScalpTargetNetPct || 1.85,
-    stopNetPct: cfg.quickScalpStopNetPct || 0.65,
-    feeRate: cfg.feeRate || 0.00045,
-    slippageBps: cfg.slippageBps || 3
-  });
-
-  const targetRef = quick ? quick.targetReference : (side === 'LONG' ? round(entryFill * 1.020, 6) : round(entryFill * 0.980, 6));
-  const stopRef = quick ? quick.stopReference : (side === 'LONG' ? round(entryFill * 0.992, 6) : round(entryFill * 1.008, 6));
-
-  const id = `blofin_recon_${rawSymbol}_${Date.now()}`;
-  const position = {
-    id,
-    symbol: rawSymbol,
-    dataSymbol: rawSymbol,
-    instId,
-    side,
-    entryFill,
-    entryTime: Date.now(),
-    initialQty: qty,
-    remainingQty: qty,
-    initialNotional: round(notional, 4),
-    initialMargin: margin,
-    leverage,
-    entryFee,
-    stopInitial: stopRef,
-    stopCurrent: stopRef,
-    tp1: targetRef,
-    tp2: targetRef,
-    tp3: targetRef,
-    quickScalpEnabled: true,
-    quickScalpMode: 'ELITE_QUICK_RECONCILED',
-    quickScalpTargetReference: targetRef,
-    quickScalpStopReference: stopRef,
-    quickScalpTargetNetPct: cfg.quickScalpTargetNetPct || 1.85,
-    quickScalpStopNetPct: cfg.quickScalpStopNetPct || 0.65,
-    quickScalpTargetNetUsdc: quick ? quick.targetNetUsdc : round(notional * 0.0185, 2),
-    quickScalpStopNetUsdc: quick ? quick.stopNetUsdc : round(-notional * 0.0065, 2),
-    quickScalpTargetRoiMarginPct: quick ? quick.targetRoiMarginPct : 4.75,
-    quickScalpStopRoiMarginPct: quick ? quick.stopRoiMarginPct : -3.25,
-    quickProfitLockStage: 0,
-    stage: 0,
-    realizedGrossPnl: 0,
-    exitFees: 0,
-    lastMark: Number(extPos.markPrice || entryFill),
-    mfeR: 0,
-    maeR: 0,
-    mfePrice: entryFill,
-    maePrice: entryFill,
-    exitLegs: [],
-    isReconciledFromBlofin: true,
-    adoptedAt: Date.now()
-  };
-
-  state.openPositions.push(position);
-  saveState();
-
-  return {
-    adopted: true,
-    position
-  };
-}
-
-export function closePositionBySymbol(symbolOrInstId, outcome = 'MANUAL_BCLOSE') {
-  if (!symbolOrInstId) return { closed: false };
-  const target = String(symbolOrInstId).replace(/[-_]/g, '').toUpperCase();
-  const rawTarget = String(symbolOrInstId).toUpperCase();
-
-  const idx = state.openPositions.findIndex(p => {
-    const s = String(p.symbol || p.dataSymbol || '').replace(/[-_]/g, '').toUpperCase();
-    const inst = String(p.instId || '').toUpperCase();
-    return s === target || inst === rawTarget || s === rawTarget;
-  });
-
-  if (idx < 0) {
-    return { closed: false };
-  }
-
-  const pos = state.openPositions[idx];
-  const closed = finalizePosition(pos, outcome, pos.lastMark || pos.entryFill);
-  return {
-    closed: true,
-    position: closed
-  };
-}
-

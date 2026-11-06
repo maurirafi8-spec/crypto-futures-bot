@@ -106,8 +106,8 @@ export function quickScalpLevels({
   entryFee,
   initialNotional,
   initialMargin,
-  targetNetPct = 1.85, // Alvo ampliado: 1.85% líquido (payoff favorável de quase 3:1)
-  stopNetPct = 0.65,   // Stop contido: 0.65% líquido do notional
+  targetNetPct = 1.10, // Default otimizado: 1.10% líquido do notional
+  stopNetPct = 0.75,   // Default otimizado: 0.75% líquido do notional
   feeRate = 0.00045,
   slippageBps = 4
 } = {}) {
