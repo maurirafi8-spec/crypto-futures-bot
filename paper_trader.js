@@ -4658,10 +4658,26 @@ function updateOnePosition(position, snap) {
   // V1.7.3 MFE/MAE:
   // mede a melhor e a pior excursão intratrade em múltiplos de R.
   // Isso permite separar entrada ruim de gestão ruim.
+  if (
+    position.quickScalpEnabled &&
+    !Number.isFinite(Number(position.quickScalpStopInitial)) &&
+    Number.isFinite(Number(position.quickScalpStopReference)) &&
+    Number(position.quickScalpStopReference) > 0
+  ) {
+    position.quickScalpStopInitial = Number(position.quickScalpStopReference);
+  }
+
+  const referenceInitialStop =
+    position.quickScalpEnabled &&
+    Number.isFinite(Number(position.quickScalpStopInitial)) &&
+    Number(position.quickScalpStopInitial) > 0
+      ? Number(position.quickScalpStopInitial)
+      : Number(position.stopInitial);
+
   const initialRiskDistance =
     Math.abs(
       Number(position.entryFill) -
-      Number(position.stopInitial)
+      referenceInitialStop
     );
 
   if (
@@ -4901,15 +4917,40 @@ function updateOnePosition(position, snap) {
       return events;
     }
 
-    // Atualiza Progressive Profit Lock apenas para o PRÓXIMO candle fechado
+    // Atualiza Progressive Profit Lock apenas para o PRÓXIMO candle fechado,
+    // usando o progresso REAL até o alvo Quick (50% ativa Break-Even, 75% trava 50% do lucro)
+    // e garantindo que o novo stop nunca fique à frente do preço atual (mark).
     const notional = Number(position.initialNotional || 0);
     const targetNetUsdc = Number(position.quickScalpTargetNetUsdc || (notional * 0.0095));
+    const quickTargetRef = Number(position.quickScalpTargetReference || 0);
+    const quickTargetDist =
+      quickTargetRef > 0
+        ? Math.abs(quickTargetRef - Number(position.entryFill))
+        : 0;
+    const bestFavPrice = Number(position.maxFavorablePrice || position.entryFill);
+    const bestFavMove =
+      position.side === 'LONG'
+        ? Math.max(0, bestFavPrice - Number(position.entryFill))
+        : Math.max(0, Number(position.entryFill) - bestFavPrice);
+    const quickProgress =
+      quickTargetDist > 0
+        ? bestFavMove / quickTargetDist
+        : 0;
 
-    if (currentMfeR >= 0.85 && notional > 0 && activeLockStage < 2) {
-      // Trava 50% do lucro do alvo (+0.45% a +0.50% NET)
+    const stopSafeVsMark = candidateStop =>
+      Number.isFinite(candidateStop) &&
+      candidateStop > 0 &&
+      (
+        !Number.isFinite(mark) ||
+        mark <= 0 ||
+        (position.side === 'LONG' ? candidateStop < mark : candidateStop > mark)
+      );
+
+    if (quickProgress >= 0.75 && notional > 0 && activeLockStage < 2) {
+      // Aos 75% do alvo Quick, trava 50% do lucro líquido (+1.10% NET no alvo +2.20%)
       const lockNetUsdc = Math.max(targetNetUsdc * 0.50, notional * 0.0045);
       const lockStop = profitProtectStopReference(position, lockNetUsdc);
-      if (Number.isFinite(lockStop)) {
+      if (stopSafeVsMark(lockStop)) {
         position.quickScalpStopReference = moreProtectiveStop(
           position,
           position.quickScalpStopReference,
@@ -4924,11 +4965,11 @@ function updateOnePosition(position, snap) {
         registerStopUpdate(position);
         saveState();
       }
-    } else if (currentMfeR >= 0.70 && notional > 0 && activeLockStage < 1) {
-      // Break-even com folga de taxas + buffer (+0.15% NET)
+    } else if (quickProgress >= 0.50 && notional > 0 && activeLockStage < 1) {
+      // Aos 50% do alvo Quick, move stop para Break-Even com folga de taxas (+0.15% NET)
       const beNetUsdc = notional * 0.0015;
       const beStop = profitProtectStopReference(position, beNetUsdc);
-      if (Number.isFinite(beStop)) {
+      if (stopSafeVsMark(beStop)) {
         position.quickScalpStopReference = moreProtectiveStop(
           position,
           position.quickScalpStopReference,
