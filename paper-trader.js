@@ -4882,40 +4882,7 @@ function updateOnePosition(position, snap) {
       return events;
     }
 
-    const ageMin =
-      (
-        Date.now() -
-        position.openedAt
-      ) /
-      60000;
-
-    const maxMin = Math.max(
-      90,
-      Number(
-        position.quickScalpMaxMinutes ||
-        cfg.quickScalpMaxMinutes ||
-        90
-      )
-    );
-
-    if (
-      ageMin >= maxMin &&
-      Number(position.stage || 0) === 0 &&
-      Number(position.mfeR || 0) < 0.38
-    ) {
-      const result =
-        closeRemainingAt(
-          position,
-          mark,
-          `QUICK SCALP TIME EXIT ${Math.round(maxMin)}m`
-        );
-
-      events.push(
-        positionCloseMessage(result.closed)
-      );
-
-      return events;
-    }
+    // QUICK SCALP TIME EXIT desativado: posição só encerra por TP, Stop, Break-Even ou Profit Lock.
 
     // Atualiza Progressive Profit Lock apenas para o PRÓXIMO candle fechado,
     // usando o progresso REAL até o alvo Quick (50% ativa Break-Even, 75% trava 50% do lucro)
